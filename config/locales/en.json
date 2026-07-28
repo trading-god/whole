@@ -1,0 +1,5 @@
+{
+  "ios": {
+    "NSPhotoLibraryUsageDescription": "Allow Whole to select an account screenshot and recognize account information. After you confirm, Whole can also delete the screenshot used for recognition."
+  }
+}

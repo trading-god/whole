@@ -1,0 +1,75 @@
+{
+  "expo": {
+    "name": "Whole",
+    "slug": "whole",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "whole",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "icon": "./assets/images/icon.png"
+    },
+    "android": {
+      "icon": "./assets/images/icon.png",
+      "adaptiveIcon": {
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/favicon.png",
+      "name": "Whole",
+      "shortName": "Whole",
+      "description": "Your whole financial life, in one place.",
+      "display": "standalone",
+      "startUrl": "/",
+      "themeColor": "#098765",
+      "backgroundColor": "#FFFFFF"
+    },
+    "locales": {
+      "en": "./config/locales/en.json",
+      "zh-Hans": "./config/locales/zh-Hans.json"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "允许 Whole 选择账户截图并识别账户信息。你确认后，Whole 也可删除用于识别的账户截图。",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "允许 Whole 选择账户截图并识别账户信息。你确认后，Whole 也可删除用于识别的账户截图。",
+          "savePhotosPermission": false,
+          "granularPermissions": []
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#208AEF",
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 76
+        }
+      ],
+      [
+        "expo-localization",
+        {
+          "supportedLocales": ["en", "zh-Hans"]
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "ios": {
+    "NSPhotoLibraryUsageDescription": "允许 Whole 选择账户截图并识别账户信息。你确认后，Whole 也可删除用于识别的账户截图。"
+  }
+}
