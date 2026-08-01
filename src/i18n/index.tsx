@@ -11,35 +11,46 @@ import {
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import { Platform } from "react-native";
 
+import { type Currency } from "@/features/assets/currencies";
 import { type AppLocale, defaultNamespace, resources } from "@/i18n/resources";
 
 type LocaleContextValue = {
-  formatCurrency: (value: number, currency: string) => string;
-  locale: AppLocale;
+  formatCurrency: (value: number, currency: Currency) => string;
+  // True once the device locale has been resolved. On native this is always
+  // true; on web it is false during SSR/first render and flips after
+  // hydration. Consumers that seed persisted state from the locale (e.g. the
+  // base currency) must wait for this before reading the languageTag, or the
+  // pre-hydration fallback would get pinned.
+  isHydrated: boolean;
   languageTag: string;
+  locale: AppLocale;
 };
 
 const LocaleContext = createContext<LocaleContextValue | null>(null);
 const subscribeToHydration = () => () => {};
 
-const numberFormatCache = new Map<string, Intl.NumberFormat>();
+// Standard international (ISO 4217) currency symbols, applied explicitly.
+// Intl's currency-symbol resolution can fall back to the ISO code on Hermes
+// (e.g. "SGD" instead of "S$" when the currency isn't the locale's own), so
+// the symbol is prepended here and Intl only formats the decimal number —
+// which Hermes handles reliably. CN¥ disambiguates CNY from JPY (also ¥).
+const CURRENCY_SYMBOLS: Record<Currency, string> = {
+  SGD: "S$",
+  USD: "$",
+  HKD: "HK$",
+  CNY: "CN¥",
+};
 
-function formatCurrencyAmount(
-  languageTag: string,
-  amount: number,
-  currency: string,
-): string {
-  const cacheKey = `${languageTag}:${currency}`;
-  let formatter = numberFormatCache.get(cacheKey);
-  if (!formatter) {
-    formatter = new Intl.NumberFormat(languageTag, {
-      currency,
+let decimalFormatter: Intl.NumberFormat | null = null;
+
+function formatCurrencyAmount(amount: number, currency: Currency): string {
+  if (!decimalFormatter) {
+    decimalFormatter = new Intl.NumberFormat("en-US", {
+      maximumFractionDigits: 2,
       minimumFractionDigits: 2,
-      style: "currency",
     });
-    numberFormatCache.set(cacheKey, formatter);
   }
-  return formatter.format(amount);
+  return `${CURRENCY_SYMBOLS[currency]}${decimalFormatter.format(amount)}`;
 }
 
 function resolveLocale(languageCode: string | null): AppLocale | null {
@@ -94,12 +105,12 @@ export function I18nProvider({ children }: PropsWithChildren) {
 
   const value = useMemo<LocaleContextValue>(
     () => ({
-      locale,
+      formatCurrency: formatCurrencyAmount,
+      isHydrated: webHasHydrated,
       languageTag,
-      formatCurrency: (amount, currency) =>
-        formatCurrencyAmount(languageTag, amount, currency),
+      locale,
     }),
-    [languageTag, locale],
+    [languageTag, locale, webHasHydrated],
   );
 
   useEffect(() => {

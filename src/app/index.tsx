@@ -1,9 +1,10 @@
-import { Link } from "expo-router";
+import { Link, useRouter } from "expo-router";
 import Head from "expo-router/head";
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,77 +12,201 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import {
-  Circle,
-  Defs,
-  LinearGradient,
-  Path,
-  Stop,
-  Svg,
-} from "react-native-svg";
 
-import type { AssetAccount } from "@/features/assets/asset-repository";
-import { defaultAssetCurrency } from "@/features/assets/currencies";
+import { AccountRow } from "@/components/AccountRow";
+import { CurrencyPicker } from "@/components/CurrencyPicker";
+import { Icon } from "@/components/Icon";
+import { IconButton } from "@/components/IconButton";
+import { NetWorthChart } from "@/components/NetWorthChart";
+import { SectionHeader } from "@/components/SectionHeader";
+import {
+  ASSET_KIND_CHART_LABEL_KEYS,
+  ASSET_KIND_DISTRIBUTION_COLORS,
+  knownAssetKinds,
+} from "@/features/assets/account-appearance";
+import { sumBalancesByKindInCurrency } from "@/features/assets/asset-repository";
+import {
+  type Currency,
+  defaultDisplayCurrencyForLanguageTag,
+  orderedDisplayCurrencies,
+} from "@/features/assets/currencies";
+import { convertCurrency } from "@/features/assets/currency-conversion";
+import {
+  loadDisplayCurrency,
+  saveDisplayCurrency,
+} from "@/features/assets/display-currency-store";
+import { computeNetWorthTrend } from "@/features/assets/net-worth-history";
 import { useAssetAccounts } from "@/features/assets/use-asset-accounts";
 import { useAppLocale } from "@/i18n";
 import { COLORS } from "@/theme/colors";
+import { useResponsiveLayout } from "@/theme/layout";
+import {
+  actionLink,
+  actionLinkButton,
+  cardSurface,
+  screenStyles,
+} from "@/theme/screen-styles";
+import { CHIP_RADIUS } from "@/theme/sizes";
+import { SPACING } from "@/theme/spacing";
+import {
+  FONT_SIZE,
+  FONT_WEIGHT,
+  LETTER_SPACING,
+  LINE_HEIGHT,
+} from "@/theme/typography";
 
-function AccountRow({ account }: { account: AssetAccount }) {
-  const { formatCurrency } = useAppLocale();
-
-  return (
-    <View style={styles.accountRow}>
-      <View style={[styles.accountIcon, { backgroundColor: account.tint }]}>
-        <Text style={[styles.accountInitial, { color: account.color }]}>
-          {account.initial}
-        </Text>
-      </View>
-      <View style={styles.accountIdentity}>
-        <Text style={styles.accountName}>{account.name}</Text>
-        <Text style={styles.accountNumber}>
-          •••• {account.accountLastFourDigits}
-        </Text>
-      </View>
-      <View style={styles.accountValue}>
-        <Text style={styles.accountBalance}>
-          {formatCurrency(account.balance, account.currency)}
-        </Text>
-        <Text style={styles.accountCurrency}>{account.currency}</Text>
-      </View>
-    </View>
-  );
+// Largest-remainder rounding so the legend percentages always sum to 100 —
+// naive per-kind Math.round can sum to 99 or 101 (e.g. 33/33/33). Returns all
+// zeros when the total is non-positive so the empty/no-rates case stays clean.
+function roundPercentages(shares: readonly number[]): number[] {
+  const total = shares.reduce((sum, value) => sum + value, 0);
+  if (total <= 0) {
+    return shares.map(() => 0);
+  }
+  const raw = shares.map((share) => (share / total) * 100);
+  const floored = raw.map((value) => Math.floor(value));
+  let remainder = 100 - floored.reduce((sum, value) => sum + value, 0);
+  const byFraction = raw
+    .map((value, index) => ({ index, fraction: value - Math.floor(value) }))
+    .sort((a, b) => b.fraction - a.fraction);
+  for (let i = 0; i < remainder; i += 1) {
+    floored[byFraction[i % byFraction.length].index] += 1;
+  }
+  return floored;
 }
 
 export default function Index() {
-  const { formatCurrency } = useAppLocale();
+  const { formatCurrency, languageTag } = useAppLocale();
   const { t } = useTranslation();
+  const router = useRouter();
+  const { isCompact } = useResponsiveLayout();
   const {
     accounts,
+    baseCurrency,
+    snapshots,
+    snapshotsInBaseCurrency,
+    rates,
     error: accountLoadingFailed,
     isLoading: accountsAreLoading,
+    removeAccount,
   } = useAssetAccounts();
-  const totalBalance = useMemo(
-    () =>
-      accounts
-        .filter((account) => account.currency === defaultAssetCurrency)
-        .reduce((total, account) => total + account.balance, 0),
-    [accounts],
+  const defaultDisplayCurrency = useMemo(
+    () => defaultDisplayCurrencyForLanguageTag(languageTag),
+    [languageTag],
   );
-  const distribution = [
-    { id: "cash", label: t("home.cash"), value: 47, color: "#A9E0C9" },
-    {
-      id: "investments",
-      label: t("home.investments"),
-      value: 35,
-      color: "#7CBFA8",
+  const [displayCurrency, setDisplayCurrency] = useState<Currency>(
+    defaultDisplayCurrency,
+  );
+
+  useEffect(() => {
+    let stale = false;
+    void loadDisplayCurrency(defaultDisplayCurrency)
+      .then((currency) => {
+        if (!stale) {
+          setDisplayCurrency(currency);
+        }
+      })
+      .catch(() => {
+        // A storage read failure leaves the locale default in place rather
+        // than surfacing an unhandled rejection.
+      });
+    return () => {
+      stale = true;
+    };
+  }, [defaultDisplayCurrency]);
+
+  // orderedDisplayCurrencies is a cheap 4-element sort and CurrencyPicker
+  // isn't memo'd, so no useMemo is needed (a stable ref would have no consumer).
+  const displayCurrencies = orderedDisplayCurrencies(defaultDisplayCurrency);
+
+  // Each account is converted directly to the display currency and the results
+  // summed, so the total never routes through an intermediate pivot currency.
+  // The same single pass yields the per-kind totals for the distribution chart.
+  const { totals: totalsByKind, total: displayTotal } = useMemo(
+    () => sumBalancesByKindInCurrency(accounts, displayCurrency, rates),
+    [accounts, displayCurrency, rates],
+  );
+  const trend = useMemo(() => computeNetWorthTrend(snapshots), [snapshots]);
+  const displayDelta = useMemo(
+    () =>
+      trend.delta === null || baseCurrency === null || !snapshotsInBaseCurrency
+        ? null
+        : convertCurrency(trend.delta, baseCurrency, displayCurrency, rates),
+    [
+      trend.delta,
+      baseCurrency,
+      displayCurrency,
+      rates,
+      snapshotsInBaseCurrency,
+    ],
+  );
+  const distribution = useMemo(() => {
+    const percents = roundPercentages(
+      knownAssetKinds.map((kind) => totalsByKind[kind]),
+    );
+    return knownAssetKinds.map((kind, index) => ({
+      kind,
+      label: t(ASSET_KIND_CHART_LABEL_KEYS[kind]),
+      percent: percents[index],
+      color: ASSET_KIND_DISTRIBUTION_COLORS[kind],
+    }));
+  }, [totalsByKind, t]);
+  const hasDistribution = displayTotal !== null && displayTotal > 0;
+  // Empty state: with no accounts the total is genuinely 0, so show 0.00 (not
+  // a placeholder dash) plus a hint nudging the user to add an account. The
+  // dash is reserved for "accounts exist but rates couldn't be fetched".
+  const isWaiting = accountsAreLoading || accountLoadingFailed;
+  const showEmptyBalanceHint = !isWaiting && accounts.length === 0;
+  const totalDisplayValue = (() => {
+    if (isWaiting) {
+      return "—";
+    }
+    if (displayTotal === null) {
+      return showEmptyBalanceHint ? formatCurrency(0, displayCurrency) : "—";
+    }
+    return formatCurrency(displayTotal, displayCurrency);
+  })();
+
+  const chartDeltaText = (() => {
+    if (trend.delta === null) {
+      return t("home.chartAccumulating");
+    }
+    if (displayDelta === null) {
+      return "—";
+    }
+    const sign = trend.delta >= 0 ? "+" : "-";
+    return `${sign}${formatCurrency(Math.abs(displayDelta), displayCurrency)}`;
+  })();
+
+  const [activeRowId, setActiveRowId] = useState<string | null>(null);
+
+  const handleDisplayCurrencyChange = useCallback((currency: Currency) => {
+    setDisplayCurrency(currency);
+    // Fire-and-forget: a persistence failure leaves the preference unsaved
+    // (reverts on next launch) rather than surfacing an unhandled rejection.
+    void saveDisplayCurrency(currency).catch(() => {});
+  }, []);
+
+  const handleRemove = useCallback(
+    async (id: string) => {
+      try {
+        await removeAccount(id);
+      } catch {
+        Alert.alert(t("home.deleteAccountError"));
+      }
+      // Close only the deleted row — a different row the user opened during
+      // the await should stay open.
+      setActiveRowId((current) => (current === id ? null : current));
     },
-    {
-      id: "digital-assets",
-      label: t("home.digitalAssets"),
-      value: 18,
-      color: "#F0C781",
+    [removeAccount, t],
+  );
+
+  const handleOpenAccount = useCallback(
+    (id: string) => {
+      router.push({ pathname: "/accounts/[id]", params: { id } });
     },
-  ];
+    [router],
+  );
 
   return (
     <>
@@ -89,139 +214,193 @@ export default function Index() {
         <title>{t("metadata.homeTitle")}</title>
         <meta name="description" content={t("metadata.homeDescription")} />
       </Head>
-      <SafeAreaView style={styles.safeArea} edges={["top"]}>
+      <SafeAreaView style={screenStyles.safeArea} edges={["top"]}>
         <ScrollView
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.header}>
-            <View>
+            <View style={styles.headerCopy}>
               <Text style={styles.wordmark}>{t("common.wordmark")}</Text>
-              <Text style={styles.greeting}>
+              <Text
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.6}
+                style={styles.greeting}
+              >
                 {t("home.greeting", { name: "Jack" })}
               </Text>
             </View>
-            <Link href="/accounts/new" asChild>
-              <Pressable
+            <View style={styles.headerActions}>
+              <IconButton
+                name="settings"
+                size="md"
+                variant="ghost"
+                accessibilityLabel={t("common.settings")}
+                hitSlop={12}
+                onPress={() => router.push("/settings")}
+              />
+              <IconButton
+                name="plus"
+                size="md"
+                variant="primary"
+                elevated
                 accessibilityLabel={t("common.addAccount")}
                 hitSlop={12}
-                style={({ pressed }) => [
-                  styles.addButton,
-                  pressed && styles.addButtonPressed,
-                ]}
-              >
-                <Text style={styles.addButtonLabel}>＋</Text>
-              </Pressable>
-            </Link>
+                onPress={() => router.push("/accounts/new")}
+              />
+            </View>
           </View>
 
           <View style={styles.balanceCard}>
-            <View style={styles.balanceCardTop}>
-              <View>
-                <Text style={styles.eyebrow}>
-                  {t("home.totalAssetsInCurrency", {
-                    currency: defaultAssetCurrency,
-                  })}
+            <View
+              style={[
+                styles.balanceCardTop,
+                isCompact && styles.balanceCardTopCompact,
+              ]}
+            >
+              <View style={styles.balanceCopy}>
+                <View style={styles.eyebrowRow}>
+                  <Text numberOfLines={1} style={styles.eyebrow}>
+                    {t("home.totalAssetsLabel")}
+                  </Text>
+                  <CurrencyPicker
+                    currencies={displayCurrencies}
+                    value={displayCurrency}
+                    onChange={handleDisplayCurrencyChange}
+                  />
+                </View>
+                <Text
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                  numberOfLines={1}
+                  style={styles.totalBalance}
+                >
+                  {totalDisplayValue}
                 </Text>
-                <Text style={styles.totalBalance}>
-                  {accountsAreLoading || accountLoadingFailed
-                    ? "—"
-                    : formatCurrency(totalBalance, defaultAssetCurrency)}
-                </Text>
+                {showEmptyBalanceHint ? (
+                  <Text style={styles.totalBalanceHint}>
+                    {t("home.emptyBalanceHint")}
+                  </Text>
+                ) : null}
               </View>
-              <View style={styles.changePill}>
-                <Text style={styles.changeText}>↗ 3.8%</Text>
-              </View>
+              {trend.changePercent !== null ? (
+                <View
+                  style={[
+                    styles.changePill,
+                    isCompact && styles.changePillCompact,
+                  ]}
+                >
+                  <Icon
+                    name={
+                      trend.changePercent >= 0 ? "trending-up" : "trending-down"
+                    }
+                    size={14}
+                    color={COLORS.accentOnDark}
+                  />
+                  <Text style={styles.changeText}>
+                    {trend.changePercent >= 0 ? "+" : ""}
+                    {trend.changePercent.toFixed(1)}%
+                  </Text>
+                </View>
+              ) : null}
             </View>
 
             <View style={styles.chartWrap}>
-              <Svg
-                height="112"
-                preserveAspectRatio="none"
-                viewBox="0 0 330 112"
-                width="100%"
-              >
-                <Defs>
-                  <LinearGradient id="chartFill" x1="0" x2="0" y1="0" y2="1">
-                    <Stop offset="0" stopColor="#77D2B1" stopOpacity="0.38" />
-                    <Stop offset="1" stopColor="#77D2B1" stopOpacity="0" />
-                  </LinearGradient>
-                </Defs>
-                <Path
-                  d="M0 90 C22 84 34 60 54 64 C78 70 86 88 108 76 C132 63 142 35 164 42 C184 49 194 68 214 60 C235 51 246 18 268 27 C292 37 302 21 330 9 L330 112 L0 112 Z"
-                  fill="url(#chartFill)"
-                />
-                <Path
-                  d="M0 90 C22 84 34 60 54 64 C78 70 86 88 108 76 C132 63 142 35 164 42 C184 49 194 68 214 60 C235 51 246 18 268 27 C292 37 302 21 330 9"
-                  fill="none"
-                  stroke="#79D7B5"
-                  strokeLinecap="round"
-                  strokeWidth="3"
-                />
-                <Circle cx="330" cy="9" fill="#D9FFF0" r="5" />
-                <Circle cx="330" cy="9" fill="#69C8A6" r="3" />
-              </Svg>
+              <NetWorthChart
+                snapshots={snapshots}
+                placeholderText={t("home.chartAccumulating")}
+              />
             </View>
 
-            <View style={styles.chartFooter}>
+            <View
+              style={[
+                styles.chartFooter,
+                isCompact && styles.chartFooterCompact,
+              ]}
+            >
               <Text style={styles.chartPeriod}>
                 {t("home.pastMonths", { count: 6 })}
               </Text>
-              <Text style={styles.chartDelta}>
-                +{formatCurrency(4702.8, defaultAssetCurrency)}
-              </Text>
+              <Text style={styles.chartDelta}>{chartDeltaText}</Text>
             </View>
           </View>
 
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>
-              {t("home.assetComposition")}
-            </Text>
-            <Text style={styles.sectionMeta}>
-              {accountsAreLoading
-                ? t("home.loading")
-                : t("home.accountCount", { count: accounts.length })}
-            </Text>
+            <SectionHeader
+              title={t("home.assetComposition")}
+              detail={
+                <Text style={styles.sectionMeta}>
+                  {accountsAreLoading
+                    ? t("home.loading")
+                    : t("home.accountCount", { count: accounts.length })}
+                </Text>
+              }
+            />
           </View>
 
           <View style={styles.distributionCard}>
             <View style={styles.distributionBar}>
-              {distribution.map((item) => (
+              {hasDistribution ? (
+                distribution
+                  .filter((item) => item.percent > 0)
+                  .map((item) => (
+                    <View
+                      key={item.kind}
+                      style={[
+                        styles.distributionSegment,
+                        {
+                          backgroundColor: item.color,
+                          flex: item.percent,
+                        },
+                      ]}
+                    />
+                  ))
+              ) : (
                 <View
-                  key={item.id}
                   style={[
                     styles.distributionSegment,
-                    {
-                      backgroundColor: item.color,
-                      flex: item.value,
-                    },
+                    { backgroundColor: COLORS.border, flex: 1 },
                   ]}
                 />
-              ))}
+              )}
             </View>
-            <View style={styles.legend}>
+            <View style={[styles.legend, isCompact && styles.legendCompact]}>
               {distribution.map((item) => (
-                <View key={item.id} style={styles.legendItem}>
+                <View key={item.kind} style={styles.legendItem}>
                   <View
-                    style={[styles.legendDot, { backgroundColor: item.color }]}
+                    style={[
+                      styles.legendDot,
+                      {
+                        backgroundColor: hasDistribution
+                          ? item.color
+                          : COLORS.border,
+                      },
+                    ]}
                   />
-                  <Text style={styles.legendLabel}>{item.label}</Text>
-                  <Text style={styles.legendValue}>{item.value}%</Text>
+                  <Text numberOfLines={1} style={styles.legendLabel}>
+                    {item.label}
+                  </Text>
+                  <Text style={styles.legendValue}>{item.percent}%</Text>
                 </View>
               ))}
             </View>
           </View>
 
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>{t("home.myAccounts")}</Text>
-            <Link href="/accounts/new" asChild>
-              <Pressable
-                accessibilityLabel={t("common.addAccount")}
-                hitSlop={8}
-              >
-                <Text style={styles.sectionAction}>{t("home.add")}</Text>
-              </Pressable>
-            </Link>
+            <SectionHeader
+              title={t("home.myAccounts")}
+              detail={
+                <Link href="/accounts/new" asChild>
+                  <Pressable
+                    accessibilityLabel={t("common.addAccount")}
+                    style={actionLinkButton}
+                  >
+                    <Text style={actionLink}>{t("home.add")}</Text>
+                  </Pressable>
+                </Link>
+              }
+            />
           </View>
 
           <View style={styles.accountsCard}>
@@ -240,10 +419,17 @@ export default function Index() {
               </View>
             ) : (
               accounts.map((account, index) => (
-                <View key={account.id}>
-                  {index > 0 ? <View style={styles.separator} /> : null}
-                  <AccountRow account={account} />
-                </View>
+                <AccountRow
+                  key={account.id}
+                  account={account}
+                  displayCurrency={displayCurrency}
+                  rates={rates}
+                  isFirst={index === 0}
+                  isActive={activeRowId === account.id}
+                  onActivate={setActiveRowId}
+                  onOpenAccount={handleOpenAccount}
+                  onRemove={handleRemove}
+                />
               ))
             )}
           </View>
@@ -256,150 +442,155 @@ export default function Index() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
   content: {
-    paddingHorizontal: 20,
-    paddingBottom: 36,
+    paddingHorizontal: SPACING.xl,
+    paddingBottom: SPACING.xxxl,
   },
   header: {
     alignItems: "center",
     flexDirection: "row",
+    gap: SPACING.md,
     justifyContent: "space-between",
-    paddingBottom: 18,
-    paddingTop: 10,
+    paddingBottom: SPACING.lg,
+    paddingTop: SPACING.md,
+  },
+  headerCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  headerActions: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexShrink: 0,
+    gap: SPACING.xs,
   },
   wordmark: {
     color: COLORS.brand,
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 2.2,
+    fontSize: FONT_SIZE.eyebrow,
+    fontWeight: FONT_WEIGHT.extrabold,
+    letterSpacing: LETTER_SPACING.wordmark,
   },
   greeting: {
     color: COLORS.ink,
-    fontSize: 24,
-    fontWeight: "700",
-    letterSpacing: -0.6,
-    marginTop: 5,
-  },
-  addButton: {
-    alignItems: "center",
-    backgroundColor: COLORS.brand,
-    borderRadius: 22,
-    height: 44,
-    justifyContent: "center",
-    shadowColor: COLORS.brandShadow,
-    shadowOffset: { width: 0, height: 7 },
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-    width: 44,
-  },
-  addButtonPressed: {
-    opacity: 0.78,
-    transform: [{ scale: 0.96 }],
-  },
-  addButtonLabel: {
-    color: "#FFFFFF",
-    fontSize: 27,
-    fontWeight: "300",
-    lineHeight: 30,
-    marginTop: -2,
+    fontSize: FONT_SIZE.heading,
+    fontWeight: FONT_WEIGHT.bold,
+    letterSpacing: LETTER_SPACING.headingTight,
+    marginTop: SPACING.sm,
   },
   balanceCard: {
     backgroundColor: COLORS.brandDark,
     borderRadius: 28,
     overflow: "hidden",
-    paddingHorizontal: 22,
-    paddingTop: 22,
+    paddingHorizontal: SPACING.xl,
+    paddingTop: SPACING.sm,
   },
   balanceCardTop: {
     alignItems: "flex-start",
     flexDirection: "row",
+    gap: SPACING.md,
     justifyContent: "space-between",
   },
+  balanceCardTopCompact: {
+    flexDirection: "column",
+  },
+  balanceCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  eyebrowRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: SPACING.sm,
+  },
   eyebrow: {
-    color: "#ABC1B8",
-    fontSize: 12,
-    fontWeight: "600",
-    letterSpacing: 0.4,
+    color: COLORS.mutedOnDark,
+    fontSize: FONT_SIZE.eyebrow,
+    fontWeight: FONT_WEIGHT.semibold,
+    letterSpacing: LETTER_SPACING.caption,
   },
   totalBalance: {
-    color: "#FFFFFF",
-    fontSize: 34,
-    fontWeight: "700",
-    letterSpacing: -1.5,
-    marginTop: 8,
+    color: COLORS.white,
+    fontSize: FONT_SIZE.display,
+    fontWeight: FONT_WEIGHT.bold,
+    letterSpacing: LETTER_SPACING.displayTight,
+    lineHeight: LINE_HEIGHT.display,
+    marginTop: 2,
+  },
+  totalBalanceHint: {
+    color: COLORS.mutedOnDark,
+    fontSize: FONT_SIZE.bodySm,
+    fontWeight: FONT_WEIGHT.medium,
+    marginTop: SPACING.sm,
   },
   changePill: {
-    backgroundColor: "rgba(130, 220, 185, 0.14)",
-    borderColor: "rgba(130, 220, 185, 0.18)",
-    borderRadius: 14,
+    alignItems: "center",
+    backgroundColor: COLORS.accentOnDarkSoft,
+    borderColor: COLORS.accentOnDarkBorder,
+    borderRadius: CHIP_RADIUS,
     borderWidth: 1,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
+    flexDirection: "row",
+    flexShrink: 0,
+    gap: SPACING.xs,
+    // The right column's container top aligns with the left "总资产" eyebrow
+    // row box via `flex-start`, but the pill's border sits flush at that box
+    // top while the eyebrow text starts lower (line-height head-room above the
+    // glyph), so the pill reads as higher than the copy. Nudge the pill down
+    // until its top edge meets the eyebrow glyph's visual top.
+    marginTop: SPACING.sm,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: SPACING.sm,
+  },
+  changePillCompact: {
+    alignSelf: "flex-start",
   },
   changeText: {
-    color: "#8CE1C1",
-    fontSize: 12,
-    fontWeight: "700",
+    color: COLORS.accentOnDark,
+    fontSize: FONT_SIZE.eyebrow,
+    fontWeight: FONT_WEIGHT.bold,
   },
   chartWrap: {
-    height: 112,
-    marginHorizontal: -22,
-    marginTop: 10,
+    marginHorizontal: -SPACING.xl,
+    marginTop: SPACING.md,
   },
   chartFooter: {
     alignItems: "center",
-    borderTopColor: "rgba(255,255,255,0.08)",
+    borderTopColor: COLORS.dividerOnDark,
     borderTopWidth: 1,
     flexDirection: "row",
+    gap: SPACING.sm,
     justifyContent: "space-between",
-    paddingVertical: 15,
+    paddingVertical: SPACING.lg,
+  },
+  chartFooterCompact: {
+    alignItems: "flex-start",
+    flexDirection: "column",
   },
   chartPeriod: {
-    color: "#ABC1B8",
-    fontSize: 12,
+    color: COLORS.mutedOnDark,
+    fontSize: FONT_SIZE.eyebrow,
   },
   chartDelta: {
-    color: "#8CE1C1",
-    fontSize: 12,
-    fontWeight: "700",
+    color: COLORS.accentOnDark,
+    fontSize: FONT_SIZE.eyebrow,
+    fontWeight: FONT_WEIGHT.bold,
   },
   sectionHeader: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 12,
-    marginTop: 26,
+    marginBottom: SPACING.md,
+    marginTop: SPACING.xxl,
     paddingHorizontal: 2,
-  },
-  sectionTitle: {
-    color: COLORS.ink,
-    fontSize: 17,
-    fontWeight: "700",
-    letterSpacing: -0.2,
   },
   sectionMeta: {
     color: COLORS.muted,
-    fontSize: 12,
-  },
-  sectionAction: {
-    color: COLORS.brand,
-    fontSize: 13,
-    fontWeight: "700",
+    fontSize: FONT_SIZE.eyebrow,
   },
   distributionCard: {
-    backgroundColor: COLORS.card,
-    borderColor: COLORS.cardBorder,
-    borderRadius: 22,
-    borderWidth: 1,
-    padding: 18,
+    ...cardSurface,
+    padding: SPACING.lg,
   },
   distributionBar: {
     flexDirection: "row",
-    gap: 4,
+    gap: SPACING.xs,
     height: 10,
     overflow: "hidden",
   },
@@ -408,40 +599,41 @@ const styles = StyleSheet.create({
   },
   legend: {
     flexDirection: "row",
+    gap: SPACING.md,
     justifyContent: "space-between",
-    marginTop: 18,
+    marginTop: SPACING.lg,
+  },
+  legendCompact: {
+    flexWrap: "wrap",
+    justifyContent: "flex-start",
   },
   legendItem: {
     alignItems: "center",
     flexDirection: "row",
+    flexShrink: 1,
+    minWidth: 0,
   },
   legendDot: {
     borderRadius: 4,
     height: 8,
-    marginRight: 6,
+    marginRight: SPACING.sm,
     width: 8,
   },
   legendLabel: {
     color: COLORS.muted,
-    fontSize: 11,
+    flexShrink: 1,
+    fontSize: FONT_SIZE.micro,
   },
   legendValue: {
     color: COLORS.ink,
-    fontSize: 11,
-    fontWeight: "700",
-    marginLeft: 4,
+    flexShrink: 0,
+    fontSize: FONT_SIZE.micro,
+    fontWeight: FONT_WEIGHT.bold,
+    marginLeft: SPACING.xs,
   },
   accountsCard: {
-    backgroundColor: COLORS.card,
-    borderColor: COLORS.cardBorder,
-    borderRadius: 22,
-    borderWidth: 1,
-    paddingHorizontal: 16,
-  },
-  accountRow: {
-    alignItems: "center",
-    flexDirection: "row",
-    minHeight: 76,
+    ...cardSurface,
+    overflow: "hidden",
   },
   accountStatus: {
     alignItems: "center",
@@ -451,62 +643,17 @@ const styles = StyleSheet.create({
   },
   accountStatusText: {
     color: COLORS.muted,
-    fontSize: 12,
-    marginLeft: 8,
+    fontSize: FONT_SIZE.eyebrow,
+    marginLeft: SPACING.sm,
   },
   accountErrorText: {
     color: COLORS.muted,
-    fontSize: 12,
-  },
-  accountIcon: {
-    alignItems: "center",
-    borderRadius: 14,
-    height: 44,
-    justifyContent: "center",
-    width: 44,
-  },
-  accountInitial: {
-    fontSize: 13,
-    fontWeight: "800",
-  },
-  accountIdentity: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  accountName: {
-    color: COLORS.ink,
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  accountNumber: {
-    color: COLORS.subtle,
-    fontSize: 11,
-    letterSpacing: 0.5,
-    marginTop: 5,
-  },
-  accountValue: {
-    alignItems: "flex-end",
-    marginLeft: 8,
-  },
-  accountBalance: {
-    color: COLORS.ink,
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  accountCurrency: {
-    color: COLORS.subtle,
-    fontSize: 10,
-    marginTop: 5,
-  },
-  separator: {
-    backgroundColor: COLORS.border,
-    height: StyleSheet.hairlineWidth,
-    marginLeft: 56,
+    fontSize: FONT_SIZE.eyebrow,
   },
   privacyNote: {
     color: COLORS.subtle,
-    fontSize: 11,
-    marginTop: 20,
+    fontSize: FONT_SIZE.micro,
+    marginTop: SPACING.md,
     textAlign: "center",
   },
 });

@@ -28,6 +28,7 @@ source screenshot afterward.
 
 - Asset overview with account balances and asset composition
 - Guided account creation from an account screenshot
+- Edit saved account details (name, balances, and type)
 - Local account persistence with AsyncStorage
 - Optional deletion of the selected source screenshot where the platform
   supports it

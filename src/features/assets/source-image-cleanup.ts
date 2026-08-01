@@ -10,17 +10,43 @@ import { Platform } from "react-native";
 // `source-image-cleanup.web.ts`.
 export const sourceImageDeletionIsSupported = Platform.OS === "ios";
 
-export async function deleteSourceImage(assetId: string) {
+export type DeleteSourceImageResult = {
+  ok: boolean;
+  // "permission" means iOS photo access is limited (or absent). Deleting a
+  // PHAsset requires full access — PHPhotoLibrary rejects delete changes under
+  // limited access — so the caller can guide the user to grant full access
+  // instead of showing a generic failure.
+  reason?: "permission";
+};
+
+export async function deleteSourceImage(
+  assetId: string,
+): Promise<DeleteSourceImageResult> {
   if (Platform.OS !== "ios") {
-    return false;
+    return { ok: false };
   }
 
   const permission = await requestPermissionsAsync();
 
-  if (!permission.granted) {
-    return false;
+  // `granted` is true under both full and limited access, but deleting a
+  // PHAsset requires full access — `performChanges{deleteAssets}` throws under
+  // limited access. `accessPrivileges` is undefined on older iOS/Android (no
+  // limited mode there), where `granted` already implies full access.
+  const privileges = permission.accessPrivileges;
+  const hasFullAccess =
+    privileges === undefined ? permission.granted : privileges === "all";
+
+  if (!hasFullAccess) {
+    return { ok: false, reason: "permission" };
   }
 
-  await new Asset(assetId).delete();
-  return true;
+  try {
+    await new Asset(assetId).delete();
+    return { ok: true };
+  } catch {
+    // A thrown delete covers the remaining failure modes: the picker's asset id
+    // didn't resolve to a PHAsset, or the user cancelled the system "Delete
+    // Photo" confirmation. Surface as a generic failure.
+    return { ok: false };
+  }
 }

@@ -89,8 +89,14 @@ async function renderIcon({
 }
 
 const jobs = [
-  // Expo/EAS consumes these four master assets.
+  // Expo/EAS consumes these five master assets.
   renderIcon({ output: "assets/images/icon.png", size: 1024, scale: 0.8 }),
+  renderIcon({
+    output: "assets/images/splash-icon.png",
+    size: 1024,
+    scale: 0.8,
+    background: null,
+  }),
   renderIcon({
     output: "assets/images/android-icon-foreground.png",
     size: 1024,
