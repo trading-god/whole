@@ -10,7 +10,12 @@ import { PRESSED_OPACITY_SURFACE } from "@/theme/interaction";
 import { MIN_INTERACTIVE_SIZE } from "@/theme/layout";
 import { CARD_RADIUS } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
-import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT } from "@/theme/typography";
+import {
+  FONT_SIZE,
+  FONT_WEIGHT,
+  LETTER_SPACING,
+  LINE_HEIGHT,
+} from "@/theme/typography";
 
 // Shared card surface: card fill, hairline border, 22pt radius. Spread into a
 // screen-specific style to add padding/overflow without redeclaring the base.
@@ -82,6 +87,14 @@ export const screenStyles = StyleSheet.create({
     fontSize: FONT_SIZE.body,
     lineHeight: LINE_HEIGHT.body,
     marginTop: SPACING.sm,
+  },
+  // Brand wordmark shown in the home and onboarding headers. Centralized so a
+  // change to the wordmark treatment lands in one place instead of per screen.
+  wordmark: {
+    color: COLORS.brand,
+    fontSize: FONT_SIZE.eyebrow,
+    fontWeight: FONT_WEIGHT.extrabold,
+    letterSpacing: LETTER_SPACING.wordmark,
   },
   formCard: {
     ...cardSurface,

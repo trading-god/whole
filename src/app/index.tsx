@@ -3,7 +3,6 @@ import Head from "expo-router/head";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  ActivityIndicator,
   Alert,
   Pressable,
   ScrollView,
@@ -37,6 +36,7 @@ import {
 } from "@/features/assets/display-currency-store";
 import { computeNetWorthTrend } from "@/features/assets/net-worth-history";
 import { useAssetAccounts } from "@/features/assets/use-asset-accounts";
+import { loadUserName } from "@/features/onboarding/onboarding-store";
 import { useAppLocale } from "@/i18n";
 import { COLORS } from "@/theme/colors";
 import { useResponsiveLayout } from "@/theme/layout";
@@ -46,7 +46,7 @@ import {
   cardSurface,
   screenStyles,
 } from "@/theme/screen-styles";
-import { CHIP_RADIUS } from "@/theme/sizes";
+import { ACCOUNT_ROW_HEIGHT, CHIP_RADIUS } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
 import {
   FONT_SIZE,
@@ -86,6 +86,7 @@ export default function Index() {
     snapshots,
     snapshotsInBaseCurrency,
     rates,
+    ratesReady,
     error: accountLoadingFailed,
     isLoading: accountsAreLoading,
     removeAccount,
@@ -97,6 +98,9 @@ export default function Index() {
   const [displayCurrency, setDisplayCurrency] = useState<Currency>(
     defaultDisplayCurrency,
   );
+  // The name captured during onboarding; "" until the stored value loads (or
+  // if onboarding was skipped), in which case the greeting falls back.
+  const [userName, setUserName] = useState("");
 
   useEffect(() => {
     let stale = false;
@@ -114,6 +118,23 @@ export default function Index() {
       stale = true;
     };
   }, [defaultDisplayCurrency]);
+
+  useEffect(() => {
+    let stale = false;
+    void loadUserName()
+      .then((stored) => {
+        if (!stale) {
+          setUserName(stored);
+        }
+      })
+      .catch(() => {
+        // A storage read failure leaves the greeting on the generic fallback
+        // rather than surfacing an unhandled rejection.
+      });
+    return () => {
+      stale = true;
+    };
+  }, []);
 
   // orderedDisplayCurrencies is a cheap 4-element sort and CurrencyPicker
   // isn't memo'd, so no useMemo is needed (a stable ref would have no consumer).
@@ -155,7 +176,7 @@ export default function Index() {
   // Empty state: with no accounts the total is genuinely 0, so show 0.00 (not
   // a placeholder dash) plus a hint nudging the user to add an account. The
   // dash is reserved for "accounts exist but rates couldn't be fetched".
-  const isWaiting = accountsAreLoading || accountLoadingFailed;
+  const isWaiting = accountsAreLoading || accountLoadingFailed || !ratesReady;
   const showEmptyBalanceHint = !isWaiting && accounts.length === 0;
   const totalDisplayValue = (() => {
     if (isWaiting) {
@@ -221,14 +242,16 @@ export default function Index() {
         >
           <View style={styles.header}>
             <View style={styles.headerCopy}>
-              <Text style={styles.wordmark}>{t("common.wordmark")}</Text>
+              <Text style={screenStyles.wordmark}>{t("common.wordmark")}</Text>
               <Text
                 numberOfLines={1}
                 adjustsFontSizeToFit
                 minimumFontScale={0.6}
                 style={styles.greeting}
               >
-                {t("home.greeting", { name: "Jack" })}
+                {userName
+                  ? t("home.greeting", { name: userName })
+                  : t("home.greetingFallback")}
               </Text>
             </View>
             <View style={styles.headerActions}>
@@ -284,7 +307,16 @@ export default function Index() {
                   </Text>
                 ) : null}
               </View>
-              {trend.changePercent !== null ? (
+              {accountsAreLoading || !ratesReady ? (
+                <View
+                  style={[
+                    styles.changePill,
+                    isCompact && styles.changePillCompact,
+                  ]}
+                >
+                  <View style={styles.pillPlaceholder} />
+                </View>
+              ) : trend.changePercent !== null ? (
                 <View
                   style={[
                     styles.changePill,
@@ -405,12 +437,7 @@ export default function Index() {
 
           <View style={styles.accountsCard}>
             {accountsAreLoading ? (
-              <View style={styles.accountStatus}>
-                <ActivityIndicator color={COLORS.brand} size="small" />
-                <Text style={styles.accountStatusText}>
-                  {t("home.loadingAccounts")}
-                </Text>
-              </View>
+              <View style={styles.accountsPlaceholder} />
             ) : accountLoadingFailed ? (
               <View style={styles.accountStatus}>
                 <Text style={styles.accountErrorText}>
@@ -463,12 +490,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexShrink: 0,
     gap: SPACING.xs,
-  },
-  wordmark: {
-    color: COLORS.brand,
-    fontSize: FONT_SIZE.eyebrow,
-    fontWeight: FONT_WEIGHT.extrabold,
-    letterSpacing: LETTER_SPACING.wordmark,
   },
   greeting: {
     color: COLORS.ink,
@@ -543,6 +564,15 @@ const styles = StyleSheet.create({
   },
   changePillCompact: {
     alignSelf: "flex-start",
+  },
+  // Transparent block reserving the trend pill's footprint while account data
+  // loads, so the pill's appearance doesn't re-flow the total-balance font
+  // (wide) or grow the card (compact). Sized to match the real pill's icon
+  // (14) + eyebrow text line.
+  pillPlaceholder: {
+    backgroundColor: "transparent",
+    height: 14,
+    width: 48,
   },
   changeText: {
     color: COLORS.accentOnDark,
@@ -639,12 +669,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flexDirection: "row",
     justifyContent: "center",
-    minHeight: 76,
+    minHeight: ACCOUNT_ROW_HEIGHT,
   },
-  accountStatusText: {
-    color: COLORS.muted,
-    fontSize: FONT_SIZE.eyebrow,
-    marginLeft: SPACING.sm,
+  // Invisible placeholder holding the accounts card's height while the local
+  // accounts load (fast). Transparent so it blends with the card surface — no
+  // skeleton/spinner flash — and ACCOUNT_ROW_HEIGHT matches a real row.
+  accountsPlaceholder: {
+    backgroundColor: "transparent",
+    minHeight: ACCOUNT_ROW_HEIGHT,
   },
   accountErrorText: {
     color: COLORS.muted,

@@ -32,3 +32,8 @@ export const CHIP_RADIUS = 13;
 // capsule height so the chip family stays on one value. Compact controls
 // (currency trigger, inline delete) keep their own calibrated 28pt height.
 export const CHIP_HEIGHT = 34;
+
+// Account row height — the standard collapsed row's minimum height, shared by
+// AccountRow and the home screen's loading/error placeholders so the accounts
+// card reserves a consistent footprint before any rows render.
+export const ACCOUNT_ROW_HEIGHT = 76;

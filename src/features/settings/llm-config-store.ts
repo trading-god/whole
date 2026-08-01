@@ -18,6 +18,19 @@ export const llmConfigSchema = z.object({
 
 export type LlmConfig = z.infer<typeof llmConfigSchema>;
 
+// Whether any field holds a non-empty value — the "treat an all-empty form as a
+// skip / clearable" heuristic shared by Settings (Clear gating) and onboarding
+// (finish/skip gating). Lives next to the schema so the field set has one owner.
+export function hasLlmConfigContent(config: {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}): boolean {
+  return [config.baseUrl, config.apiKey, config.model].some(
+    (value) => value.trim().length > 0,
+  );
+}
+
 const BASE_URL_KEY = "whole.llm.baseUrl";
 const API_KEY_KEY = "whole.llm.apiKey";
 const MODEL_KEY = "whole.llm.model";

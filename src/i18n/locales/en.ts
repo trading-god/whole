@@ -10,6 +10,7 @@ export const enMessages = {
     settings: "Settings",
     cancel: "Cancel",
     required: "Required",
+    stepIndicator: "Step {{current}} of {{total}}",
   },
   metadata: {
     homeTitle: "Whole — Your complete asset overview",
@@ -18,6 +19,9 @@ export const enMessages = {
     newAccountDescription: "Add an account to Whole and confirm its details.",
     settingsTitle: "Settings — Whole",
     settingsDescription: "Configure account screenshot recognition.",
+    onboardingTitle: "Get started — Whole",
+    onboardingDescription:
+      "Set up your name and model to get started with Whole.",
     notFoundTitle: "Page not found — Whole",
     accountDetailTitle: "Edit account — Whole",
     accountDetailDescription:
@@ -25,6 +29,7 @@ export const enMessages = {
   },
   home: {
     greeting: "Hello, {{name}}",
+    greetingFallback: "Hello",
     totalAssetsLabel: "Total assets · in",
     displayCurrency: "Display currency",
     pastMonths: "Past {{count}} months",
@@ -40,7 +45,6 @@ export const enMessages = {
     digitalAssets: "Digital assets",
     myAccounts: "My accounts",
     add: "Add",
-    loadingAccounts: "Loading accounts",
     accountLoadError: "Unable to load accounts. Reopen Whole to try again.",
     accountDataPrivacy:
       "Account data is used only to create your asset overview",
@@ -176,6 +180,25 @@ export const enMessages = {
     testing: "Testing…",
     testSuccess: "Connected",
     testFailed: "Failed",
+  },
+  onboarding: {
+    nameTitle: "Welcome to Whole",
+    nameSubtitle:
+      "Tell us what to call you — it'll greet you on the home screen.",
+    nameLabel: "Name",
+    namePlaceholder: "e.g. Alex",
+    modelTitle: "Connect your model",
+    modelSubtitle:
+      "Whole calls an OpenAI-compatible vision model to read account screenshots. Fill this in now, or skip and set it up later in Settings.",
+    modelHint: "You can test the connection later in Settings.",
+    modelInvalid: "Enter both a base URL and a model, or skip",
+    next: "Next",
+    back: "Back",
+    finish: "Get started",
+    skip: "Skip for now",
+    completionErrorTitle: "Couldn't finish setup",
+    completionErrorMessage:
+      "Something went wrong saving your progress. Try again.",
   },
   notFound: {
     screenTitle: "Page not found",

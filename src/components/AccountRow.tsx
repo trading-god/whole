@@ -30,6 +30,7 @@ import { type ExchangeRates } from "@/features/assets/currency-conversion";
 import { type Currency } from "@/features/assets/currencies";
 import { useAppLocale } from "@/i18n";
 import { COLORS } from "@/theme/colors";
+import { ACCOUNT_ROW_HEIGHT } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
 import { FONT_SIZE, FONT_WEIGHT, LETTER_SPACING } from "@/theme/typography";
 
@@ -284,7 +285,7 @@ export const AccountRow = memo(function AccountRow({
 
 const styles = StyleSheet.create({
   rowShell: {
-    minHeight: 76,
+    minHeight: ACCOUNT_ROW_HEIGHT,
     overflow: "hidden",
     position: "relative",
   },
@@ -301,7 +302,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: COLORS.card,
     flexDirection: "row",
-    minHeight: 76,
+    minHeight: ACCOUNT_ROW_HEIGHT,
     paddingHorizontal: SPACING.lg,
   },
   accountIcon: {

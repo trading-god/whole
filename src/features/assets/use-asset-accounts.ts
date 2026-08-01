@@ -38,6 +38,11 @@ type AssetAccountsState = {
   // legacy-currency delta mislabeled as the base currency.
   snapshotsInBaseCurrency: boolean;
   rates: ExchangeRates;
+  // False until the focus effect adopts rates for the current cycle. Gates the
+  // total/pill "—"/placeholder so they wait for rates (which may hit the
+  // network) while accounts (local) show immediately. Never reset to false — a
+  // cache-hot refocus preserves it via the stage-1 bail-out.
+  ratesReady: boolean;
   error: boolean;
   isLoading: boolean;
 };
@@ -48,6 +53,7 @@ const initialAssetAccountsState: AssetAccountsState = {
   snapshots: [],
   snapshotsInBaseCurrency: true,
   rates: {} as ExchangeRates,
+  ratesReady: false,
   error: false,
   isLoading: true,
 };
@@ -144,94 +150,109 @@ export function useAssetAccounts() {
 
       void (async () => {
         try {
-          // Capture the ref before the await so a removeAccount that runs while
-          // the rates/accounts load can be detected — it would update
-          // accountsRef to the post-remove list, and clobbering it back to the
-          // (stale, pre-remove) loaded accounts would resurrect the removed
-          // account in the UI and let a later remove re-add it to storage.
+          // Capture the ref before any await so a removeAccount that runs
+          // during stage 1 is detected — it would update accountsRef to the
+          // post-remove list, and clobbering it back to the (stale, pre-remove)
+          // loaded accounts would resurrect the removed account in the UI and
+          // let a later remove re-add it to storage.
           const prevAccountsRef = accountsRef.current;
-          // Rates depend on the base currency; accounts depend on neither. So
-          // overlap the two storage reads (base + accounts) and chain the
-          // (potentially network-backed) rate fetch off the base, so nothing
-          // serializes behind work it doesn't need.
-          const basePromise = loadBaseCurrency(defaultDisplayCurrency);
-          const accountsPromise = listAssetAccounts();
-          const ratesPromise = basePromise.then((base) =>
-            loadExchangeRates(base),
-          );
-          const [base, accounts, rates] = await Promise.all([
-            basePromise,
-            accountsPromise,
-            ratesPromise,
-          ]);
 
+          // Stage 1: local base + accounts (fast). Rates are split out (stage 2)
+          // because loadExchangeRates may hit the network (1-3s when the 6h
+          // cache is stale) — accounts shouldn't wait on it. Cross-rate math is
+          // base-invariant (rates[from] / rates[to], base cancels), so adopting
+          // base here and rates in stage 2 yields correct conversions throughout.
+          const [base, accounts] = await Promise.all([
+            loadBaseCurrency(defaultDisplayCurrency),
+            listAssetAccounts(),
+          ]);
           if (!isActive) {
             return;
           }
-
           // Only adopt the loaded accounts when no remove changed the ref
           // during the await; otherwise keep the post-remove list the ref holds.
           if (accountsRef.current === prevAccountsRef) {
             accountsRef.current = accounts;
           }
-          ratesRef.current = rates;
+          // base is always adopted — removeAccount never writes baseCurrencyRef.
           baseCurrencyRef.current = base;
+          setState((currentState) => {
+            // Bail out on a cache-hot refocus: accounts/base already current
+            // and not loading. Don't touch ratesReady — stage 2 owns it, and
+            // leaving it untouched preserves a prior true on refocus.
+            if (
+              currentState.accounts === accountsRef.current &&
+              currentState.baseCurrency === base &&
+              !currentState.error &&
+              !currentState.isLoading
+            ) {
+              return currentState;
+            }
+            return {
+              ...currentState,
+              accounts: accountsRef.current,
+              baseCurrency: base,
+              error: false,
+              isLoading: false,
+            };
+          });
 
-          // Migrate legacy snapshots to the base currency before recording a
-          // new one, so SGD and base samples never mix and distort the delta.
-          // Record against the ref (the current account list) so a remove
-          // during the await records the post-remove total, not the stale
-          // loaded one.
+          // Stage 2: rates (network or cache; never throws). Use the captured
+          // base, not baseCurrencyRef.current, so a re-focus that changed the
+          // ref can't fetch rates for the wrong base — that re-focus already
+          // set isActive=false on this run, neutering the stages below.
+          const rates = await loadExchangeRates(base);
+          if (!isActive) {
+            return;
+          }
+          ratesRef.current = rates;
+          setState((currentState) =>
+            currentState.rates === rates && currentState.ratesReady
+              ? currentState
+              : {
+                  ...currentState,
+                  rates,
+                  ratesReady: true,
+                },
+          );
+
+          // Stage 3: record today's snapshot (needs rates for the total).
+          // Capture accountsRef at call time so the snapshot reflects the
+          // current list (post-remove if a remove raced); the stillCurrent
+          // check below detects a remove that lands during this await.
+          const accountsAtStage3Start = accountsRef.current;
           const snapshotResult = await recordSnapshotForAccounts(
-            accountsRef.current,
+            accountsAtStage3Start,
             base,
             rates,
           );
-
-          if (isActive) {
-            // Functional update so a removeAccount that ran during the await
-            // above isn't clobbered: removeAccount updates accountsRef.current
-            // and state.snapshots, so take the latest accounts from the ref and
-            // keep its snapshots when a remove changed the ref (the ref no
-            // longer === the loaded `accounts`).
-            setState((currentState) => {
-              const stillCurrent = accountsRef.current === accounts;
-              const snapshots = stillCurrent
-                ? snapshotResult.snapshots
-                : currentState.snapshots;
-              const snapshotsInBaseCurrency = stillCurrent
-                ? snapshotResult.inBaseCurrency
-                : currentState.snapshotsInBaseCurrency;
-              // Bail out when every field is reference-equal to the current
-              // state so a cache-hot refocus (the common case after first load)
-              // doesn't allocate a new object and needlessly re-render the home
-              // screen — React skips the render when the updater returns the
-              // same state reference.
-              if (
-                currentState.accounts === accountsRef.current &&
-                currentState.baseCurrency === base &&
-                currentState.rates === rates &&
-                currentState.snapshots === snapshots &&
-                currentState.snapshotsInBaseCurrency ===
-                  snapshotsInBaseCurrency &&
-                !currentState.error &&
-                !currentState.isLoading
-              ) {
-                return currentState;
-              }
-              return {
-                ...currentState,
-                accounts: accountsRef.current,
-                baseCurrency: base,
-                rates,
-                snapshots,
-                snapshotsInBaseCurrency,
-                error: false,
-                isLoading: false,
-              };
-            });
+          if (!isActive) {
+            return;
           }
+          setState((currentState) => {
+            const stillCurrent = accountsRef.current === accountsAtStage3Start;
+            const snapshots = stillCurrent
+              ? snapshotResult.snapshots
+              : currentState.snapshots;
+            const snapshotsInBaseCurrency = stillCurrent
+              ? snapshotResult.inBaseCurrency
+              : currentState.snapshotsInBaseCurrency;
+            if (
+              currentState.snapshots === snapshots &&
+              currentState.snapshotsInBaseCurrency === snapshotsInBaseCurrency
+            ) {
+              return currentState;
+            }
+            return {
+              ...currentState,
+              snapshots,
+              snapshotsInBaseCurrency,
+            };
+          });
         } catch {
+          // Only stage 1 can throw (local SQLite); loadExchangeRates and
+          // recordSnapshotForAccounts never throw. ratesReady is left untouched
+          // (spread preserves a prior true; stays false on a first-load failure).
           if (isActive) {
             setState((currentState) => ({
               ...currentState,

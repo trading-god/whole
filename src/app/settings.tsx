@@ -7,14 +7,15 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Button } from "@/components/Button";
 import { ButtonBase } from "@/components/ButtonBase";
 import { ButtonGroup } from "@/components/ButtonGroup";
-import { FormField } from "@/components/FormField";
 import { KeyboardAvoidingView } from "@/components/KeyboardAvoidingView";
 import { PrivacyNote } from "@/components/PrivacyNote";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { testLlmConnection } from "@/features/settings/llm-client";
+import { LlmConfigFields } from "@/features/settings/llm-config-fields";
 import {
   type LlmConfig,
   clearLlmConfig,
+  hasLlmConfigContent,
   llmConfigSchema,
   loadLlmConfig,
   saveLlmConfig,
@@ -70,9 +71,7 @@ export default function SettingsScreen() {
         setBaseUrl(config.baseUrl);
         setApiKey(config.apiKey);
         setModel(config.model);
-        setIsConfigured(
-          Boolean(config.baseUrl || config.model || config.apiKey),
-        );
+        setIsConfigured(hasLlmConfigContent(config));
         setHasLoadedConfig(true);
       })
       .catch(() => {
@@ -127,9 +126,7 @@ export default function SettingsScreen() {
     () => llmConfigSchema.safeParse({ baseUrl, apiKey, model }),
     [baseUrl, apiKey, model],
   );
-  const hasContent = [baseUrl, apiKey, model].some(
-    (value) => value.trim().length > 0,
-  );
+  const hasContent = hasLlmConfigContent({ baseUrl, apiKey, model });
   // Clear 与 Save 互不依赖：保存中无需禁用 Clear。保存期间两个按钮都通过
   // Button 的 loading 态保持各自外观、仅阻止按压，避免整条底栏灰化闪烁。
   // Save is also disabled while a connectivity test is in flight, so pressing
@@ -317,60 +314,33 @@ export default function SettingsScreen() {
               </Text>
             </View>
 
-            <View style={styles.formCard}>
-              <FormField
-                autoCapitalize="none"
-                editable={hasLoadedConfig}
-                keyboardType="url"
-                label={t("settings.baseUrl")}
-                required
-                onChangeText={(value) => updateField(setBaseUrl, value)}
-                placeholder={t("settings.baseUrlPlaceholder")}
-                value={baseUrl}
-                trailingLayout="responsive"
-                trailing={
-                  <ButtonBase
-                    accessibilityLabel={testLabel}
-                    disabled={testDisabled}
-                    hitSlop={8}
-                    onPress={() => {
-                      if (parsedForm.success) {
-                        void runTest(parsedForm.data);
-                      }
-                    }}
-                    baseStyle={[styles.testInlineButton, testStateStyle.button]}
-                    pressedStyle={styles.pressed}
-                  >
-                    <Text style={[styles.testInlineText, testStateStyle.text]}>
-                      {testLabel}
-                    </Text>
-                  </ButtonBase>
-                }
-              />
-
-              <View style={styles.fieldDivider} />
-
-              <FormField
-                autoCapitalize="none"
-                editable={hasLoadedConfig}
-                label={t("settings.apiKey")}
-                onChangeText={(value) => updateField(setApiKey, value)}
-                placeholder={t("settings.apiKeyPlaceholder")}
-                value={apiKey}
-              />
-
-              <View style={styles.fieldDivider} />
-
-              <FormField
-                autoCapitalize="none"
-                editable={hasLoadedConfig}
-                label={t("settings.model")}
-                required
-                onChangeText={(value) => updateField(setModel, value)}
-                placeholder={t("settings.modelPlaceholder")}
-                value={model}
-              />
-            </View>
+            <LlmConfigFields
+              baseUrl={baseUrl}
+              apiKey={apiKey}
+              model={model}
+              editable={hasLoadedConfig}
+              onBaseUrlChange={(value) => updateField(setBaseUrl, value)}
+              onApiKeyChange={(value) => updateField(setApiKey, value)}
+              onModelChange={(value) => updateField(setModel, value)}
+              baseUrlTrailing={
+                <ButtonBase
+                  accessibilityLabel={testLabel}
+                  disabled={testDisabled}
+                  hitSlop={8}
+                  onPress={() => {
+                    if (parsedForm.success) {
+                      void runTest(parsedForm.data);
+                    }
+                  }}
+                  baseStyle={[styles.testInlineButton, testStateStyle.button]}
+                  pressedStyle={styles.pressed}
+                >
+                  <Text style={[styles.testInlineText, testStateStyle.text]}>
+                    {testLabel}
+                  </Text>
+                </ButtonBase>
+              }
+            />
 
             <PrivacyNote message={t("settings.privacy")} />
           </ScrollView>
