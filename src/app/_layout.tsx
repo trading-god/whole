@@ -74,8 +74,14 @@ export default function RootLayout() {
   }, []);
 
   // Stable context value so the provider doesn't hand consumers a new object
-  // on every layout render (useSegments re-runs on every navigation).
-  const onboardingValue = useMemo(() => ({ complete }), [complete]);
+  // on every layout render (useSegments re-runs on every navigation). The
+  // `isOnboarded === true` mapping keeps the value a plain boolean — the null
+  // loading state is covered by the splash gate above (children never mount
+  // while it's still null), so consumers only observe true/false.
+  const onboardingValue = useMemo(
+    () => ({ isOnboarded: isOnboarded === true, complete }),
+    [complete, isOnboarded],
+  );
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

@@ -8,10 +8,12 @@
     "scheme": "whole",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/images/icon.png"
+      "icon": "./assets/images/icon.png",
+      "bundleIdentifier": "com.whole.app"
     },
     "android": {
       "icon": "./assets/images/icon.png",
+      "package": "com.whole.app",
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -35,7 +37,12 @@
       "zh-Hans": "./config/locales/zh-Hans.json"
     },
     "plugins": [
-      "expo-router",
+      [
+        "expo-router",
+        {
+          "headOrigin": "https://whole.app"
+        }
+      ],
       [
         "expo-image-picker",
         {
@@ -55,9 +62,9 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
+          "backgroundColor": "#F4F6F2",
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "imageWidth": 320
         }
       ],
       [

@@ -36,7 +36,8 @@ import {
 } from "@/features/assets/display-currency-store";
 import { computeNetWorthTrend } from "@/features/assets/net-worth-history";
 import { useAssetAccounts } from "@/features/assets/use-asset-accounts";
-import { loadUserName } from "@/features/onboarding/onboarding-store";
+import { useOnboardingState } from "@/features/onboarding/onboarding-context";
+import { loadUserName } from "@/features/user/user-store";
 import { useAppLocale } from "@/i18n";
 import { COLORS } from "@/theme/colors";
 import { useResponsiveLayout } from "@/theme/layout";
@@ -54,6 +55,10 @@ import {
   LETTER_SPACING,
   LINE_HEIGHT,
 } from "@/theme/typography";
+
+// Icon size for the trend change pill. Shared by the <Icon> and its loading
+// placeholder so the pill's footprint doesn't re-flow when the icon swaps in.
+const PILL_ICON_SIZE = 14;
 
 // Largest-remainder rounding so the legend percentages always sum to 100 —
 // naive per-kind Math.round can sum to 99 or 101 (e.g. 33/33/33). Returns all
@@ -76,6 +81,22 @@ function roundPercentages(shares: readonly number[]): number[] {
 }
 
 export default function Index() {
+  // First-run guard. The root layout's auth gate redirects un-onboarded users
+  // to /onboarding, but expo-router still mounts this screen for a frame
+  // before the `replace` lands — and the splash screen doesn't always cover
+  // that window under SDK 57. Render a blank surface (matching the app
+  // background) until the gate clears, so the worst case is a seamless
+  // blank → onboarding transition instead of home → onboarding. The real home
+  // UI lives in <HomeScreen /> below so its hooks (account loading, etc.) only
+  // run once onboarding is complete.
+  const isOnboarded = useOnboardingState();
+  if (!isOnboarded) {
+    return <View style={screenStyles.safeArea} />;
+  }
+  return <HomeScreen />;
+}
+
+function HomeScreen() {
   const { formatCurrency, languageTag } = useAppLocale();
   const { t } = useTranslation();
   const router = useRouter();
@@ -173,9 +194,10 @@ export default function Index() {
     }));
   }, [totalsByKind, t]);
   const hasDistribution = displayTotal !== null && displayTotal > 0;
-  // Empty state: with no accounts the total is genuinely 0, so show 0.00 (not
-  // a placeholder dash) plus a hint nudging the user to add an account. The
-  // dash is reserved for "accounts exist but rates couldn't be fetched".
+  // While accounts or rates are still loading (or a load failed) show "—".
+  // Once settled: no accounts → 0.00 plus a hint to add an account (the total
+  // is genuinely 0); accounts present but the total didn't convert (rates
+  // unavailable for every balance) → "—"; otherwise the formatted total.
   const isWaiting = accountsAreLoading || accountLoadingFailed || !ratesReady;
   const showEmptyBalanceHint = !isWaiting && accounts.length === 0;
   const totalDisplayValue = (() => {
@@ -327,7 +349,7 @@ export default function Index() {
                     name={
                       trend.changePercent >= 0 ? "trending-up" : "trending-down"
                     }
-                    size={14}
+                    size={PILL_ICON_SIZE}
                     color={COLORS.accentOnDark}
                   />
                   <Text style={styles.changeText}>
@@ -565,13 +587,13 @@ const styles = StyleSheet.create({
   changePillCompact: {
     alignSelf: "flex-start",
   },
-  // Transparent block reserving the trend pill's footprint while account data
-  // loads, so the pill's appearance doesn't re-flow the total-balance font
-  // (wide) or grow the card (compact). Sized to match the real pill's icon
-  // (14) + eyebrow text line.
+  // Transparent block reserving the trend pill's footprint while account or
+  // rate data loads, so the pill's appearance doesn't re-flow the
+  // total-balance font (wide) or grow the card (compact). Sized to match the
+  // real pill's icon (PILL_ICON_SIZE) + eyebrow text line.
   pillPlaceholder: {
     backgroundColor: "transparent",
-    height: 14,
+    height: PILL_ICON_SIZE,
     width: 48,
   },
   changeText: {

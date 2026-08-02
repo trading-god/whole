@@ -57,6 +57,36 @@ const webIcons = [
   ["public/icons/pwa-512.png", 512, 0.8],
 ];
 
+// Transparent (when `background` is null) or solid-fill RGBA canvas. Shared by
+// `renderIcon` and `renderSplashIcon` so the create-config lives in one place.
+function createCanvas(size, background) {
+  return sharp({
+    create: {
+      width: size,
+      height: size,
+      channels: 4,
+      background: background ?? { r: 0, g: 0, b: 0, alpha: 0 },
+    },
+  });
+}
+
+// Writes a PNG at compression level 9, creating parent dirs as needed.
+async function writePng(image, output) {
+  const outputPath = resolve(projectRoot, output);
+  await mkdir(dirname(outputPath), { recursive: true });
+  await image.png({ compressionLevel: 9 }).toFile(outputPath);
+}
+
+// Rasterizes an SVG to a square PNG buffer at `size`, preserving aspect ratio
+// (`fit: "contain"` never crops the artwork). Shared by `renderIcon` (artwork)
+// and `renderSplashIcon` (logo) so the rasterize params live in one place.
+function rasterizeSvg(svg, size) {
+  return sharp(Buffer.from(svg))
+    .resize(size, size, { fit: "contain" })
+    .png()
+    .toBuffer();
+}
+
 async function renderIcon({
   output,
   size,
@@ -64,38 +94,65 @@ async function renderIcon({
   svg = sourceSvg,
   background = colors.background,
 }) {
-  const outputPath = resolve(projectRoot, output);
   const artworkSize = Math.round(size * scale);
-  const artwork = await sharp(Buffer.from(svg))
-    .resize(artworkSize, artworkSize, { fit: "contain" })
-    .png()
-    .toBuffer();
+  const artwork = await rasterizeSvg(svg, artworkSize);
 
-  let image = sharp({
-    create: {
-      width: size,
-      height: size,
-      channels: 4,
-      background: background ?? { r: 0, g: 0, b: 0, alpha: 0 },
-    },
-  }).composite([{ input: artwork, gravity: "center" }]);
+  let image = createCanvas(size, background).composite([
+    { input: artwork, gravity: "center" },
+  ]);
 
   if (background) {
     image = image.flatten({ background }).removeAlpha();
   }
 
-  await mkdir(dirname(outputPath), { recursive: true });
-  await image.png({ compressionLevel: 9 }).toFile(outputPath);
+  await writePng(image, output);
+}
+
+// Splash icon composites the logo with the WHOLE wordmark and slogan so the
+// native launch screen reads as a complete brand mark (logo-only felt sparse).
+// Drawn on a transparent 1024² canvas; the launch screen `backgroundColor`
+// fills behind it. Text is baked as bitmap, so the slogan stays in the
+// canonical English brand copy (AGENTS.md) and the wordmark treatment mirrors
+// `screenStyles.wordmark` — brand color, extrabold, wide tracking scaled to
+// the baked font size.
+async function renderSplashIcon({ output, size }) {
+  const logoSize = Math.round(size * 0.47);
+  const fontFamily = "Helvetica Neue, Helvetica, Arial, sans-serif";
+  const wordmarkSize = Math.round(size * 0.082);
+  const wordmarkTracking = Math.round(size * 0.0137);
+  const sloganSize = Math.round(size * 0.04);
+  const cx = size / 2;
+
+  const textSvg = `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
+<text x="${cx}" y="${Math.round(size * 0.73)}" font-family="${fontFamily}" font-size="${wordmarkSize}" font-weight="800" letter-spacing="${wordmarkTracking}" fill="#098765" text-anchor="middle">WHOLE</text>
+<text x="${cx}" y="${Math.round(size * 0.8)}" font-family="${fontFamily}" font-size="${sloganSize}" font-weight="500" fill="#14231D" text-anchor="middle">Your whole financial life,</text>
+<text x="${cx}" y="${Math.round(size * 0.845)}" font-family="${fontFamily}" font-size="${sloganSize}" font-weight="500" fill="#14231D" text-anchor="middle">in one place.</text>
+</svg>`;
+
+  // Logo and wordmark are independent pipelines — rasterize them in parallel
+  // rather than awaiting one before starting the other.
+  const [logo, textImage] = await Promise.all([
+    rasterizeSvg(sourceSvg, logoSize),
+    sharp(Buffer.from(textSvg)).png().toBuffer(),
+  ]);
+
+  const logoLeft = Math.round((size - logoSize) / 2);
+  const logoTop = Math.round(size * 0.14);
+
+  const image = createCanvas(size).composite([
+    { input: logo, left: logoLeft, top: logoTop },
+    { input: textImage },
+  ]);
+
+  await writePng(image, output);
 }
 
 const jobs = [
   // Expo/EAS consumes these five master assets.
   renderIcon({ output: "assets/images/icon.png", size: 1024, scale: 0.8 }),
-  renderIcon({
+  renderSplashIcon({
     output: "assets/images/splash-icon.png",
     size: 1024,
-    scale: 0.8,
-    background: null,
   }),
   renderIcon({
     output: "assets/images/android-icon-foreground.png",

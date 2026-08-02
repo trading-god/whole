@@ -12,7 +12,6 @@ import {
   ActivityIndicator,
   Alert,
   BackHandler,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -26,17 +25,19 @@ import Animated, {
   SlideOutRight,
 } from "react-native-reanimated";
 
+import { ButtonBase } from "@/components/ButtonBase";
 import { FormField } from "@/components/FormField";
 import { IconButton } from "@/components/IconButton";
 import { KeyboardAvoidingView } from "@/components/KeyboardAvoidingView";
 import { PrivacyNote } from "@/components/PrivacyNote";
 import { StepIndicator } from "@/components/StepIndicator";
 import { useCompleteOnboarding } from "@/features/onboarding/onboarding-context";
+import { markOnboardingCompleted } from "@/features/onboarding/onboarding-store";
 import {
-  markOnboardingCompleted,
   saveUserName,
+  USER_NAME_MAX_LENGTH,
   userNameSchema,
-} from "@/features/onboarding/onboarding-store";
+} from "@/features/user/user-store";
 import { LlmConfigFields } from "@/features/settings/llm-config-fields";
 import {
   hasLlmConfigContent,
@@ -94,7 +95,9 @@ export default function OnboardingScreen() {
       return;
     }
     // Persist the name as the user leaves step 0, so it survives even if they
-    // later skip the model step.
+    // later skip the model step. Best-effort: the name is a non-critical
+    // preference, so a failed write just falls back to the generic greeting
+    // rather than blocking the step transition with an alert.
     void saveUserName(nameParse.data).catch(() => {});
     setDirection("forward");
     startTransition(() => {
@@ -231,7 +234,7 @@ export default function OnboardingScreen() {
                   <FormField
                     autoCapitalize="words"
                     label={t("onboarding.nameLabel")}
-                    maxLength={30}
+                    maxLength={USER_NAME_MAX_LENGTH}
                     placeholder={t("onboarding.namePlaceholder")}
                     required
                     value={name}
@@ -254,7 +257,7 @@ export default function OnboardingScreen() {
                   <Text style={screenStyles.formHint}>
                     {t("onboarding.modelHint")}
                   </Text>
-                  {hasModelContent && !parsedModel.success ? (
+                  {!canFinish ? (
                     <Text style={styles.errorHint}>
                       {t("onboarding.modelInvalid")}
                     </Text>
@@ -302,17 +305,16 @@ export default function OnboardingScreen() {
             </View>
             <View style={styles.skipRow}>
               {step === 1 ? (
-                <Pressable
+                <ButtonBase
                   accessibilityLabel={t("onboarding.skip")}
-                  accessibilityRole="button"
-                  accessibilityState={{ disabled: isFinishing }}
                   disabled={isFinishing}
                   hitSlop={12}
                   onPress={() => void completeOnboarding(true)}
-                  style={styles.skipButton}
+                  baseStyle={styles.skipButton}
+                  pressedStyle={screenStyles.pressed}
                 >
                   <Text style={styles.skipText}>{t("onboarding.skip")}</Text>
-                </Pressable>
+                </ButtonBase>
               ) : null}
             </View>
           </View>
