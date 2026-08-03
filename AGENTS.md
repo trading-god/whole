@@ -21,6 +21,31 @@ Use pnpm exclusively for dependency installation and package scripts.
   repository.
 - Use `pnpm install`, `pnpm <script>`, and `pnpm exec <binary>` instead.
 
+## Technology stack
+
+- [Expo SDK 57](https://docs.expo.dev/versions/v57.0.0/)
+- React 19 and React Native 0.86
+- Expo Router with typed routes and static web rendering
+- TypeScript
+- ESLint with Expo's recommended rules
+- Prettier
+- `i18next` and `react-i18next`
+- `expo-localization`
+- AsyncStorage
+- `expo-image-picker` and `expo-media-library`
+
+## Brand assets
+
+The source logo is `assets/branding/whole-logo.svg`. Regenerate platform
+assets with:
+
+```bash
+pnpm generate:icons
+```
+
+Generated icons under `assets/app-icons/` should not be edited manually. Update
+the source artwork or the generator instead.
+
 # Code Quality
 
 ESLint enforces the Expo, React Native, React Hooks, TypeScript, and import
@@ -28,6 +53,8 @@ rules. Prettier is the only formatter.
 
 - Run `pnpm lint`, `pnpm format:check`, and `pnpm exec tsc --noEmit` before
   submitting a change.
+- Run `pnpm exec expo export --platform web` to verify static web output
+  builds.
 - Run `pnpm format` to format all supported, non-ignored files.
 - Keep `eslint-plugin-prettier/recommended` after `eslint-config-expo/flat` in
   the ESLint Flat Config so formatting conflicts are disabled and formatting
@@ -40,6 +67,21 @@ rules. Prettier is the only formatter.
   tooling.
 
 # Architecture & Conventions
+
+## Project layout
+
+```text
+config/locales/        Native permission translations
+public/                PWA manifest and public web assets
+scripts/               Repeatable asset-generation scripts
+src/app/               Expo Router routes and layouts
+src/features/assets/   Account storage, currencies, and screenshot cleanup
+src/i18n/              Runtime localization, message catalogs, and terminology
+assets/branding/       Source brand artwork
+assets/app-icons/      Generated platform icon deliverables
+eslint.config.js        Expo ESLint and Prettier integration
+.prettierignore         Generated files excluded from formatting
+```
 
 ## Technical Decisions
 
@@ -114,12 +156,24 @@ rather than runtime `Platform.OS` branches scattered through feature code.
 
 ## Internationalization
 
+Whole uses the standard React localization stack: `expo-localization` detects
+the system locale, `i18next` handles resources, fallback, interpolation, and
+plurals, and `react-i18next` connects localization to the React rendering
+lifecycle. Native permission copy is a build-time concern and lives in
+`config/locales/*.json`.
+
 - All user-visible text goes through i18next (`src/i18n/locales/en.ts` and
   `zh-Hans.ts`). Keep the two locale files synchronized: every new key is
   added to both.
+- Use semantic translation keys through `useTranslation()`; do not embed
+  user-facing copy directly in UI code.
 - Format money through `useAppLocale().formatCurrency`. Do not hand-build
   currency strings — the explicit symbol table exists because Hermes' `Intl`
   currency-symbol resolution is unreliable.
+- Follow the terminology guide in [`src/i18n/README.md`](./src/i18n/README.md).
+  The canonical term is **account screenshot** in English and **账户截图** in
+  Simplified Chinese — not "bank screenshot" or "银行截图", because Whole
+  supports financial accounts beyond banks.
 
 ## Money & Currency Conversion
 
