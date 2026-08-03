@@ -37,6 +37,17 @@ export const modalOverlay: ViewStyle = {
   paddingHorizontal: SPACING.xl,
 };
 
+// Shared base for a card rendered inside `ScrimModal` — borderless (dialog
+// cards intentionally omit the `cardSurface` hairline), with the card fill,
+// radius, and full width that every scrim-dialog card shares. Spread into a
+// screen-specific style and add `maxWidth`/`padding` per content. Keeps the
+// scrim dialogs in lockstep instead of each re-deriving fill + radius + width.
+export const scrimCardBase: ViewStyle = {
+  backgroundColor: COLORS.card,
+  borderRadius: CARD_RADIUS,
+  width: "100%",
+};
+
 // Shared "action link" — brand-colored bold text in a minimum-size pressable,
 // used for the home screen's inline add-account action. Centralized so the
 // style has one owner instead of being redeclared per screen.

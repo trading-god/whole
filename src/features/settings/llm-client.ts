@@ -61,13 +61,6 @@ export async function testLlmConnection(config: LlmConfig): Promise<void> {
   }
 }
 
-// Optional passthrough fields for a vision request. `maxTokens` caps the
-// generated length so a verbose model can't stall the request. Optional so the
-// connectivity test and other simple callers can omit it.
-type VisionModelOptions = {
-  maxTokens?: number;
-};
-
 // Vision requests with a thinking model (e.g. Qwen3) generate substantial
 // out-of-band reasoning before the answer, and local endpoints are slower per
 // token than hosted APIs, so they need a longer timeout than the connectivity
@@ -77,19 +70,21 @@ const VISION_TIMEOUT_MS = 120_000;
 
 // Sends a vision (image + text) chat request and returns the model's text
 // response. Consolidates the SDK request/response shapes here so feature code
-// only supplies a prompt and image, not the OpenAI wire format.
+// only supplies a prompt and image, not the OpenAI wire format. No
+// `max_completion_tokens` cap is set: thinking models spend most of their
+// budget on out-of-band reasoning before emitting the JSON answer, and a fixed
+// cap can be consumed entirely by reasoning and leave `content` empty — so the
+// model uses its default completion budget.
 export async function callVisionModel(
   config: LlmConfig,
   prompt: string,
   imageBase64: string,
-  options?: VisionModelOptions,
 ): Promise<string> {
   const client = createOpenAIClient(config, VISION_TIMEOUT_MS);
 
   try {
     const completion = await client.chat.completions.create({
       model: config.model,
-      max_completion_tokens: options?.maxTokens,
       messages: [
         {
           role: "user",

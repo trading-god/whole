@@ -1,13 +1,14 @@
 import { Asset, requestPermissionsAsync } from "expo-media-library";
 import { Platform } from "react-native";
 
-// expo-image-picker and expo-media-library disagree on what an asset id is on
-// Android: the picker returns a numeric media-store id (or `null` on the
-// Android 13+ PhotoPicker), but `new Asset(id)` requires a `content://` URI.
-// Passing the picker's id therefore never deletes the screenshot, so we only
-// claim support on iOS, where the picker returns a `PHAsset` localIdentifier
-// that the `Asset` constructor accepts. The web build is overridden by
-// `source-image-cleanup.web.ts`.
+// expo-image-picker and expo-media-library disagree on what an asset id is:
+// on Android the picker returns a numeric media-store id (or `null` on the
+// Android 13+ PhotoPicker) while `new Asset(id)` requires a `content://` URI,
+// so deletion isn't supported there. On iOS the picker returns the bare
+// `PHAsset` localIdentifier, but `new Asset(id)` expects the `ph://<id>` form
+// (it strips the scheme to recover the localIdentifier) — passing the bare id
+// truncates it and the asset can't be resolved. We re-attach the scheme before
+// deleting. The web build is overridden by `source-image-cleanup.web.ts`.
 export const sourceImageDeletionIsSupported = Platform.OS === "ios";
 
 export type DeleteSourceImageResult = {
@@ -41,12 +42,17 @@ export async function deleteSourceImage(
   }
 
   try {
-    await new Asset(assetId).delete();
+    // `Asset(id)` expects `ph://<localIdentifier>`; expo-image-picker returns
+    // the bare localIdentifier. Re-attach the scheme or the id is truncated
+    // and the PHAsset can't be resolved for deletion.
+    const assetRef = assetId.startsWith("ph://") ? assetId : `ph://${assetId}`;
+    await new Asset(assetRef).delete();
     return { ok: true };
   } catch {
-    // A thrown delete covers the remaining failure modes: the picker's asset id
-    // didn't resolve to a PHAsset, or the user cancelled the system "Delete
-    // Photo" confirmation. Surface as a generic failure.
+    // A thrown delete covers the remaining failure modes: the asset id didn't
+    // resolve to a PHAsset (e.g. the user revoked access), or the user
+    // cancelled the system "Delete Photo" confirmation. Surface as a generic
+    // failure.
     return { ok: false };
   }
 }

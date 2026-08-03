@@ -3,19 +3,19 @@ import { useTranslation } from "react-i18next";
 import {
   type TextStyle,
   type ViewStyle,
-  Modal,
   Pressable,
   StyleSheet,
   Text,
 } from "react-native";
 
 import { Icon } from "@/components/Icon";
+import { ScrimModal } from "@/components/ScrimModal";
 import { type Currency } from "@/features/assets/currencies";
 import { COLORS } from "@/theme/colors";
 import { PRESSED_OPACITY_SURFACE } from "@/theme/interaction";
 import { MIN_INTERACTIVE_SIZE } from "@/theme/layout";
-import { modalOverlay } from "@/theme/screen-styles";
-import { CARD_RADIUS, CHIP_RADIUS } from "@/theme/sizes";
+import { scrimCardBase } from "@/theme/screen-styles";
+import { CHIP_RADIUS } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
 import { FONT_SIZE, FONT_WEIGHT, LETTER_SPACING } from "@/theme/typography";
 
@@ -37,8 +37,8 @@ type CurrencyPickerProps = {
 
 // Currency switcher with a centered option sheet. The trigger has two surface
 // variants — `onDark` for the home balance card eyebrow, `onLight` for the
-// compact "unit suffix" placed beside a form amount input. The sheet reuses
-// the light card surface like the new-account cleanup modal.
+// compact "unit suffix" placed beside a form amount input. The sheet is shared
+// via `ScrimModal`, the same scrim-dismiss component the cleanup modal uses.
 export function CurrencyPicker({
   value,
   currencies,
@@ -70,56 +70,43 @@ export function CurrencyPicker({
         <Icon name="chevron-down" size="sm" color={trigger.chevron} />
       </Pressable>
 
-      <Modal
-        animationType="fade"
-        onRequestClose={() => setIsOpen(false)}
-        transparent
+      <ScrimModal
+        accessibilityLabel={title}
+        accessibilityRole="radiogroup"
+        cardStyle={styles.card}
+        onDismiss={() => setIsOpen(false)}
         visible={isOpen}
       >
-        <Pressable
-          accessibilityLabel={title}
-          style={styles.overlay}
-          onPress={() => setIsOpen(false)}
-        >
-          {/* Swallow taps inside the card so only the scrim dismisses the
-              sheet, not taps on the title or option whitespace. */}
-          <Pressable
-            accessibilityRole="radiogroup"
-            style={styles.card}
-            onPress={() => undefined}
-          >
-            <Text style={styles.title}>{title}</Text>
-            {currencies.map((currency) => {
-              const isSelected = currency === value;
-              return (
-                <Pressable
-                  key={currency}
-                  accessibilityRole="radio"
-                  accessibilityState={{ selected: isSelected }}
-                  onPress={() => handleSelect(currency)}
-                  style={({ pressed }) => [
-                    styles.option,
-                    isSelected && styles.optionSelected,
-                    pressed && styles.optionPressed,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.optionText,
-                      isSelected && styles.optionTextSelected,
-                    ]}
-                  >
-                    {currency}
-                  </Text>
-                  {isSelected ? (
-                    <Icon name="check" size="sm" color={COLORS.brand} />
-                  ) : null}
-                </Pressable>
-              );
-            })}
-          </Pressable>
-        </Pressable>
-      </Modal>
+        <Text style={styles.title}>{title}</Text>
+        {currencies.map((currency) => {
+          const isSelected = currency === value;
+          return (
+            <Pressable
+              key={currency}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: isSelected }}
+              onPress={() => handleSelect(currency)}
+              style={({ pressed }) => [
+                styles.option,
+                isSelected && styles.optionSelected,
+                pressed && styles.optionPressed,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.optionText,
+                  isSelected && styles.optionTextSelected,
+                ]}
+              >
+                {currency}
+              </Text>
+              {isSelected ? (
+                <Icon name="check" size="sm" color={COLORS.brand} />
+              ) : null}
+            </Pressable>
+          );
+        })}
+      </ScrimModal>
     </>
   );
 }
@@ -164,13 +151,10 @@ const styles = StyleSheet.create({
     color: COLORS.ink,
     fontWeight: FONT_WEIGHT.bold,
   },
-  overlay: { ...modalOverlay },
   card: {
-    backgroundColor: COLORS.card,
-    borderRadius: CARD_RADIUS,
+    ...scrimCardBase,
     maxWidth: 320,
     padding: SPACING.lg,
-    width: "100%",
   },
   title: {
     color: COLORS.muted,

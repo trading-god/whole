@@ -1,27 +1,18 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Alert,
-  Linking,
-  Modal,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { Alert, Linking, Platform, StyleSheet, Text } from "react-native";
 
 import { Button } from "@/components/Button";
 import { ButtonGroup } from "@/components/ButtonGroup";
 import { type SelectedSourceImage } from "@/components/AccountScreenshotUploader";
+import { ScrimModal } from "@/components/ScrimModal";
 import {
   type DeleteSourceImageResult,
   deleteSourceImage,
   sourceImageDeletionIsSupported,
 } from "@/features/assets/source-image-cleanup";
 import { COLORS } from "@/theme/colors";
-import { modalOverlay } from "@/theme/screen-styles";
-import { CARD_RADIUS } from "@/theme/sizes";
+import { scrimCardBase } from "@/theme/screen-styles";
 import { SPACING } from "@/theme/spacing";
 import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT } from "@/theme/typography";
 
@@ -37,12 +28,13 @@ type SourceImageCleanupModalProps = {
   onFinished: () => void;
 };
 
-// Post-save "delete the source screenshot?" sheet, shared by the add-account
+// Post-save "delete the source screenshot?" dialog, shared by the add-account
 // and edit-account screens. Owns the delete logic and its failure prompts
 // (limited photo access → deep-link to system settings; generic failure →
 // retry alert) so both screens stay in lockstep. The parent controls visibility
 // and supplies the captured image; `onFinished` is the single "we're done"
-// signal back to the parent.
+// signal back to the parent. Rendered through the shared `ScrimModal` (same
+// scrim-dismiss + card surface as the currency picker sheet).
 export function SourceImageCleanupModal({
   visible,
   sourceImage,
@@ -51,8 +43,18 @@ export function SourceImageCleanupModal({
   const { t } = useTranslation();
   const [isBeingDeleted, setIsBeingDeleted] = useState(false);
 
+  // `typeof ... === "string"` would admit an empty id and render the delete
+  // button, but `handleDelete` treats `""` as falsy and no-ops — leaving a
+  // tappable button that does nothing. Require a non-empty id so the gate and
+  // the handler agree.
   const sourceImageCanBeDeleted =
-    sourceImageDeletionIsSupported && typeof sourceImage?.assetId === "string";
+    sourceImageDeletionIsSupported && !!sourceImage?.assetId;
+
+  const handleDismiss = () => {
+    if (!isBeingDeleted) {
+      onFinished();
+    }
+  };
 
   const handleDelete = async () => {
     if (!sourceImage?.assetId) {
@@ -105,99 +107,73 @@ export function SourceImageCleanupModal({
   };
 
   return (
-    <Modal
-      animationType="fade"
-      onRequestClose={() => {
-        if (!isBeingDeleted) {
-          onFinished();
-        }
-      }}
-      transparent
+    <ScrimModal
+      cardStyle={styles.card}
+      onDismiss={handleDismiss}
       visible={visible}
     >
-      <View style={styles.cleanupOverlay}>
-        <ScrollView
-          contentContainerStyle={styles.cleanupCardContent}
-          showsVerticalScrollIndicator={false}
-          style={styles.cleanupCard}
-        >
-          <Text style={styles.cleanupTitle}>
-            {t("newAccount.accountSaved")}
-          </Text>
-          <Text style={styles.cleanupDescription}>
-            {sourceImageCanBeDeleted
-              ? t("newAccount.cleanupPrompt")
-              : Platform.OS === "web"
-                ? t("newAccount.cleanupManualBrowser")
-                : t("newAccount.cleanupManualPhotoLibrary")}
-          </Text>
+      <Text style={styles.title}>{t("newAccount.accountSaved")}</Text>
+      <Text style={styles.description}>
+        {sourceImageCanBeDeleted
+          ? t("newAccount.cleanupPrompt")
+          : Platform.OS === "web"
+            ? t("newAccount.cleanupManualBrowser")
+            : t("newAccount.cleanupManualPhotoLibrary")}
+      </Text>
 
-          {sourceImageCanBeDeleted ? (
-            <ButtonGroup style={styles.cleanupActions}>
-              <Button
-                size="md"
-                variant="secondary"
-                disabled={isBeingDeleted}
-                onPress={onFinished}
-              >
-                {t("newAccount.keepScreenshot")}
-              </Button>
-              <Button
-                size="md"
-                variant="primary"
-                disabled={isBeingDeleted}
-                onPress={() => void handleDelete()}
-              >
-                {isBeingDeleted
-                  ? t("newAccount.deletingScreenshot")
-                  : t("newAccount.deleteScreenshot")}
-              </Button>
-            </ButtonGroup>
-          ) : (
-            <Button
-              size="md"
-              variant="primary"
-              style={styles.cleanupSingleButton}
-              onPress={onFinished}
-            >
-              {t("newAccount.acknowledge")}
-            </Button>
-          )}
-        </ScrollView>
-      </View>
-    </Modal>
+      {sourceImageCanBeDeleted ? (
+        <ButtonGroup style={styles.actions}>
+          <Button
+            size="md"
+            variant="secondary"
+            disabled={isBeingDeleted}
+            onPress={onFinished}
+          >
+            {t("newAccount.keepScreenshot")}
+          </Button>
+          <Button
+            size="md"
+            variant="primary"
+            disabled={isBeingDeleted}
+            onPress={() => void handleDelete()}
+          >
+            {isBeingDeleted
+              ? t("newAccount.deletingScreenshot")
+              : t("newAccount.deleteScreenshot")}
+          </Button>
+        </ButtonGroup>
+      ) : (
+        <Button
+          size="md"
+          variant="primary"
+          style={styles.actions}
+          onPress={onFinished}
+        >
+          {t("newAccount.acknowledge")}
+        </Button>
+      )}
+    </ScrimModal>
   );
 }
 
 const styles = StyleSheet.create({
-  cleanupOverlay: {
-    ...modalOverlay,
-  },
-  cleanupCard: {
-    backgroundColor: COLORS.card,
-    borderRadius: CARD_RADIUS,
-    maxHeight: "85%",
-    maxWidth: 420,
-    width: "100%",
-  },
-  cleanupCardContent: {
+  card: {
+    ...scrimCardBase,
+    maxWidth: 360,
     padding: SPACING.xl,
   },
-  cleanupTitle: {
+  title: {
     color: COLORS.ink,
     fontSize: FONT_SIZE.title,
     fontWeight: FONT_WEIGHT.extrabold,
   },
-  cleanupDescription: {
+  description: {
     color: COLORS.muted,
     fontSize: FONT_SIZE.body,
     lineHeight: LINE_HEIGHT.body,
     marginTop: SPACING.md,
   },
-  cleanupActions: {
-    marginTop: SPACING.xxl,
-  },
-  cleanupSingleButton: {
+  actions: {
     marginTop: SPACING.xxl,
   },
 });

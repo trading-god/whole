@@ -112,9 +112,20 @@ function parseRecognizedAccount(content: string): RecognizedAccount {
   // it can't determine anything, or a bare string/number). Treat any non-record
   // as "nothing recognized" so a `null` response doesn't crash on property
   // access below — the caller leaves the form blank for manual entry.
-  const parsedResult = z
-    .record(z.string(), z.unknown())
-    .safeParse(JSON.parse(raw));
+  //
+  // Without a token cap the model is more likely to emit prose-wrapped or
+  // trailing-text JSON that `stripCodeFence` doesn't fully clean up; a
+  // `JSON.parse` `SyntaxError` would escape `safeParse` (which only catches
+  // ZodErrors) and surface as a generic recognition failure. Catch it here so
+  // unparseable content degrades to "nothing recognized" like the empty case,
+  // instead of a hard failure.
+  let parsedValue: unknown;
+  try {
+    parsedValue = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  const parsedResult = z.record(z.string(), z.unknown()).safeParse(parsedValue);
   if (!parsedResult.success) {
     return {};
   }
@@ -218,14 +229,8 @@ export async function recognizeAccountFromScreenshot(
   }
 
   const base64 = await base64Promise;
-  const content = await callVisionModel(config, RECOGNITION_PROMPT, base64, {
-    // Thinking models (e.g. Qwen3) spend most of their token budget on
-    // out-of-band reasoning before emitting the JSON answer; the previous 300
-    // cap was consumed entirely by reasoning, leaving `content` empty. Give
-    // enough headroom for reasoning plus the (short) JSON answer across
-    // realistic screenshots.
-    maxTokens: 4096,
-  });
+  // No token cap is set — see `callVisionModel` for the thinking-model rationale.
+  const content = await callVisionModel(config, RECOGNITION_PROMPT, base64);
 
   return parseRecognizedAccount(content);
 }
