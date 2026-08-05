@@ -1,12 +1,10 @@
 import * as SecureStore from "expo-secure-store";
 import { getItem, removeItem, setItem } from "@/storage/kv-store";
-import { Platform } from "react-native";
 import { z } from "zod";
 
 // The OpenAI-compatible endpoint, key, and model the user fills in on the
-// settings screen. Stored in the device keystore when available (iOS/Android),
-// with a key-value store fallback (sqlite on native, AsyncStorage on web)
-// where SecureStore is not supported.
+// settings screen. Stored in the device keystore when available, with the
+// sqlite key-value store as the fallback where SecureStore is not supported.
 // 单一的「合法 LLM 配置」定义：baseUrl 与 model 必填（trim 后非空），apiKey
 // 可选（trim）。settings 表单校验与 resolveLlmConfig 运行时守卫共用此 schema，
 // 避免「什么是一个合法配置」在两处分别表达而漂移。
@@ -17,6 +15,15 @@ export const llmConfigSchema = z.object({
 });
 
 export type LlmConfig = z.infer<typeof llmConfigSchema>;
+
+// Trailing slashes are cosmetic — "http://localhost:1234/v1/" and
+// ".../v1" address the same endpoint. Normalizing here (rather than at each
+// call site) keeps `llm-client`'s SDK base URL and `llm-json-mode`'s
+// per-endpoint capability key derived from one spelling, so a stored
+// capability still matches after the user re-types the URL with a slash.
+export function normalizeBaseUrl(baseUrl: string): string {
+  return baseUrl.trim().replace(/\/+$/, "");
+}
 
 // Whether any field holds a non-empty value — the "treat an all-empty form as a
 // skip / clearable" heuristic shared by Settings (Clear gating) and onboarding
@@ -42,10 +49,6 @@ let secureStorePromise: Promise<boolean> | null = null;
 // in-flight availability check instead of each triggering its own native
 // bridge round-trip on first use.
 function secureStoreAvailable(): Promise<boolean> {
-  if (Platform.OS === "web") {
-    return Promise.resolve(false);
-  }
-
   if (!secureStorePromise) {
     secureStorePromise = SecureStore.isAvailableAsync();
   }
@@ -107,8 +110,7 @@ const writeValue = async (key: string, value: string): Promise<void> => {
 // SecureStore delete would resurrect the value on the next read — surface that
 // failure instead of swallowing it: clearLlmConfig rejects, the caller reports
 // the error, the form stays populated, and the user can retry. (When SecureStore
-// is unavailable, e.g. on web, the delete is skipped and only the kv-store
-// clears.)
+// is unavailable, the delete is skipped and only the kv-store clears.)
 const deleteValue = async (key: string): Promise<void> => {
   const clearSecureStore = async () => {
     if (await secureStoreAvailable()) {

@@ -1,10 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SQLite from "expo-sqlite";
 
-// Central key-value store backed by expo-sqlite on native. The web build is
-// overridden by `kv-store.web.ts` (AsyncStorage), because expo-sqlite's web
-// backend needs extra bundler and cross-origin-isolation setup that isn't
-// worth it while the web build is on hold. The API mirrors AsyncStorage
+// Central key-value store backed by expo-sqlite. The API mirrors AsyncStorage
 // (getItem/setItem/removeItem) so feature modules swap over with no other
 // changes.
 const DB_NAME = "whole.db";
@@ -90,6 +87,33 @@ export async function getItem(key: string): Promise<string | null> {
   return row?.value ?? null;
 }
 
+// Reads a key stored as JSON, yielding null when it is absent or the stored
+// text no longer parses. Owned here because the guard is easy to get subtly
+// wrong: `JSON.parse` throws a SyntaxError that a zod `safeParse` around it
+// would NOT absorb, so every stored record needs the try — and a store that
+// forgets it turns one corrupt row into a crash on launch. Callers keep their
+// own schema cascade (version fallbacks, legacy shapes) over the result.
+//
+// A storage failure still rejects: absorbing it here would hide a broken
+// database behind "no data", and each caller already decides whether an
+// unreadable store degrades or propagates.
+//
+// Not for stores that must tell an absent key from a corrupt one — this
+// collapses both to null. `asset-repository` and `net-worth-history` parse
+// their own text for exactly that reason: for them "absent" means start fresh
+// and "corrupt" means refuse to write, and conflating the two destroys data.
+export async function readJson(key: string): Promise<unknown> {
+  const raw = await getItem(key);
+  if (raw === null) {
+    return null;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
 export async function setItem(key: string, value: string): Promise<void> {
   const database = await ensureDatabase();
   await database.runAsync(
@@ -105,10 +129,12 @@ export async function removeItem(key: string): Promise<void> {
 }
 
 // Runs `work` inside a single sqlite transaction so a batch of writes shares
-// one all-or-nothing commit. Used by net-worth-history's migration so the
-// converted snapshots and the migration marker can't be split by a crash or a
-// rejected write — a partial commit (data written, marker not) would let the
-// next launch re-migrate already-converted data and double every total.
+// one all-or-nothing commit. Used by net-worth-history's migration, where the
+// upgraded history and the retirement of the legacy base marker have to land
+// together: reads dispatch on the record's `version`, so a leftover marker
+// would be inert rather than harmful, but the store would then hold a marker
+// naming a base that no longer describes the data it labels — a contradiction
+// the next migration would have to reason about.
 export async function withTransaction(
   work: () => Promise<void>,
 ): Promise<void> {

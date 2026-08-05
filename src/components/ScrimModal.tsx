@@ -10,8 +10,8 @@ import { modalOverlay } from "@/theme/screen-styles";
 
 type ScrimModalProps = {
   visible: boolean;
-  // Invoked when the user taps the scrim or requests a close (Android back
-  // gesture, web Esc). The parent owns any "not right now" guard — e.g. the
+  // Invoked when the user taps the scrim or requests a close (e.g. the Android
+  // back gesture). The parent owns any "not right now" guard — e.g. the
   // cleanup modal suppresses dismiss while a delete is in flight.
   onDismiss: () => void;
   // Card surface style. Callers spread `scrimCardBase` (borderless fill +

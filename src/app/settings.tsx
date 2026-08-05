@@ -1,4 +1,3 @@
-import Head from "expo-router/head";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -10,6 +9,7 @@ import { ButtonGroup } from "@/components/ButtonGroup";
 import { KeyboardAvoidingView } from "@/components/KeyboardAvoidingView";
 import { PrivacyNote } from "@/components/PrivacyNote";
 import { ScreenHeader } from "@/components/ScreenHeader";
+import { ScreenIntro } from "@/components/ScreenIntro";
 import { testLlmConnection } from "@/features/settings/llm-client";
 import { LlmConfigFields } from "@/features/settings/llm-config-fields";
 import {
@@ -155,42 +155,49 @@ export default function SettingsScreen() {
     // Cancel any pending auto-reset from a prior test so its timer can't fire
     // mid-test and flip testState back to "idle", which would re-enable the
     // button and allow a second concurrent test while this one is still in
-    // flight. scheduleResetTestStatus in the finally sets a fresh timer.
+    // flight. The scheduleResetTestStatus call at the end of this function
+    // arms a fresh timer once the result is on screen.
     clearTestTimer();
     setTestState("testing");
+
+    // The outcome leaves the try as plain flags and the auto-reset is armed
+    // after it, rather than in a `finally`: React Compiler bails out of an
+    // entire component that contains a finalizer, which would leave this
+    // screen — the only unmemoized one left — re-rendering every field on
+    // every keystroke. Same rewrite the account screens' saves carry.
+    let failed = false;
+    let failure: unknown;
     try {
       await testLlmConnection(values);
-      if (formEditedDuringTestRef.current) {
-        // The form changed mid-test, so the result no longer describes the
-        // current values. Drop back to idle with no recorded pass so Save
-        // re-tests the current values before storing anything.
-        resetTestStatus();
-        lastTestPassedRef.current = null;
-        return false;
-      }
-      setTestState("success");
-      lastTestPassedRef.current = true;
-      return true;
     } catch (error) {
-      if (formEditedDuringTestRef.current) {
-        // The form changed (or was cleared) mid-test, so the error no longer
-        // describes the current values. Drop it without alerting, mirroring the
-        // success path's discard — otherwise a test that fails while Clear is
-        // in flight shows a spurious "Test failed" alert over an empty form.
-        resetTestStatus();
-        lastTestPassedRef.current = null;
-        return false;
-      }
+      failed = true;
+      failure = error;
+    }
+
+    let passed = false;
+    if (formEditedDuringTestRef.current) {
+      // The form changed (or was cleared) mid-test, so neither a result nor an
+      // error describes the current values any more. Drop it without alerting
+      // and record no pass, so Save re-tests before storing anything —
+      // otherwise a test that fails while Clear is in flight shows a spurious
+      // "Test failed" alert over an empty form.
+      resetTestStatus();
+      lastTestPassedRef.current = null;
+    } else if (failed) {
       setTestState("error");
       lastTestPassedRef.current = false;
       Alert.alert(
         t("settings.testFailed"),
-        error instanceof Error ? error.message : String(error),
+        failure instanceof Error ? failure.message : String(failure),
       );
-      return false;
-    } finally {
-      scheduleResetTestStatus();
+    } else {
+      setTestState("success");
+      lastTestPassedRef.current = true;
+      passed = true;
     }
+
+    scheduleResetTestStatus();
+    return passed;
   };
 
   const save = async () => {
@@ -201,25 +208,35 @@ export default function SettingsScreen() {
     const values = parsedForm.data;
     setIsSaving(true);
 
-    try {
-      // Require a passing connectivity test before saving. If the current
-      // form hasn't been tested (or last failed), run one now and abort on
-      // failure so an unusable config is never stored.
-      if (lastTestPassedRef.current !== true) {
-        const ok = await runTest(values);
-        if (!ok) {
-          return;
-        }
+    // Require a passing connectivity test before saving. If the current form
+    // hasn't been tested (or last failed), run one now and abort on failure so
+    // an unusable config is never stored. `runTest` surfaces its own failure
+    // alert and never rejects, so it sits outside the try below.
+    if (lastTestPassedRef.current !== true) {
+      const passed = await runTest(values);
+      if (!passed) {
+        setIsSaving(false);
+        return;
       }
-
-      await saveLlmConfig(values);
-      setIsConfigured(true);
-      Alert.alert(t("settings.saved"));
-    } catch {
-      Alert.alert(t("settings.saveErrorTitle"), t("settings.saveErrorMessage"));
-    } finally {
-      setIsSaving(false);
     }
+
+    // The try wraps only the fallible write and the outcome flows on as a
+    // flag: React Compiler bails out of an entire component that contains a
+    // `finally` clause, which would leave this screen with no memoization.
+    let failed = false;
+    try {
+      await saveLlmConfig(values);
+    } catch {
+      failed = true;
+    }
+    setIsSaving(false);
+
+    if (failed) {
+      Alert.alert(t("settings.saveErrorTitle"), t("settings.saveErrorMessage"));
+      return;
+    }
+    setIsConfigured(true);
+    Alert.alert(t("settings.saved"));
   };
 
   const confirmClear = () => {
@@ -243,22 +260,29 @@ export default function SettingsScreen() {
             // test gate (lastTestPassedRef not yet cleared) and persist the
             // about-to-be-erased values.
             setIsClearing(true);
+
+            // Outcome as a flag rather than a `finally` — see `save` above.
+            let failed = false;
             try {
               await clearLlmConfig();
-              setBaseUrl("");
-              setApiKey("");
-              setModel("");
-              setIsConfigured(false);
-              lastTestPassedRef.current = null;
-              resetTestStatus();
             } catch {
+              failed = true;
+            }
+            setIsClearing(false);
+
+            if (failed) {
               Alert.alert(
                 t("settings.clearErrorTitle"),
                 t("settings.clearErrorMessage"),
               );
-            } finally {
-              setIsClearing(false);
+              return;
             }
+            setBaseUrl("");
+            setApiKey("");
+            setModel("");
+            setIsConfigured(false);
+            lastTestPassedRef.current = null;
+            resetTestStatus();
           },
         },
       ],
@@ -266,116 +290,106 @@ export default function SettingsScreen() {
   };
 
   return (
-    <>
-      <Head>
-        <title>{t("metadata.settingsTitle")}</title>
-        <meta name="description" content={t("metadata.settingsDescription")} />
-        <meta name="robots" content="noindex,nofollow" />
-      </Head>
-      <SafeAreaView style={styles.safeArea}>
-        <KeyboardAvoidingView style={styles.flex}>
-          <ScreenHeader title={t("settings.screenTitle")} />
+    <SafeAreaView style={screenStyles.safeArea}>
+      <KeyboardAvoidingView style={screenStyles.flex}>
+        <ScreenHeader title={t("settings.screenTitle")} />
 
-          <ScrollView
-            contentContainerStyle={styles.content}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
+        <ScrollView
+          contentContainerStyle={screenStyles.content}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <ScreenIntro
+            title={t("settings.introTitle")}
+            subtitle={t("settings.introDescription")}
+          />
+
+          <View
+            style={[
+              styles.statusChip,
+              isConfigured ? styles.statusChipActive : null,
+            ]}
           >
-            <View style={styles.intro}>
-              <Text style={styles.title}>{t("settings.introTitle")}</Text>
-              <Text style={styles.subtitle}>
-                {t("settings.introDescription")}
-              </Text>
-            </View>
-
             <View
               style={[
-                styles.statusChip,
-                isConfigured ? styles.statusChipActive : null,
+                styles.statusDot,
+                isConfigured
+                  ? styles.statusDotActive
+                  : styles.statusDotInactive,
+              ]}
+            />
+            <Text
+              style={[
+                styles.statusText,
+                isConfigured ? styles.statusTextActive : null,
               ]}
             >
-              <View
-                style={[
-                  styles.statusDot,
-                  isConfigured
-                    ? styles.statusDotActive
-                    : styles.statusDotInactive,
-                ]}
-              />
-              <Text
-                style={[
-                  styles.statusText,
-                  isConfigured ? styles.statusTextActive : null,
-                ]}
-              >
-                {isConfigured
-                  ? t("settings.statusSaved")
-                  : t("settings.statusNotSet")}
-              </Text>
-            </View>
-
-            <LlmConfigFields
-              baseUrl={baseUrl}
-              apiKey={apiKey}
-              model={model}
-              editable={hasLoadedConfig}
-              onBaseUrlChange={(value) => updateField(setBaseUrl, value)}
-              onApiKeyChange={(value) => updateField(setApiKey, value)}
-              onModelChange={(value) => updateField(setModel, value)}
-              baseUrlTrailing={
-                <ButtonBase
-                  accessibilityLabel={testLabel}
-                  disabled={testDisabled}
-                  hitSlop={8}
-                  onPress={() => {
-                    if (parsedForm.success) {
-                      void runTest(parsedForm.data);
-                    }
-                  }}
-                  baseStyle={[styles.testInlineButton, testStateStyle.button]}
-                  pressedStyle={styles.pressed}
-                >
-                  <Text style={[styles.testInlineText, testStateStyle.text]}>
-                    {testLabel}
-                  </Text>
-                </ButtonBase>
-              }
-            />
-
-            <PrivacyNote message={t("settings.privacy")} />
-          </ScrollView>
-
-          <View style={styles.bottomBar}>
-            <ButtonGroup>
-              <Button
-                size="lg"
-                variant="danger"
-                disabled={!isConfigured && !hasContent}
-                loading={isSaving || isClearing}
-                onPress={confirmClear}
-              >
-                {t("settings.clear")}
-              </Button>
-              <Button
-                size="lg"
-                variant="primary"
-                elevated
-                disabled={!canSave}
-                loading={isSaving}
-                onPress={() => void save()}
-              >
-                {isSaving ? t("settings.saving") : t("settings.save")}
-              </Button>
-            </ButtonGroup>
+              {isConfigured
+                ? t("settings.statusSaved")
+                : t("settings.statusNotSet")}
+            </Text>
           </View>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    </>
+
+          <LlmConfigFields
+            baseUrl={baseUrl}
+            apiKey={apiKey}
+            model={model}
+            editable={hasLoadedConfig}
+            onBaseUrlChange={(value) => updateField(setBaseUrl, value)}
+            onApiKeyChange={(value) => updateField(setApiKey, value)}
+            onModelChange={(value) => updateField(setModel, value)}
+            baseUrlTrailing={
+              <ButtonBase
+                accessibilityLabel={testLabel}
+                disabled={testDisabled}
+                hitSlop={8}
+                onPress={() => {
+                  if (parsedForm.success) {
+                    void runTest(parsedForm.data);
+                  }
+                }}
+                baseStyle={[styles.testInlineButton, testStateStyle.button]}
+                pressedStyle={screenStyles.pressed}
+              >
+                <Text style={[styles.testInlineText, testStateStyle.text]}>
+                  {testLabel}
+                </Text>
+              </ButtonBase>
+            }
+          />
+
+          <PrivacyNote message={t("settings.privacy")} />
+        </ScrollView>
+
+        <View style={screenStyles.bottomBar}>
+          <ButtonGroup>
+            <Button
+              size="lg"
+              variant="danger"
+              disabled={!isConfigured && !hasContent}
+              loading={isSaving || isClearing}
+              onPress={confirmClear}
+            >
+              {t("settings.clear")}
+            </Button>
+            <Button
+              size="lg"
+              variant="primary"
+              elevated
+              disabled={!canSave}
+              loading={isSaving}
+              onPress={() => void save()}
+            >
+              {isSaving ? t("settings.saving") : t("settings.save")}
+            </Button>
+          </ButtonGroup>
+        </View>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  ...screenStyles,
   statusChip: {
     alignItems: "center",
     alignSelf: "flex-start",

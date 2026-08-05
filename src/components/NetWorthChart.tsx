@@ -3,22 +3,44 @@ import { StyleSheet, Text, View } from "react-native";
 import {
   Circle,
   Defs,
+  Line,
   LinearGradient,
   Path,
   Stop,
   Svg,
 } from "react-native-svg";
 
-import type { NetWorthSnapshot } from "@/features/assets/net-worth-history";
+import { type Currency } from "@/features/assets/currencies";
+import {
+  type NetWorthSnapshot,
+  netWorthGrowth,
+  parseSnapshotDate,
+} from "@/features/assets/net-worth-history";
 import { COLORS } from "@/theme/colors";
 import { FONT_SIZE } from "@/theme/typography";
 
 const VIEW_WIDTH = 330;
 const VIEW_HEIGHT = 112;
 const PADDING_Y = 12;
+const ENDPOINT_RADIUS = 5;
+// The canvas runs one marker-radius wider than the plot so the endpoint dot,
+// which sits on the last sample, stays whole. The balance card clips its
+// overflow to keep its rounded corners, so a dot centred on the plot's right
+// edge would lose its outer half. The left edge needs no such room — it carries
+// only the stroke's round cap.
+const CANVAS_WIDTH = VIEW_WIDTH + ENDPOINT_RADIUS;
 
 type NetWorthChartProps = {
+  // Snapshots for the selected range, oldest first.
   snapshots: readonly NetWorthSnapshot[];
+  // Which currency to read the growth in. Snapshots carry one figure per
+  // currency because an exchange-rate move is a gain in one and nothing in
+  // another, so the curve genuinely changes shape with the display currency.
+  currency: Currency;
+  // Whether the range's net change is negative. Passed in rather than re-derived
+  // from the endpoints so the curve is colored by exactly the number the footer
+  // prints beside it.
+  isNegative: boolean;
   placeholderText: string;
 };
 
@@ -27,29 +49,93 @@ type ChartGeometry = {
   strokePath: string;
   endX: number;
   endY: number;
+  // y of the zero axis, or null when the window sits entirely on one side of it
+  // and there is no axis to draw inside the plot.
+  zeroY: number | null;
 };
 
+// Curve palette per direction. A window that lost money is drawn in the decline
+// tone so the chart's verdict survives being glanced at.
+const TREND_PALETTE = {
+  positive: {
+    fill: COLORS.chartFill,
+    stroke: COLORS.chartStroke,
+    endpointRing: COLORS.chartEndpointRing,
+    endpointDot: COLORS.chartEndpointDot,
+  },
+  negative: {
+    fill: COLORS.chartFillNegative,
+    stroke: COLORS.chartStrokeNegative,
+    endpointRing: COLORS.chartEndpointRingNegative,
+    endpointDot: COLORS.chartEndpointDotNegative,
+  },
+} as const;
+
+// Plots growth — assets minus the capital put into them (see net-worth-flows) —
+// rather than the raw total, so opening a new account doesn't step the curve up
+// by its whole balance. Only balances moving after they were first recorded
+// bend the line.
 export const NetWorthChart = memo(function NetWorthChart({
   snapshots,
+  currency,
+  isNegative,
   placeholderText,
 }: NetWorthChartProps) {
   const hasEnoughData = snapshots.length >= 2;
+  const palette = TREND_PALETTE[isNegative ? "negative" : "positive"];
 
   const geometry = useMemo<ChartGeometry | null>(() => {
     if (!hasEnoughData) {
       return null;
     }
 
-    const totals = snapshots.map((snapshot) => snapshot.total);
-    const min = Math.min(...totals);
-    const max = Math.max(...totals);
-    const range = max - min || 1;
+    const values = snapshots.map((snapshot) =>
+      netWorthGrowth(snapshot, currency),
+    );
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const valueSpan = max - min;
     const innerHeight = VIEW_HEIGHT - 2 * PADDING_Y;
-    const stepX = VIEW_WIDTH / (totals.length - 1);
-    const points = totals.map((total, index) => ({
-      x: index * stepX,
-      y: VIEW_HEIGHT - PADDING_Y - ((total - min) / range) * innerHeight,
+    // A flat window (every sample identical — the ordinary "nothing has moved
+    // yet" case) has no range to scale against, so it is drawn down the middle
+    // instead of pinned to the floor of the plot.
+    const yFor = (value: number) =>
+      valueSpan === 0
+        ? VIEW_HEIGHT / 2
+        : VIEW_HEIGHT - PADDING_Y - ((value - min) / valueSpan) * innerHeight;
+
+    // x is elapsed time, not sample index: two samples a day apart and two
+    // three months apart must not draw the same shape, or switching the range
+    // would redraw an identical curve. The window stretches across the full
+    // plot width, so gaps inside it stay proportional while a history shorter
+    // than the selected range still fills the card.
+    const times = snapshots.map((snapshot) => parseSnapshotDate(snapshot.date));
+    const firstTime = times[0];
+    const timeSpan = times[times.length - 1] - firstTime;
+    const xFor = (index: number) =>
+      timeSpan === 0
+        ? (index / (times.length - 1)) * VIEW_WIDTH
+        : ((times[index] - firstTime) / timeSpan) * VIEW_WIDTH;
+
+    const points = values.map((value, index) => ({
+      x: xFor(index),
+      y: yFor(value),
     }));
+
+    // The shaded area is measured from the zero axis, not the floor of the
+    // card: growth is a signed quantity, so "how far from zero" is the thing
+    // worth shading. When zero falls outside the plotted range the baseline
+    // lands off-canvas and the fill simply reaches the edge, which reads the
+    // same as the old fill-to-floor. A window that never left zero collapses
+    // the area to nothing — the honest picture: no growth, no shape.
+    const zeroBaseY =
+      valueSpan === 0
+        ? min > 0
+          ? VIEW_HEIGHT
+          : min < 0
+            ? 0
+            : VIEW_HEIGHT / 2
+        : yFor(0);
 
     const stroke = points
       .map((point, index) => {
@@ -58,32 +144,61 @@ export const NetWorthChart = memo(function NetWorthChart({
       })
       .join(" ");
     const last = points[points.length - 1];
-    const fill = `${stroke} L ${last.x.toFixed(2)} ${VIEW_HEIGHT} L ${points[0].x.toFixed(2)} ${VIEW_HEIGHT} Z`;
+    const fill = `${stroke} L ${last.x.toFixed(2)} ${zeroBaseY.toFixed(2)} L ${points[0].x.toFixed(2)} ${zeroBaseY.toFixed(2)} Z`;
 
-    return { fillPath: fill, strokePath: stroke, endX: last.x, endY: last.y };
-  }, [snapshots, hasEnoughData]);
+    return {
+      fillPath: fill,
+      strokePath: stroke,
+      endX: last.x,
+      endY: last.y,
+      // Drawn only when the axis is genuinely inside the window and separate
+      // from the curve — on a flat zero window the curve *is* the axis, and a
+      // dashed line under a solid one is just noise.
+      zeroY: valueSpan > 0 && min <= 0 && max >= 0 ? yFor(0) : null,
+    };
+  }, [snapshots, currency, hasEnoughData]);
 
   return (
     <View style={styles.container}>
       <Svg
         height={VIEW_HEIGHT}
         preserveAspectRatio="none"
-        viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
+        viewBox={`0 0 ${CANVAS_WIDTH} ${VIEW_HEIGHT}`}
         width="100%"
       >
         <Defs>
-          <LinearGradient id="netWorthFill" x1="0" x2="0" y1="0" y2="1">
-            <Stop offset="0" stopColor={COLORS.chartFill} stopOpacity="0.38" />
-            <Stop offset="1" stopColor={COLORS.chartFill} stopOpacity="0" />
+          {/* Fades away from the curve toward the axis. A falling window's area
+              hangs below the axis, so the gradient flips with it — otherwise
+              the shape that matters would be the faded end. */}
+          <LinearGradient
+            id="netWorthFill"
+            x1="0"
+            x2="0"
+            y1={isNegative ? "1" : "0"}
+            y2={isNegative ? "0" : "1"}
+          >
+            <Stop offset="0" stopColor={palette.fill} stopOpacity="0.38" />
+            <Stop offset="1" stopColor={palette.fill} stopOpacity="0" />
           </LinearGradient>
         </Defs>
         {geometry ? (
           <>
+            {geometry.zeroY === null ? null : (
+              <Line
+                stroke={COLORS.chartZeroLine}
+                strokeDasharray="4 5"
+                strokeWidth="1"
+                x1="0"
+                x2={CANVAS_WIDTH}
+                y1={geometry.zeroY}
+                y2={geometry.zeroY}
+              />
+            )}
             <Path d={geometry.fillPath} fill="url(#netWorthFill)" />
             <Path
               d={geometry.strokePath}
               fill="none"
-              stroke={COLORS.chartStroke}
+              stroke={palette.stroke}
               strokeLinecap="round"
               strokeLinejoin="round"
               strokeWidth="3"
@@ -91,13 +206,13 @@ export const NetWorthChart = memo(function NetWorthChart({
             <Circle
               cx={geometry.endX}
               cy={geometry.endY}
-              fill={COLORS.chartEndpointRing}
-              r="5"
+              fill={palette.endpointRing}
+              r={ENDPOINT_RADIUS}
             />
             <Circle
               cx={geometry.endX}
               cy={geometry.endY}
-              fill={COLORS.chartEndpointDot}
+              fill={palette.endpointDot}
               r="3"
             />
           </>

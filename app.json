@@ -21,28 +21,12 @@
       },
       "predictiveBackGestureEnabled": false
     },
-    "web": {
-      "output": "static",
-      "favicon": "./assets/images/favicon.png",
-      "name": "Whole",
-      "shortName": "Whole",
-      "description": "Your whole financial life, in one place.",
-      "display": "standalone",
-      "startUrl": "/",
-      "themeColor": "#098765",
-      "backgroundColor": "#FFFFFF"
-    },
     "locales": {
       "en": "./config/locales/en.json",
       "zh-Hans": "./config/locales/zh-Hans.json"
     },
     "plugins": [
-      [
-        "expo-router",
-        {
-          "headOrigin": "https://whole.app"
-        }
-      ],
+      "expo-router",
       [
         "expo-image-picker",
         {
@@ -79,6 +63,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "173031dd-691d-4737-929e-0c713d62e3dc"
+      }
+    },
+    "owner": "j4ck_w4n9"
   }
 }

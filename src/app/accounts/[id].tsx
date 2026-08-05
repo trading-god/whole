@@ -1,5 +1,4 @@
 import { useLocalSearchParams } from "expo-router";
-import Head from "expo-router/head";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -12,61 +11,63 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { AccountEditorFields } from "@/components/AccountEditorFields";
 import {
   AccountScreenshotUploader,
   type SelectedSourceImage,
 } from "@/components/AccountScreenshotUploader";
-import { BalanceRowsField } from "@/components/BalanceRowsField";
 import { Button } from "@/components/Button";
-import { ChoiceChipGroup } from "@/components/ChoiceChipGroup";
-import { FieldShell } from "@/components/FieldShell";
-import { FormField } from "@/components/FormField";
 import { KeyboardAvoidingView } from "@/components/KeyboardAvoidingView";
 import { ScreenHeader } from "@/components/ScreenHeader";
+import { ScreenIntro } from "@/components/ScreenIntro";
 import { SectionHeader } from "@/components/SectionHeader";
 import { SourceImageCleanupModal } from "@/components/SourceImageCleanupModal";
+import { useSourceImageCleanup } from "@/components/use-source-image-cleanup";
 import {
-  type AssetKind,
-  assetKindPickerOptions,
-} from "@/features/assets/account-appearance";
+  type AccountDraft,
+  accountToDraft,
+  draftToValidAccount,
+  mergeRecognizedIntoDraft,
+  selectRecognizedForAccount,
+} from "@/features/assets/account-draft";
 import {
   type AssetAccount,
   listAssetAccounts,
   updateAssetAccount,
+  type UpdateAssetAccountResult,
 } from "@/features/assets/asset-repository";
 import { type RecognizedAccount } from "@/features/assets/screenshot-recognition";
-import { useBalanceRows } from "@/features/assets/use-balance-rows";
 import { useReturnToOverview } from "@/navigation/useReturnToOverview";
 import { COLORS } from "@/theme/colors";
 import { screenStyles } from "@/theme/screen-styles";
-import { SPACING } from "@/theme/spacing";
-import { FONT_SIZE, LINE_HEIGHT } from "@/theme/typography";
 
 export default function AccountDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { t } = useTranslation();
   const returnToOverview = useReturnToOverview();
 
+  // `account` doubles as the load gate: it is set exactly once, in the same
+  // batch as the draft below, and never cleared — so "still loading" is simply
+  // "no account yet", with no second state to keep in lockstep.
   const [account, setAccount] = useState<AssetAccount | null>(null);
-  const [loadState, setLoadState] = useState<"loading" | "ready">("loading");
-  const [accountName, setAccountName] = useState("");
-  const [accountLastFourDigits, setAccountLastFourDigits] = useState("");
-  const {
-    balanceRows,
-    addBalanceRow,
-    updateBalanceRow,
-    removeBalanceRow,
-    setBalanceRowsFromAccount,
-    validBalanceRows,
-    hasDuplicateCurrency,
-  } = useBalanceRows([]);
-  const [kind, setKind] = useState<AssetKind>("cash");
+  // The same draft shape the add-account screen edits, so both screens share
+  // one field set (AccountEditorFields), one account → draft mapping
+  // (accountToDraft), and one save rule (draftToValidAccount). The placeholder
+  // below is never rendered — the form waits on `account`, which is set in the
+  // same batch as the real draft.
+  const [draft, setDraft] = useState<AccountDraft>(() => ({
+    name: "",
+    lastFour: "",
+    balances: [],
+    kind: "cash",
+  }));
   const [isSaving, setIsSaving] = useState(false);
   const [selectedSourceImage, setSelectedSourceImage] =
     useState<SelectedSourceImage | null>(null);
-  const [cleanupVisible, setCleanupVisible] = useState(false);
-
-  const accountKindOptions = useMemo(() => assetKindPickerOptions(t), [t]);
+  const { finishSave, cleanupProps } = useSourceImageCleanup(
+    selectedSourceImage,
+    returnToOverview,
+  );
 
   // Load the account once on mount. Reads the cached account list directly
   // (no rates fetch, no snapshot record) — the home screen's focus effect
@@ -76,241 +77,195 @@ export default function AccountDetailScreen() {
   useEffect(() => {
     let active = true;
     void (async () => {
-      const accounts = await listAssetAccounts();
-      if (!active) {
-        return;
+      try {
+        const accounts = await listAssetAccounts();
+        if (!active) {
+          return;
+        }
+        const found = accounts.find((a) => a.id === id);
+        if (!found) {
+          returnToOverview();
+          return;
+        }
+        setAccount(found);
+        setDraft(accountToDraft(found));
+      } catch {
+        // Corrupt or unreadable account store — `listAssetAccounts` threw
+        // (JSON.parse or the schema cascade in parseStoredAssetAccounts). The
+        // detail screen has no error surface of its own, just a loading
+        // spinner, so bail to the overview — whose own load surfaces the
+        // failure — instead of spinning forever on a screen that can never
+        // populate. `if/else` rather than a ternary so React Compiler keeps
+        // memoizing this component (a conditional expression inside a
+        // try/catch would bail it out).
+        if (active) {
+          returnToOverview();
+        }
       }
-      const found = accounts.find((a) => a.id === id) ?? null;
-      if (!found) {
-        returnToOverview();
-        return;
-      }
-      setAccount(found);
-      setAccountName(found.name);
-      setAccountLastFourDigits(found.accountLastFourDigits);
-      setBalanceRowsFromAccount(found.balances);
-      setKind(found.kind);
-      setLoadState("ready");
     })();
     return () => {
       active = false;
     };
-  }, [id, returnToOverview, setBalanceRowsFromAccount]);
+  }, [id, returnToOverview]);
 
-  // Applies the recognized fields to the form, but NOT the last four digits —
-  // those are the account's immutable identity and stay as loaded. So uploading
-  // a fresh screenshot of the same account updates its name/balances/kind,
-  // while uploading a different account's screenshot still can't hijack this
-  // account's last four. Each field is applied conditionally so a partial
-  // recognition leaves the rest untouched.
-  const handleRecognized = (recognized: RecognizedAccount) => {
-    if (recognized.accountName) {
-      setAccountName(recognized.accountName);
+  // Applies the recognized fields through the shared merge (only fields the
+  // model returned overwrite the draft), then pins the last four back — those
+  // are the account's immutable identity. So uploading a fresh screenshot of
+  // the same account updates its name/balances/kind, while a different
+  // account's screenshot still can't hijack this account's last four. Returns
+  // whether anything was applied (the uploader's badge follows that).
+  const handleRecognized = (accounts: RecognizedAccount[]): boolean => {
+    const recognized = selectRecognizedForAccount(
+      accounts,
+      account?.accountLastFourDigits,
+    );
+    if (!recognized) {
+      return false;
     }
-    if (recognized.balances && recognized.balances.length > 0) {
-      setBalanceRowsFromAccount(recognized.balances);
-    }
-    if (recognized.kind) {
-      setKind(recognized.kind);
-    }
+    setDraft((prev) => ({
+      ...mergeRecognizedIntoDraft(prev, recognized),
+      lastFour: prev.lastFour,
+    }));
+    return true;
   };
 
-  // lastFour is already valid (it came from a saved account), so it isn't
-  // re-validated here — unlike the new-account form.
-  const canSave =
-    accountName.trim().length > 0 &&
-    validBalanceRows.length >= 1 &&
-    !hasDuplicateCurrency &&
-    !isSaving &&
-    account !== null;
-
-  const handleCleanupFinished = () => {
-    setCleanupVisible(false);
-    returnToOverview();
-  };
+  // The saveable form of the current draft via the shared
+  // `draftToValidAccount` rule — the same one gating the add form and wizard
+  // batch save — so the edit screen can't drift from "what is a saveable
+  // account". The last four is locked once the account has one, so the
+  // empty-or-4-digits clause only gates the fill-in path here.
+  const valid = useMemo(() => draftToValidAccount(draft), [draft]);
+  const canSave = valid !== null && !isSaving && account !== null;
+  // Fill-once identity: the last four is editable only while the account
+  // still lacks one.
+  const lastFourLocked = Boolean(account?.accountLastFourDigits);
 
   const saveAccount = async () => {
-    if (!canSave || !account) {
-      Alert.alert(
-        t("accountDetail.validationTitle"),
-        t("accountDetail.validationMessage"),
-      );
+    // Mirrors `canSave` (which already disables the button) so the narrowing
+    // holds for TypeScript — an unsaveable draft can't reach here.
+    if (!valid || !account) {
       return;
     }
 
     setIsSaving(true);
-
+    // The try wraps only the fallible write; a throw becomes a null result and
+    // every branch runs after it. React Compiler bails out of an entire
+    // component that contains a `finally` clause, which would leave this
+    // screen with no memoization at all.
+    let result: UpdateAssetAccountResult | null = null;
     try {
-      const result = await updateAssetAccount(account.id, {
-        name: accountName.trim(),
-        balances: validBalanceRows,
-        kind,
+      result = await updateAssetAccount(account.id, {
+        name: valid.name,
+        // Fill-once at the repository: an existing last four always wins
+        // there, so sending the (locked) current value is a no-op and only a
+        // previously-empty last four actually lands.
+        accountLastFourDigits: valid.accountLastFourDigits,
+        balances: valid.balances,
+        kind: draft.kind,
       });
-      if (result.ok) {
-        if (selectedSourceImage) {
-          setCleanupVisible(true);
-        } else {
-          returnToOverview();
-        }
-        return;
-      }
-      if (result.error.kind === "notFound") {
-        // Account was deleted elsewhere — bail to the overview.
-        returnToOverview();
-        return;
-      }
-      Alert.alert(
-        t("accountDetail.conflictTitle"),
-        t("accountDetail.conflictMessage", {
-          name: result.error.conflictingAccountName,
-        }),
-      );
     } catch {
+      result = null;
+    }
+    setIsSaving(false);
+
+    if (!result) {
       Alert.alert(
         t("accountDetail.saveErrorTitle"),
         t("accountDetail.saveErrorMessage"),
       );
-    } finally {
-      setIsSaving(false);
+      return;
     }
+    if (result.ok) {
+      finishSave();
+      return;
+    }
+    if (result.error.kind === "notFound") {
+      // Account was deleted elsewhere — bail to the overview.
+      returnToOverview();
+      return;
+    }
+    Alert.alert(
+      t("accountDetail.conflictTitle"),
+      t("accountDetail.conflictMessage", {
+        name: result.error.conflictingAccountName,
+      }),
+    );
   };
 
   return (
-    <>
-      <Head>
-        <title>{t("metadata.accountDetailTitle")}</title>
-        <meta
-          name="description"
-          content={t("metadata.accountDetailDescription")}
-        />
-        <meta name="robots" content="noindex,nofollow" />
-      </Head>
-      <SafeAreaView style={styles.safeArea}>
-        <KeyboardAvoidingView style={styles.flex}>
-          <ScreenHeader title={t("accountDetail.screenTitle")} />
+    <SafeAreaView style={screenStyles.safeArea}>
+      <KeyboardAvoidingView style={screenStyles.flex}>
+        <ScreenHeader title={t("accountDetail.screenTitle")} />
 
-          {loadState === "loading" ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator color={COLORS.brand} size="small" />
-            </View>
-          ) : (
-            <ScrollView
-              contentContainerStyle={styles.content}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-            >
-              <View style={styles.intro}>
-                <Text style={styles.title}>
-                  {t("accountDetail.introTitle")}
-                </Text>
-                <Text style={styles.subtitle}>
-                  {t("accountDetail.introDescription")}
-                </Text>
-              </View>
-
-              <AccountScreenshotUploader
-                sourceImage={selectedSourceImage}
-                onSourceImageChange={setSelectedSourceImage}
-                onRecognized={handleRecognized}
-              />
-
-              <View style={styles.formHeader}>
-                <SectionHeader
-                  stacked
-                  title={t("accountDetail.accountInformation")}
-                  detail={
-                    <Text style={styles.formHint}>
-                      {t("accountDetail.formHint")}
-                    </Text>
-                  }
-                />
-              </View>
-
-              <View style={styles.formCard}>
-                <FormField
-                  label={t("accountDetail.accountName")}
-                  onChangeText={setAccountName}
-                  placeholder={t("accountDetail.accountNameExample")}
-                  value={accountName}
-                />
-
-                <View style={styles.fieldDivider} />
-
-                <FormField
-                  editable={false}
-                  label={t("accountDetail.lastFourDigits")}
-                  onChangeText={() => {}}
-                  placeholder="0000"
-                  prefix="••••"
-                  value={accountLastFourDigits}
-                />
-                <Text style={styles.lastFourLockedHint}>
-                  {t("accountDetail.lastFourDigitsLocked")}
-                </Text>
-
-                <View style={styles.fieldDivider} />
-
-                <BalanceRowsField
-                  balanceRows={balanceRows}
-                  labels={{
-                    accountBalance: t("accountDetail.accountBalance"),
-                    currency: t("accountDetail.currency"),
-                    removeCurrencyRow: t("accountDetail.removeCurrencyRow"),
-                    addCurrency: t("accountDetail.addCurrency"),
-                    allCurrenciesAdded: t("accountDetail.allCurrenciesAdded"),
-                  }}
-                  onAdd={addBalanceRow}
-                  onUpdate={updateBalanceRow}
-                  onRemove={removeBalanceRow}
-                />
-
-                <FieldShell label={t("accountDetail.accountKind")}>
-                  <ChoiceChipGroup
-                    options={accountKindOptions}
-                    value={kind}
-                    onChange={setKind}
-                  />
-                </FieldShell>
-              </View>
-            </ScrollView>
-          )}
-
-          <View style={styles.bottomBar}>
-            <Button
-              size="lg"
-              variant="primary"
-              elevated
-              disabled={!canSave}
-              onPress={() => void saveAccount()}
-            >
-              {isSaving
-                ? t("accountDetail.saving")
-                : t("accountDetail.saveAccount")}
-            </Button>
+        {account === null ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator color={COLORS.brand} size="small" />
           </View>
-        </KeyboardAvoidingView>
+        ) : (
+          <ScrollView
+            contentContainerStyle={screenStyles.content}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <ScreenIntro
+              title={t("accountDetail.introTitle")}
+              subtitle={t("accountDetail.introDescription")}
+            />
 
-        <SourceImageCleanupModal
-          visible={cleanupVisible}
-          sourceImage={selectedSourceImage}
-          onFinished={handleCleanupFinished}
-        />
-      </SafeAreaView>
-    </>
+            <AccountScreenshotUploader
+              sourceImage={selectedSourceImage}
+              onSourceImageChange={setSelectedSourceImage}
+              onRecognized={handleRecognized}
+            />
+
+            <SectionHeader
+              stacked
+              title={t("accountDetail.accountInformation")}
+              detail={
+                <Text style={screenStyles.formHint}>
+                  {t("accountDetail.formHint")}
+                </Text>
+              }
+            />
+
+            <AccountEditorFields
+              draft={draft}
+              index={0}
+              onChange={setDraft}
+              lastFourEditable={!lastFourLocked}
+              lastFourHint={
+                lastFourLocked
+                  ? t("accountDetail.lastFourDigitsLocked")
+                  : t("accountDetail.lastFourDigitsOptional")
+              }
+            />
+          </ScrollView>
+        )}
+
+        <View style={screenStyles.bottomBar}>
+          <Button
+            size="lg"
+            variant="primary"
+            elevated
+            disabled={!canSave}
+            onPress={() => void saveAccount()}
+          >
+            {isSaving
+              ? t("accountDetail.saving")
+              : t("accountDetail.saveAccount")}
+          </Button>
+        </View>
+      </KeyboardAvoidingView>
+
+      <SourceImageCleanupModal {...cleanupProps} />
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  ...screenStyles,
   loadingContainer: {
     alignItems: "center",
     flex: 1,
     justifyContent: "center",
-  },
-  lastFourLockedHint: {
-    color: COLORS.subtle,
-    fontSize: FONT_SIZE.micro,
-    lineHeight: LINE_HEIGHT.body,
-    marginTop: SPACING.sm,
   },
 });

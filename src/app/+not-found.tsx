@@ -1,5 +1,4 @@
 import { Stack } from "expo-router";
-import Head from "expo-router/head";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -22,10 +21,6 @@ export default function NotFoundScreen() {
 
   return (
     <>
-      <Head>
-        <title>{t("metadata.notFoundTitle")}</title>
-        <meta name="robots" content="noindex,nofollow" />
-      </Head>
       <Stack.Screen options={{ title: t("notFound.screenTitle") }} />
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.card}>

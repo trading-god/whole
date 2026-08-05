@@ -4,8 +4,8 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import {
   type AssetAccount,
   listAssetAccounts,
-  saveAssetAccounts,
-  sumBalancesByKindInCurrency,
+  removeAssetAccount,
+  sumBalancesInEveryCurrency,
 } from "@/features/assets/asset-repository";
 import { createAsyncSerializer } from "@/features/assets/async-serializer";
 import { loadBaseCurrency } from "@/features/assets/base-currency-store";
@@ -16,27 +16,23 @@ import {
 import {
   type ExchangeRates,
   loadExchangeRates,
+  refreshExchangeRates,
 } from "@/features/assets/currency-conversion";
+import { reconcileNetWorthFlows } from "@/features/assets/net-worth-flows";
 import {
   type NetWorthSnapshot,
-  listNetWorthSnapshots,
-  migrateSnapshotsToBase,
+  migrateSnapshots,
   recordNetWorthSnapshot,
 } from "@/features/assets/net-worth-history";
 import { useAppLocale } from "@/i18n";
 
+// The exchange-rate base is deliberately absent: only the rate API depends on
+// it, and snapshots carry every display currency, so nothing downstream has to
+// convert through it. It lives in `baseCurrencyRef` alone, which is all
+// `refresh` needs to refetch without re-reading storage.
 type AssetAccountsState = {
   accounts: readonly AssetAccount[];
-  // null until the persistent base currency has loaded; the display paths
-  // short-circuit while loading so it is never read for display.
-  baseCurrency: Currency | null;
   snapshots: readonly NetWorthSnapshot[];
-  // Whether `snapshots` are denominated in `baseCurrency`. False while a legacy-
-  // currency migration is deferred (rates unavailable): the chart still shows
-  // the relative trend line, but the delta amount can't be converted to the
-  // display currency, so `displayDelta` is suppressed to avoid showing a
-  // legacy-currency delta mislabeled as the base currency.
-  snapshotsInBaseCurrency: boolean;
   rates: ExchangeRates;
   // False until the focus effect adopts rates for the current cycle. Gates the
   // total/pill "—"/placeholder so they wait for rates (which may hit the
@@ -49,87 +45,90 @@ type AssetAccountsState = {
 
 const initialAssetAccountsState: AssetAccountsState = {
   accounts: [],
-  baseCurrency: null,
   snapshots: [],
-  snapshotsInBaseCurrency: true,
   rates: {} as ExchangeRates,
   ratesReady: false,
   error: false,
   isLoading: true,
 };
 
-// Records today's net-worth snapshot for `accounts` (migrated to the base
-// currency first), or — when the base currency hasn't loaded yet or migration
-// is still deferred (rates unavailable) — falls back to a plain read so legacy
-// and base snapshots never mix and corrupt the trend delta. Shared by the focus
-// effect and removeAccount so the migrate/record rule lives in one place.
+// Records today's net-worth snapshot for `accounts`, upgrading any legacy
+// single-base history first. Shared by the focus effect, removeAccount, and
+// pull-to-refresh so the upgrade/book/record rule lives in one place.
 //
-// Best-effort: a storage failure during migration or read must not fail the
-// account load/removal that triggered it — the chart degrades to the cached
-// history (or empty) instead, and the next focus retries the migration.
+// Every step needs rates that convert all four currencies, because the snapshot
+// records one figure per currency: a partial set would freeze capital at a rate
+// of "no data" and skew growth in the missing currencies permanently. Without
+// them nothing is written and the existing history is returned unchanged, to be
+// retried on the next focus.
+//
+// Best-effort: a storage failure during the upgrade or read must not fail the
+// account load/removal that triggered it. Returns null for "no history to
+// report" — the caller then leaves the chart on whatever it already had,
+// rather than replacing it with an empty list.
 async function recordSnapshotForAccounts(
   accounts: readonly AssetAccount[],
-  baseCurrency: Currency | null,
   rates: ExchangeRates,
-): Promise<{ snapshots: NetWorthSnapshot[]; inBaseCurrency: boolean }> {
+): Promise<NetWorthSnapshot[] | null> {
   try {
-    // Base currency not loaded yet — read the cached history so legacy and
-    // base snapshots never mix and corrupt the trend delta. `inBaseCurrency`
-    // is moot here (the display suppresses the delta while baseCurrency is
-    // null).
-    if (baseCurrency === null) {
-      return { snapshots: await listNetWorthSnapshots(), inBaseCurrency: true };
+    const upgraded = await migrateSnapshots(rates);
+    if (upgraded === null) {
+      // The store still holds a legacy record that can't be converted yet
+      // (rates incomplete), or one nothing can read. Neither is a history this
+      // path can return: `listNetWorthSnapshots` reports both as empty, and
+      // committing that would blank a chart whose data is intact in storage.
+      // Report "no update" and let the next focus retry.
+      return null;
     }
-    const migrated = await migrateSnapshotsToBase(baseCurrency, rates);
-    if (migrated === null) {
-      // Migration deferred (rates unavailable): return the legacy snapshots so
-      // the chart keeps its relative trend line, but flag that they are NOT in
-      // baseCurrency — the delta amount can't be shown in the display currency.
-      return {
-        snapshots: await listNetWorthSnapshots(),
-        inBaseCurrency: false,
-      };
+    // Book the capital that moved in or out since the last sample, so an
+    // account added since then lands in `totals` and `baselines` together and
+    // leaves the growth curve flat instead of stepping up by its whole balance
+    // (and a deleted one leaves without taking its growth with it). Each
+    // movement is frozen at today's rate, which is what makes a later rate move
+    // register as growth.
+    //
+    // This has to succeed before a sample is recorded: measuring against stale
+    // capital would book a new account's opening balance as growth — precisely
+    // the spike the ledger removes. On failure skip today's sample; the chart
+    // keeps its existing history and the next focus retries.
+    const flows = await reconcileNetWorthFlows(accounts, rates).catch(
+      () => null,
+    );
+    if (flows === null) {
+      return upgraded;
     }
-    // Skip recording when the total is unknown (rates unavailable, no balance
-    // convertible) so a fake 0 isn't persisted — matches the migration-deferred
-    // skip above. `migrated` is the current snapshot list (migrateSnapshotsToBase
-    // updates the cache and returns it), so return it directly instead of
-    // re-reading the same cached reference.
-    const total = sumBalancesByKindInCurrency(
-      accounts,
-      baseCurrency,
-      rates,
-    ).total;
-    if (total === null) {
-      return { snapshots: migrated, inBaseCurrency: true };
-    }
-    // Record today's sample, falling back to `migrated` (the list migrate just
-    // returned) so a snapshot write failure never blanks the chart.
-    const recorded = await recordNetWorthSnapshot(total).catch(() => migrated);
-    return { snapshots: recorded, inBaseCurrency: true };
+    // Record today's sample, falling back to `upgraded` (the list the upgrade
+    // just returned) so a snapshot write failure never blanks the chart.
+    return await recordNetWorthSnapshot(
+      sumBalancesInEveryCurrency(accounts, rates),
+      flows.amounts,
+    ).catch(() => upgraded);
   } catch {
-    // A throw here is usually migrateSnapshotsToBase rejecting (a storage
-    // write failed mid-migration) — the snapshots are still legacy, not in
-    // baseCurrency — so flag false to suppress the delta rather than show a
-    // legacy-currency amount mislabeled as the base currency.
-    const snapshots = await listNetWorthSnapshots().catch(() => []);
-    return { snapshots, inBaseCurrency: false };
+    // Usually the upgrade rejecting on a failed storage write. Leave the chart
+    // as it is rather than breaking the load that triggered this — and rather
+    // than blanking a history that is still on disk.
+    return null;
   }
 }
 
 export function useAssetAccounts() {
-  const { languageTag, isHydrated } = useAppLocale();
+  const { languageTag } = useAppLocale();
   const defaultDisplayCurrency = useMemo(
     () => defaultDisplayCurrencyForLanguageTag(languageTag),
     [languageTag],
   );
   const [state, setState] = useState(initialAssetAccountsState);
-  // Mirrors of state.accounts, state.rates and state.baseCurrency so
-  // removeAccount can recompute the post-delete total synchronously without
-  // reading stale state from a useCallback closure.
+  // Mirrors of state.accounts and state.rates. The focus effect captures
+  // `accountsRef` before its awaits and compares after, so a removeAccount
+  // landing during a focus load is detected instead of clobbering the ref back
+  // to the stale pre-remove list (which would resurrect the deleted account);
+  // `commitSnapshots` reads it to detect a remove that lands during its await.
+  // The base currency has no state twin — nothing renders it — so the ref is
+  // the only copy, held so pull-to-refresh can refetch without re-reading
+  // storage.
   const accountsRef = useRef<readonly AssetAccount[]>(state.accounts);
   const ratesRef = useRef<ExchangeRates>(state.rates);
-  const baseCurrencyRef = useRef<Currency | null>(state.baseCurrency);
+  const baseCurrencyRef = useRef<Currency | null>(null);
   // Serializes removes so concurrent calls don't race on storage and each sees
   // the prior removal in memory. Created once per hook instance via useState's
   // lazy initializer (the serializer is never reassigned, so the setter is
@@ -137,15 +136,40 @@ export function useAssetAccounts() {
   // and its promise chain on every render and discard all but the first.
   const [removeSerializer] = useState(() => createAsyncSerializer());
 
-  useFocusEffect(
-    useCallback(() => {
-      // On web the locale isn't resolved until hydration; loading the base
-      // currency now would pin the pre-hydration fallback (SGD) permanently.
-      // Native is always hydrated, so this is a no-op there.
-      if (!isHydrated) {
+  // Records today's snapshot for `accounts` and commits it, unless a remove
+  // landed during the await. Every path that re-records — focus stage 3,
+  // removeAccount, pull-to-refresh — goes through this, so the capture-before-
+  // await / compare-after rule that stops a removed account from being
+  // resurrected has one owner instead of three copies to keep in step.
+  //
+  // `isStillMounted` lets the focus effect drop a result that arrived after
+  // the screen blurred; the imperative paths (remove, refresh) always commit,
+  // matching what they did inline. A null result means "nothing to report"
+  // (unconvertible or unreadable store) — the chart keeps what it already has
+  // instead of blanking over a history that is still on disk.
+  const commitSnapshots = useCallback(
+    async (
+      accounts: readonly AssetAccount[],
+      rates: ExchangeRates,
+      isStillMounted: () => boolean = () => true,
+    ): Promise<void> => {
+      const snapshots = await recordSnapshotForAccounts(accounts, rates);
+      if (snapshots === null || !isStillMounted()) {
         return;
       }
+      setState((currentState) => {
+        const next =
+          accountsRef.current === accounts ? snapshots : currentState.snapshots;
+        return currentState.snapshots === next
+          ? currentState
+          : { ...currentState, snapshots: next };
+      });
+    },
+    [],
+  );
 
+  useFocusEffect(
+    useCallback(() => {
       let isActive = true;
 
       void (async () => {
@@ -177,12 +201,11 @@ export function useAssetAccounts() {
           // base is always adopted — removeAccount never writes baseCurrencyRef.
           baseCurrencyRef.current = base;
           setState((currentState) => {
-            // Bail out on a cache-hot refocus: accounts/base already current
-            // and not loading. Don't touch ratesReady — stage 2 owns it, and
+            // Bail out on a cache-hot refocus: accounts already current and
+            // not loading. Don't touch ratesReady — stage 2 owns it, and
             // leaving it untouched preserves a prior true on refocus.
             if (
               currentState.accounts === accountsRef.current &&
-              currentState.baseCurrency === base &&
               !currentState.error &&
               !currentState.isLoading
             ) {
@@ -191,7 +214,6 @@ export function useAssetAccounts() {
             return {
               ...currentState,
               accounts: accountsRef.current,
-              baseCurrency: base,
               error: false,
               isLoading: false,
             };
@@ -217,38 +239,10 @@ export function useAssetAccounts() {
           );
 
           // Stage 3: record today's snapshot (needs rates for the total).
-          // Capture accountsRef at call time so the snapshot reflects the
-          // current list (post-remove if a remove raced); the stillCurrent
-          // check below detects a remove that lands during this await.
-          const accountsAtStage3Start = accountsRef.current;
-          const snapshotResult = await recordSnapshotForAccounts(
-            accountsAtStage3Start,
-            base,
-            rates,
-          );
-          if (!isActive) {
-            return;
-          }
-          setState((currentState) => {
-            const stillCurrent = accountsRef.current === accountsAtStage3Start;
-            const snapshots = stillCurrent
-              ? snapshotResult.snapshots
-              : currentState.snapshots;
-            const snapshotsInBaseCurrency = stillCurrent
-              ? snapshotResult.inBaseCurrency
-              : currentState.snapshotsInBaseCurrency;
-            if (
-              currentState.snapshots === snapshots &&
-              currentState.snapshotsInBaseCurrency === snapshotsInBaseCurrency
-            ) {
-              return currentState;
-            }
-            return {
-              ...currentState,
-              snapshots,
-              snapshotsInBaseCurrency,
-            };
-          });
+          // Read accountsRef at call time so the snapshot reflects the current
+          // list (post-remove if a remove raced); commitSnapshots detects a
+          // remove that lands during the await.
+          await commitSnapshots(accountsRef.current, rates, () => isActive);
         } catch {
           // Only stage 1 can throw (local SQLite); loadExchangeRates and
           // recordSnapshotForAccounts never throw. ratesReady is left untouched
@@ -266,7 +260,7 @@ export function useAssetAccounts() {
       return () => {
         isActive = false;
       };
-    }, [defaultDisplayCurrency, isHydrated]),
+    }, [commitSnapshots, defaultDisplayCurrency]),
   );
 
   // Removes an account from storage and the in-memory list, then re-records
@@ -281,38 +275,93 @@ export function useAssetAccounts() {
   const removeAccount = useCallback(
     (id: string): Promise<void> => {
       const run = async () => {
-        const nextAccounts = accountsRef.current.filter(
-          (account) => account.id !== id,
-        );
-        await saveAssetAccounts(nextAccounts);
+        // Removed through the repository's shared `mutate` lock so a concurrent
+        // upsert/update (an add/edit screen save) can't read the same list and
+        // clobber this write — both write ASSET_ACCOUNTS_STORAGE_KEY. The
+        // returned list reflects storage (so a concurrent save's new account
+        // survives the remove) rather than the ref, which may predate it.
+        const nextAccounts = await removeAssetAccount(id);
         accountsRef.current = nextAccounts;
         setState((currentState) => ({
           ...currentState,
           accounts: nextAccounts,
         }));
 
-        const baseCurrency = baseCurrencyRef.current;
-        const rates = ratesRef.current;
-        // Record today's snapshot (migrating legacy snapshots first), matching
-        // the focus effect's migrate/record rule so legacy and base snapshots
-        // never mix and corrupt the trend delta.
-        const snapshotResult = await recordSnapshotForAccounts(
-          nextAccounts,
-          baseCurrency,
-          rates,
-        );
-
-        setState((currentState) => ({
-          ...currentState,
-          snapshots: snapshotResult.snapshots,
-          snapshotsInBaseCurrency: snapshotResult.inBaseCurrency,
-        }));
+        // Re-record today's snapshot so the removed account's balance leaves
+        // the total and its capital leaves the ledger together — the chart and
+        // trend update immediately instead of waiting for the next focus.
+        await commitSnapshots(nextAccounts, ratesRef.current);
       };
 
       return removeSerializer(run);
     },
-    [removeSerializer],
+    [commitSnapshots, removeSerializer],
   );
 
-  return { ...state, removeAccount };
+  // Pull-to-refresh. Exchange rates are the only figure on the home screen that
+  // comes from off-device, so refreshing means refetching them past their cache
+  // TTL and then re-recording today's snapshot at the new rates — the total,
+  // the composition, and the chart all move together as a result.
+  //
+  // The accounts are re-read first. That is nearly free (the repository serves
+  // a cached array, so an unchanged list comes back reference-identical and
+  // nothing re-renders), and it is what makes this the recovery gesture the
+  // error card implies: without it a failed initial load leaves the screen on
+  // "couldn't load your accounts" with no way back except leaving the screen.
+  // It is also load-bearing, not just a convenience — booking flows against a
+  // list that was never loaded would read every stored holding as gone and
+  // retire it from the capital ledger, permanently erasing accumulated growth.
+  //
+  // Never rejects: `refreshExchangeRates` and `recordSnapshotForAccounts`
+  // absorb their own failures, and a read failure leaves the screen exactly as
+  // it was. The caller can therefore drop the spinner on settle without a
+  // failure branch.
+  const refresh = useCallback(async (): Promise<void> => {
+    // Resolved with an `if` rather than `??`: React Compiler cannot lower a
+    // value block (a conditional, `??`, or optional chain) inside a try/catch
+    // and would bail out of this entire hook, leaving every screen that reads
+    // it with no memoization at all. Same constraint the account screens'
+    // saves are written around.
+    let base = baseCurrencyRef.current;
+    try {
+      if (base === null) {
+        base = await loadBaseCurrency(defaultDisplayCurrency);
+      }
+      // Captured before the await for the same reason stage 1 does it: a
+      // removeAccount landing during the read must not be clobbered back.
+      const prevAccountsRef = accountsRef.current;
+      const accounts = await listAssetAccounts();
+      if (accountsRef.current === prevAccountsRef) {
+        accountsRef.current = accounts;
+      }
+
+      const rates = await refreshExchangeRates(base);
+      baseCurrencyRef.current = base;
+      ratesRef.current = rates;
+      setState((currentState) =>
+        currentState.accounts === accountsRef.current &&
+        currentState.rates === rates &&
+        currentState.ratesReady &&
+        !currentState.error &&
+        !currentState.isLoading
+          ? currentState
+          : {
+              ...currentState,
+              accounts: accountsRef.current,
+              rates,
+              ratesReady: true,
+              error: false,
+              isLoading: false,
+            },
+      );
+
+      await commitSnapshots(accountsRef.current, rates);
+    } catch {
+      // Only the local reads can throw (SQLite). Leave the screen on its
+      // current data — including a prior error state, which is still true —
+      // rather than surfacing a second error for a pull the user can repeat.
+    }
+  }, [commitSnapshots, defaultDisplayCurrency]);
+
+  return { ...state, removeAccount, refresh };
 }

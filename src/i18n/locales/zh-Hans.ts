@@ -1,6 +1,5 @@
 export const zhHansMessages = {
   common: {
-    brandName: "Whole",
     wordmark: "WHOLE",
     addAccount: "添加账户",
     backToAssetOverview: "返回资产总览",
@@ -9,26 +8,19 @@ export const zhHansMessages = {
     required: "必填",
     stepIndicator: "第 {{current}} 步，共 {{total}} 步",
   },
-  metadata: {
-    homeTitle: "Whole — 你的完整资产总览",
-    homeDescription: "在一个地方，看清你的全部财务状况。",
-    newAccountTitle: "添加账户 — Whole",
-    newAccountDescription: "向 Whole 添加账户并确认账户信息。",
-    settingsTitle: "设置 — Whole",
-    settingsDescription: "配置账户截图识别。",
-    onboardingTitle: "开始使用 — Whole",
-    onboardingDescription: "设置称呼与模型，开始使用 Whole。",
-    notFoundTitle: "页面不存在 — Whole",
-    accountDetailTitle: "编辑账户 — Whole",
-    accountDetailDescription: "在 Whole 中编辑账户的名称、余额与类型。",
-  },
   home: {
     greeting: "你好，{{name}}",
     greetingFallback: "你好",
     totalAssetsLabel: "总资产 · 折合",
     displayCurrency: "展示币种",
-    pastMonths: "过去 {{count}} 个月",
+    chartRange: "图表时间范围",
+    pastMonths_one: "过去 {{count}} 个月",
+    pastMonths_other: "过去 {{count}} 个月",
+    pastYears_one: "过去 {{count}} 年",
+    pastYears_other: "过去 {{count}} 年",
+    allTime: "全部时间",
     chartAccumulating: "正在积累图表数据…",
+    chartRatesUnavailable: "图表数据需要汇率。请连接网络后重新打开 Whole。",
     assetComposition: "资产构成",
     loading: "正在加载",
     accountCount_one: "{{count}} 个账户",
@@ -50,22 +42,13 @@ export const zhHansMessages = {
     emptyBalanceHint: "添加账户，开始追踪总资产",
     openAccountHint: "查看账户详情",
   },
-  newAccount: {
-    screenTitle: "添加账户",
-    introTitle: "添加一个账户",
-    introDescription: "选择账户截图，然后补充并确认账户信息。",
-    uploadScreenshot: "上传账户截图",
-    changeScreenshot: "更换账户截图",
-    screenshotReady: "账户截图已就绪",
-    tapToChangeScreenshot: "点击更换账户截图",
-    screenshotGuidance: "选择一张清晰显示账户名称、账号后四位和余额的截图",
-    chooseScreenshot: "选择账户截图",
-    screenshotPrivacy: "账户截图仅用于确认账户信息，不会显示在资产总览中",
-    accountInformation: "账户信息",
-    formHint: "请根据账户截图补充或修改",
+  // 账户表单本身（AccountEditorFields）的文案，添加账户页、多账户向导与编辑
+  // 账户页逐字共用——表单只有一个归属，它的标签也只有一份。各屏专属文案
+  //（引导语、提示、保存与错误措辞）仍留在 `newAccount` / `accountDetail`。
+  accountForm: {
     accountName: "账户名称",
     accountNameExample: "例如：DBS Multiplier",
-    accountNumberLastFour: "账号后四位",
+    lastFourDigits: "账号后四位",
     accountBalance: "账户余额",
     currency: "币种",
     accountKind: "账户类型",
@@ -75,37 +58,52 @@ export const zhHansMessages = {
     addCurrency: "添加币种",
     allCurrenciesAdded: "已添加全部币种",
     removeCurrencyRow: "删除该币种",
+  },
+  newAccount: {
+    screenTitle: "添加账户",
+    introTitle: "添加一个账户",
+    introDescription: "选择账户截图，然后补充并确认账户信息。",
+    accountInformation: "账户信息",
+    formHint: "请根据账户截图补充或修改",
+    saving: "正在保存…",
+    saveAccount: "保存账户",
+    saveErrorTitle: "保存失败",
+    saveErrorMessage: "无法保存账户，请稍后重试。",
+  },
+  // 两个共享的账户截图组件（AccountScreenshotUploader 与
+  // SourceImageCleanupModal）自有的文案，添加账户页与编辑账户页都会渲染它们。
+  // 独立于 `newAccount`，这样改动添加账户页的文案不会悄悄改掉编辑页的措辞。
+  accountScreenshot: {
+    uploadScreenshot: "上传账户截图",
+    replaceScreenshot: "更换截图",
+    replaceScreenshotHint: "选择其他账户截图",
+    screenshotReady: "账户截图已就绪",
+    screenshotGuidance: "选择一张清晰显示账户名称、账号后四位和余额的截图",
+    chooseScreenshot: "选择账户截图",
+    screenshotPrivacy: "账户截图仅用于确认账户信息，不会显示在资产总览中",
     recognizing: "正在识别…",
     recognized: "已识别，请核对",
     recognitionFailed: "无法识别截图，请手动填写账户信息。",
-    missingLlmConfigTitle: "设置账户识别",
+    noMatchingAccount:
+      "这张截图中没有你正在编辑的账户，因此未填入任何信息。请选择该账户的截图。",
     missingLlmConfigMessage:
       "请先填写 OpenAI 兼容的接口地址与模型，以便从截图识别账户。",
     goToSettings: "打开设置",
-    saving: "正在保存…",
-    saveAccount: "保存账户",
     accountSaved: "账户已保存",
     cleanupPrompt:
       "这张账户截图已用于确认账户信息。是否从系统相册删除？系统会再次请求确认。",
     cleanupManualPhotoLibrary:
       "系统无法定位相册中的账户截图，请前往系统相册手动删除。",
-    cleanupManualBrowser:
-      "浏览器无法删除设备中的账户截图，请前往相册或下载文件夹手动删除。",
     keepScreenshot: "保留账户截图",
     deletingScreenshot: "正在删除…",
     deleteScreenshot: "删除账户截图",
     acknowledge: "我知道了",
-    validationTitle: "请检查账户信息",
-    validationMessage: "请填写账户名称、账号后四位，并至少添加一个币种的余额。",
-    saveErrorTitle: "保存失败",
-    saveErrorMessage: "无法保存账户，请稍后重试。",
     deletionErrorTitle: "无法删除账户截图",
     deletionErrorMessage: "账户已保存。请前往系统相册手动删除这张账户截图。",
     deletionPermissionTitle: "Whole 无法删除账户截图",
     deletionPermissionMessage:
       "Whole 需要照片完全访问权限才能删除账户截图。请打开系统设置，点击 Whole，并开启“完全访问”。",
     openSystemSettings: "打开设置",
-    pickerErrorTitle: "无法选择账户截图",
     pickerErrorMessage: "请稍后重试，或检查 Whole 的照片访问权限。",
   },
   accountDetail: {
@@ -114,24 +112,37 @@ export const zhHansMessages = {
     introDescription: "更新账户名称、余额与类型。",
     accountInformation: "账户信息",
     formHint: "修改需要更新的信息",
-    accountName: "账户名称",
-    accountNameExample: "例如：DBS Multiplier",
-    lastFourDigits: "账号后四位",
     lastFourDigitsLocked: "账号后四位在账户创建后无法修改",
-    accountBalance: "账户余额",
-    currency: "币种",
-    accountKind: "账户类型",
-    addCurrency: "添加币种",
-    allCurrenciesAdded: "已添加全部币种",
-    removeCurrencyRow: "删除该币种",
+    lastFourDigitsOptional: "选填——若账户有卡号，可补充后四位",
     saving: "正在保存…",
     saveAccount: "保存修改",
-    validationTitle: "请检查账户信息",
-    validationMessage: "请填写账户名称，并至少添加一个币种的余额。",
     conflictTitle: "账户已存在",
     conflictMessage:
       "另一个名为“{{name}}”的账户有相同的账号后四位。请使用其他名称。",
     saveErrorTitle: "保存失败",
+    saveErrorMessage: "无法保存账户，请稍后重试。",
+  },
+  multiAccount: {
+    title: "已识别 {{count}} 个账户",
+    accountPosition: "第 {{current}}/{{total}} 个",
+    previous: "上一个账户",
+    next: "下一个账户",
+    saveAll: "全部保存",
+    removeAccount: "移除此账户",
+    duplicateAccounts:
+      "两个账户的名称与账号后四位相同。请重命名其中一个，或为其中一个填写不同的后四位，以便分别保存。",
+    incompleteAccounts_one:
+      "还有 {{count}} 个账户缺少名称或至少一笔余额。请补全或移除后再保存。",
+    incompleteAccounts_other:
+      "还有 {{count}} 个账户缺少名称或至少一笔余额。请补全或移除后再保存。",
+    replaceDraftsTitle: "替换表单中的账户？",
+    replaceDraftsMessage_one:
+      "识别这张截图会替换你正在填写的 {{count}} 个账户，包括你已修改的内容。",
+    replaceDraftsMessage_other:
+      "识别这张截图会替换你正在填写的 {{count}} 个账户，包括你已修改的内容。",
+    replaceDraftsConfirm: "替换",
+    // 与 newAccount 的差异仅在于英文的单复数，中文两者同字——忙碌态文案与错
+    // 误标题在两种模式下共用 newAccount 的键。
     saveErrorMessage: "无法保存账户，请稍后重试。",
   },
   settings: {

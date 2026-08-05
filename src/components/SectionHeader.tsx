@@ -35,11 +35,20 @@ export function SectionHeader({
 }
 
 const styles = StyleSheet.create({
+  // Carries the rhythm a section header sets against the card it introduces.
+  // Owned by the component rather than exported for call sites to apply: every
+  // one of them wrapped it in an identical spacing View, so a new section
+  // header could ship without one and silently lose the spacing.
   header: {
     alignItems: "center",
     flexDirection: "row",
     gap: SPACING.md,
     justifyContent: "space-between",
+    marginBottom: SPACING.md,
+    marginTop: SPACING.xxl,
+    // Optical: nudges the header off the card edge below it without shifting
+    // the section onto a different horizontal grid.
+    paddingHorizontal: 2,
   },
   headerStacked: {
     alignItems: "flex-start",

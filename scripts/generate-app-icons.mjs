@@ -48,15 +48,6 @@ const androidAdaptiveIcons = [
   ["xxxhdpi", 432],
 ];
 
-const webIcons = [
-  ["public/icons/favicon-16.png", 16, 0.9],
-  ["public/icons/favicon-32.png", 32, 0.9],
-  ["public/icons/favicon-48.png", 48, 0.9],
-  ["public/icons/apple-touch-icon-180.png", 180, 0.8],
-  ["public/icons/pwa-192.png", 192, 0.8],
-  ["public/icons/pwa-512.png", 512, 0.8],
-];
-
 // Transparent (when `background` is null) or solid-fill RGBA canvas. Shared by
 // `renderIcon` and `renderSplashIcon` so the create-config lives in one place.
 function createCanvas(size, background) {
@@ -148,7 +139,7 @@ async function renderSplashIcon({ output, size }) {
 }
 
 const jobs = [
-  // Expo/EAS consumes these five master assets.
+  // Expo/EAS consumes these four master assets.
   renderIcon({ output: "assets/images/icon.png", size: 1024, scale: 0.8 }),
   renderSplashIcon({
     output: "assets/images/splash-icon.png",
@@ -167,7 +158,6 @@ const jobs = [
     svg: monochromeSvg,
     background: null,
   }),
-  renderIcon({ output: "assets/images/favicon.png", size: 48, scale: 0.9 }),
   renderIcon({
     output: "assets/app-icons/android/play-store-512.png",
     size: 512,
@@ -193,19 +183,6 @@ const jobs = [
       background: null,
     }),
   ]),
-  ...webIcons.map(([output, size, scale]) =>
-    renderIcon({ output, size, scale }),
-  ),
-  renderIcon({
-    output: "public/icons/pwa-maskable-192.png",
-    size: 192,
-    scale: androidSafeScale,
-  }),
-  renderIcon({
-    output: "public/icons/pwa-maskable-512.png",
-    size: 512,
-    scale: androidSafeScale,
-  }),
 ];
 
 await Promise.all(jobs);

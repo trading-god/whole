@@ -1,10 +1,10 @@
 import { Link, useRouter } from "expo-router";
-import Head from "expo-router/head";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Alert,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -17,6 +17,7 @@ import { CurrencyPicker } from "@/components/CurrencyPicker";
 import { Icon } from "@/components/Icon";
 import { IconButton } from "@/components/IconButton";
 import { NetWorthChart } from "@/components/NetWorthChart";
+import { OptionPicker } from "@/components/OptionPicker";
 import { SectionHeader } from "@/components/SectionHeader";
 import {
   ASSET_KIND_CHART_LABEL_KEYS,
@@ -25,16 +26,23 @@ import {
 } from "@/features/assets/account-appearance";
 import { sumBalancesByKindInCurrency } from "@/features/assets/asset-repository";
 import {
-  type Currency,
+  amountsConvertible,
   defaultDisplayCurrencyForLanguageTag,
   orderedDisplayCurrencies,
 } from "@/features/assets/currencies";
-import { convertCurrency } from "@/features/assets/currency-conversion";
 import {
   loadDisplayCurrency,
   saveDisplayCurrency,
 } from "@/features/assets/display-currency-store";
 import { computeNetWorthTrend } from "@/features/assets/net-worth-history";
+import {
+  type NetWorthRange,
+  DEFAULT_NET_WORTH_RANGE,
+  NET_WORTH_RANGES,
+  loadNetWorthRange,
+  saveNetWorthRange,
+  selectSnapshotsInRange,
+} from "@/features/assets/net-worth-range";
 import { useAssetAccounts } from "@/features/assets/use-asset-accounts";
 import { useOnboardingState } from "@/features/onboarding/onboarding-context";
 import { loadUserName } from "@/features/user/user-store";
@@ -80,6 +88,53 @@ function roundPercentages(shares: readonly number[]): number[] {
   return floored;
 }
 
+// One persisted view preference: rendered from `fallback` until the stored
+// value loads, then written back through `save` whenever it changes. The stale
+// guard is what makes the load safe to drop on unmount, and both failure modes
+// are swallowed deliberately — a preference that can't be read stays on its
+// fallback, one that can't be written reverts on the next launch, and neither
+// is worth an alert over a view setting. Stated once so the fourth preference
+// can't quietly ship without the guard. `save` is omitted for a preference
+// this screen only reads (the greeting name, written during onboarding).
+function useStoredPreference<T>(
+  load: () => Promise<T>,
+  fallback: T,
+  save?: (value: T) => Promise<void>,
+): [T, (value: T) => void] {
+  const [value, setValue] = useState(fallback);
+  // Set the moment the user picks a value, so a read that resolves late can't
+  // revert what they just chose — and already persisted. A cold start opens the
+  // database and runs the legacy AsyncStorage migration scan before the first
+  // read returns, which is a wide enough window to tap a picker in; without
+  // this the screen would disagree with storage until the next launch.
+  const hasUserChoice = useRef(false);
+
+  useEffect(() => {
+    let stale = false;
+    void load()
+      .then((stored) => {
+        if (!stale && !hasUserChoice.current) {
+          setValue(stored);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [load]);
+
+  const set = useCallback(
+    (next: T) => {
+      hasUserChoice.current = true;
+      setValue(next);
+      void save?.(next).catch(() => {});
+    },
+    [save],
+  );
+
+  return [value, set];
+}
+
 export default function Index() {
   // First-run guard. The root layout's auth gate redirects un-onboarded users
   // to /onboarding, but expo-router still mounts this screen for a frame
@@ -103,59 +158,38 @@ function HomeScreen() {
   const { isCompact } = useResponsiveLayout();
   const {
     accounts,
-    baseCurrency,
     snapshots,
-    snapshotsInBaseCurrency,
     rates,
     ratesReady,
     error: accountLoadingFailed,
     isLoading: accountsAreLoading,
     removeAccount,
+    refresh,
   } = useAssetAccounts();
   const defaultDisplayCurrency = useMemo(
     () => defaultDisplayCurrencyForLanguageTag(languageTag),
     [languageTag],
   );
-  const [displayCurrency, setDisplayCurrency] = useState<Currency>(
+  // The display currency starts on the locale default and the chart on the
+  // window the footer used before it became selectable, so both render before
+  // storage answers; the stored preference replaces them once it loads.
+  const loadStoredDisplayCurrency = useCallback(
+    () => loadDisplayCurrency(defaultDisplayCurrency),
+    [defaultDisplayCurrency],
+  );
+  const [displayCurrency, handleDisplayCurrencyChange] = useStoredPreference(
+    loadStoredDisplayCurrency,
     defaultDisplayCurrency,
+    saveDisplayCurrency,
+  );
+  const [chartRange, handleChartRangeChange] = useStoredPreference(
+    loadNetWorthRange,
+    DEFAULT_NET_WORTH_RANGE,
+    saveNetWorthRange,
   );
   // The name captured during onboarding; "" until the stored value loads (or
   // if onboarding was skipped), in which case the greeting falls back.
-  const [userName, setUserName] = useState("");
-
-  useEffect(() => {
-    let stale = false;
-    void loadDisplayCurrency(defaultDisplayCurrency)
-      .then((currency) => {
-        if (!stale) {
-          setDisplayCurrency(currency);
-        }
-      })
-      .catch(() => {
-        // A storage read failure leaves the locale default in place rather
-        // than surfacing an unhandled rejection.
-      });
-    return () => {
-      stale = true;
-    };
-  }, [defaultDisplayCurrency]);
-
-  useEffect(() => {
-    let stale = false;
-    void loadUserName()
-      .then((stored) => {
-        if (!stale) {
-          setUserName(stored);
-        }
-      })
-      .catch(() => {
-        // A storage read failure leaves the greeting on the generic fallback
-        // rather than surfacing an unhandled rejection.
-      });
-    return () => {
-      stale = true;
-    };
-  }, []);
+  const [userName] = useStoredPreference(loadUserName, "");
 
   // orderedDisplayCurrencies is a cheap 4-element sort and CurrencyPicker
   // isn't memo'd, so no useMemo is needed (a stable ref would have no consumer).
@@ -168,20 +202,41 @@ function HomeScreen() {
     () => sumBalancesByKindInCurrency(accounts, displayCurrency, rates),
     [accounts, displayCurrency, rates],
   );
-  const trend = useMemo(() => computeNetWorthTrend(snapshots), [snapshots]);
-  const displayDelta = useMemo(
-    () =>
-      trend.delta === null || baseCurrency === null || !snapshotsInBaseCurrency
-        ? null
-        : convertCurrency(trend.delta, baseCurrency, displayCurrency, rates),
-    [
-      trend.delta,
-      baseCurrency,
-      displayCurrency,
-      rates,
-      snapshotsInBaseCurrency,
-    ],
+  // The chart, the pill, and the footer delta all read the selected window, so
+  // it is narrowed once here. Memoized because `useAssetAccounts` hands back a
+  // cached snapshot reference when nothing was recorded — re-filtering on every
+  // render would hand the chart a new array each time and throw away its
+  // memoized geometry.
+  const rangedSnapshots = useMemo(
+    () => selectSnapshotsInRange(snapshots, chartRange),
+    [snapshots, chartRange],
   );
+  // Read in the display currency, not converted from a base one: snapshots
+  // carry a figure per currency because holdings are revalued at today's rate
+  // while the capital behind them stays frozen at the rate it moved at. So a
+  // rate move is growth in one currency and nothing in another, and switching
+  // the currency genuinely recomputes the answer rather than rescaling it.
+  const trend = useMemo(
+    () => computeNetWorthTrend(rangedSnapshots, displayCurrency),
+    [rangedSnapshots, displayCurrency],
+  );
+  // One direction drives the pill, the footer amount, and the curve, so a red
+  // number can never sit on a green line. Unknown deltas read as non-negative
+  // so nothing flashes red while data loads.
+  const isDeclining = trend.delta !== null && trend.delta < 0;
+  // Range labels are plural-aware messages, so each option names its own key
+  // and count. Keying the labels by range (instead of listing options inline)
+  // makes the compiler demand a label whenever a range is added.
+  const chartRangeOptions = useMemo(() => {
+    const labels: Record<NetWorthRange, string> = {
+      "1m": t("home.pastMonths", { count: 1 }),
+      "3m": t("home.pastMonths", { count: 3 }),
+      "6m": t("home.pastMonths", { count: 6 }),
+      "1y": t("home.pastYears", { count: 1 }),
+      all: t("home.allTime"),
+    };
+    return NET_WORTH_RANGES.map((value) => ({ value, label: labels[value] }));
+  }, [t]);
   const distribution = useMemo(() => {
     const percents = roundPercentages(
       knownAssetKinds.map((kind) => totalsByKind[kind]),
@@ -211,24 +266,26 @@ function HomeScreen() {
   })();
 
   const chartDeltaText = (() => {
+    // A window too short to have a delta is one the chart is already covering
+    // with its "building history" placeholder, so the footer stays a dash
+    // rather than repeating that sentence a few points away from it.
     if (trend.delta === null) {
-      return t("home.chartAccumulating");
-    }
-    if (displayDelta === null) {
       return "—";
     }
     const sign = trend.delta >= 0 ? "+" : "-";
-    return `${sign}${formatCurrency(Math.abs(displayDelta), displayCurrency)}`;
+    return `${sign}${formatCurrency(Math.abs(trend.delta), displayCurrency)}`;
   })();
 
   const [activeRowId, setActiveRowId] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const handleDisplayCurrencyChange = useCallback((currency: Currency) => {
-    setDisplayCurrency(currency);
-    // Fire-and-forget: a persistence failure leaves the preference unsaved
-    // (reverts on next launch) rather than surfacing an unhandled rejection.
-    void saveDisplayCurrency(currency).catch(() => {});
-  }, []);
+  // `refresh` never rejects (it absorbs its own failures), so the spinner is
+  // dropped on settle without a failure branch — a pull that couldn't reach the
+  // rate service simply leaves the screen on the figures it already had.
+  const handleRefresh = useCallback(() => {
+    setIsRefreshing(true);
+    void refresh().finally(() => setIsRefreshing(false));
+  }, [refresh]);
 
   const handleRemove = useCallback(
     async (id: string) => {
@@ -252,241 +309,264 @@ function HomeScreen() {
   );
 
   return (
-    <>
-      <Head>
-        <title>{t("metadata.homeTitle")}</title>
-        <meta name="description" content={t("metadata.homeDescription")} />
-      </Head>
-      <SafeAreaView style={screenStyles.safeArea} edges={["top"]}>
-        <ScrollView
-          contentContainerStyle={styles.content}
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={styles.header}>
-            <View style={styles.headerCopy}>
-              <Text style={screenStyles.wordmark}>{t("common.wordmark")}</Text>
-              <Text
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.6}
-                style={styles.greeting}
-              >
-                {userName
-                  ? t("home.greeting", { name: userName })
-                  : t("home.greetingFallback")}
-              </Text>
-            </View>
-            <View style={styles.headerActions}>
-              <IconButton
-                name="settings"
-                size="md"
-                variant="ghost"
-                accessibilityLabel={t("common.settings")}
-                hitSlop={12}
-                onPress={() => router.push("/settings")}
-              />
-              <IconButton
-                name="plus"
-                size="md"
-                variant="primary"
-                elevated
-                accessibilityLabel={t("common.addAccount")}
-                hitSlop={12}
-                onPress={() => router.push("/accounts/new")}
-              />
-            </View>
-          </View>
-
-          <View style={styles.balanceCard}>
-            <View
-              style={[
-                styles.balanceCardTop,
-                isCompact && styles.balanceCardTopCompact,
-              ]}
+    <SafeAreaView style={screenStyles.safeArea} edges={["top"]}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            colors={[COLORS.brand]}
+            onRefresh={handleRefresh}
+            refreshing={isRefreshing}
+            tintColor={COLORS.brand}
+          />
+        }
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.header}>
+          <View style={styles.headerCopy}>
+            <Text style={screenStyles.wordmark}>{t("common.wordmark")}</Text>
+            <Text
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.6}
+              style={styles.greeting}
             >
-              <View style={styles.balanceCopy}>
-                <View style={styles.eyebrowRow}>
-                  <Text numberOfLines={1} style={styles.eyebrow}>
-                    {t("home.totalAssetsLabel")}
-                  </Text>
-                  <CurrencyPicker
-                    currencies={displayCurrencies}
-                    value={displayCurrency}
-                    onChange={handleDisplayCurrencyChange}
-                  />
-                </View>
-                <Text
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.7}
-                  numberOfLines={1}
-                  style={styles.totalBalance}
-                >
-                  {totalDisplayValue}
+              {userName
+                ? t("home.greeting", { name: userName })
+                : t("home.greetingFallback")}
+            </Text>
+          </View>
+          <View style={styles.headerActions}>
+            <IconButton
+              name="settings"
+              size="md"
+              variant="ghost"
+              accessibilityLabel={t("common.settings")}
+              hitSlop={12}
+              onPress={() => router.push("/settings")}
+            />
+            <IconButton
+              name="plus"
+              size="md"
+              variant="primary"
+              elevated
+              accessibilityLabel={t("common.addAccount")}
+              hitSlop={12}
+              onPress={() => router.push("/accounts/new")}
+            />
+          </View>
+        </View>
+
+        <View style={styles.balanceCard}>
+          <View
+            style={[
+              styles.balanceCardTop,
+              isCompact && styles.balanceCardTopCompact,
+            ]}
+          >
+            <View style={styles.balanceCopy}>
+              <View style={styles.eyebrowRow}>
+                <Text numberOfLines={1} style={styles.eyebrow}>
+                  {t("home.totalAssetsLabel")}
                 </Text>
-                {showEmptyBalanceHint ? (
-                  <Text style={styles.totalBalanceHint}>
-                    {t("home.emptyBalanceHint")}
-                  </Text>
-                ) : null}
+                <CurrencyPicker
+                  currencies={displayCurrencies}
+                  value={displayCurrency}
+                  onChange={handleDisplayCurrencyChange}
+                />
               </View>
-              {accountsAreLoading || !ratesReady ? (
-                <View
-                  style={[
-                    styles.changePill,
-                    isCompact && styles.changePillCompact,
-                  ]}
-                >
-                  <View style={styles.pillPlaceholder} />
-                </View>
-              ) : trend.changePercent !== null ? (
-                <View
-                  style={[
-                    styles.changePill,
-                    isCompact && styles.changePillCompact,
-                  ]}
-                >
-                  <Icon
-                    name={
-                      trend.changePercent >= 0 ? "trending-up" : "trending-down"
-                    }
-                    size={PILL_ICON_SIZE}
-                    color={COLORS.accentOnDark}
-                  />
-                  <Text style={styles.changeText}>
-                    {trend.changePercent >= 0 ? "+" : ""}
-                    {trend.changePercent.toFixed(1)}%
-                  </Text>
-                </View>
+              <Text
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}
+                numberOfLines={1}
+                style={styles.totalBalance}
+              >
+                {totalDisplayValue}
+              </Text>
+              {showEmptyBalanceHint ? (
+                <Text style={styles.totalBalanceHint}>
+                  {t("home.emptyBalanceHint")}
+                </Text>
               ) : null}
             </View>
-
-            <View style={styles.chartWrap}>
-              <NetWorthChart
-                snapshots={snapshots}
-                placeholderText={t("home.chartAccumulating")}
-              />
-            </View>
-
-            <View
-              style={[
-                styles.chartFooter,
-                isCompact && styles.chartFooterCompact,
-              ]}
-            >
-              <Text style={styles.chartPeriod}>
-                {t("home.pastMonths", { count: 6 })}
-              </Text>
-              <Text style={styles.chartDelta}>{chartDeltaText}</Text>
-            </View>
+            {accountsAreLoading || !ratesReady ? (
+              <View
+                style={[
+                  styles.changePill,
+                  isCompact && styles.changePillCompact,
+                ]}
+              >
+                <View style={styles.pillPlaceholder} />
+              </View>
+            ) : trend.changePercent !== null ? (
+              <View
+                style={[
+                  styles.changePill,
+                  isDeclining && styles.changePillNegative,
+                  isCompact && styles.changePillCompact,
+                ]}
+              >
+                <Icon
+                  name={isDeclining ? "trending-down" : "trending-up"}
+                  size={PILL_ICON_SIZE}
+                  color={
+                    isDeclining ? COLORS.negativeOnDark : COLORS.accentOnDark
+                  }
+                />
+                <Text
+                  style={[
+                    styles.changeText,
+                    isDeclining && styles.changeTextNegative,
+                  ]}
+                >
+                  {trend.changePercent >= 0 ? "+" : ""}
+                  {trend.changePercent.toFixed(1)}%
+                </Text>
+              </View>
+            ) : null}
           </View>
 
-          <View style={styles.sectionHeader}>
-            <SectionHeader
-              title={t("home.assetComposition")}
-              detail={
-                <Text style={styles.sectionMeta}>
-                  {accountsAreLoading
-                    ? t("home.loading")
-                    : t("home.accountCount", { count: accounts.length })}
-                </Text>
+          <View style={styles.chartWrap}>
+            <NetWorthChart
+              snapshots={rangedSnapshots}
+              currency={displayCurrency}
+              isNegative={isDeclining}
+              placeholderText={
+                // A snapshot needs a rate for every currency, because it
+                // records one figure per currency — so a device that has never
+                // reached the rate service records nothing at all, and the
+                // usual "building history" copy would promise progress that
+                // will never come. Name the real reason instead.
+                ratesReady && !amountsConvertible(rates)
+                  ? t("home.chartRatesUnavailable")
+                  : t("home.chartAccumulating")
               }
             />
           </View>
 
-          <View style={styles.distributionCard}>
-            <View style={styles.distributionBar}>
-              {hasDistribution ? (
-                distribution
-                  .filter((item) => item.percent > 0)
-                  .map((item) => (
-                    <View
-                      key={item.kind}
-                      style={[
-                        styles.distributionSegment,
-                        {
-                          backgroundColor: item.color,
-                          flex: item.percent,
-                        },
-                      ]}
-                    />
-                  ))
-              ) : (
-                <View
-                  style={[
-                    styles.distributionSegment,
-                    { backgroundColor: COLORS.border, flex: 1 },
-                  ]}
-                />
-              )}
-            </View>
-            <View style={[styles.legend, isCompact && styles.legendCompact]}>
-              {distribution.map((item) => (
-                <View key={item.kind} style={styles.legendItem}>
+          <View
+            style={[styles.chartFooter, isCompact && styles.chartFooterCompact]}
+          >
+            <OptionPicker
+              dialogTitle={t("home.chartRange")}
+              onChange={handleChartRangeChange}
+              options={chartRangeOptions}
+              value={chartRange}
+              variant="onDarkMuted"
+            />
+            <Text
+              style={[
+                styles.chartDelta,
+                isDeclining && styles.chartDeltaNegative,
+              ]}
+            >
+              {chartDeltaText}
+            </Text>
+          </View>
+        </View>
+
+        <SectionHeader
+          title={t("home.assetComposition")}
+          detail={
+            <Text style={styles.sectionMeta}>
+              {accountsAreLoading
+                ? t("home.loading")
+                : t("home.accountCount", { count: accounts.length })}
+            </Text>
+          }
+        />
+
+        <View style={styles.distributionCard}>
+          <View style={styles.distributionBar}>
+            {hasDistribution ? (
+              distribution
+                .filter((item) => item.percent > 0)
+                .map((item) => (
                   <View
+                    key={item.kind}
                     style={[
-                      styles.legendDot,
+                      styles.distributionSegment,
                       {
-                        backgroundColor: hasDistribution
-                          ? item.color
-                          : COLORS.border,
+                        backgroundColor: item.color,
+                        flex: item.percent,
                       },
                     ]}
                   />
-                  <Text numberOfLines={1} style={styles.legendLabel}>
-                    {item.label}
-                  </Text>
-                  <Text style={styles.legendValue}>{item.percent}%</Text>
-                </View>
-              ))}
-            </View>
-          </View>
-
-          <View style={styles.sectionHeader}>
-            <SectionHeader
-              title={t("home.myAccounts")}
-              detail={
-                <Link href="/accounts/new" asChild>
-                  <Pressable
-                    accessibilityLabel={t("common.addAccount")}
-                    style={actionLinkButton}
-                  >
-                    <Text style={actionLink}>{t("home.add")}</Text>
-                  </Pressable>
-                </Link>
-              }
-            />
-          </View>
-
-          <View style={styles.accountsCard}>
-            {accountsAreLoading ? (
-              <View style={styles.accountsPlaceholder} />
-            ) : accountLoadingFailed ? (
-              <View style={styles.accountStatus}>
-                <Text style={styles.accountErrorText}>
-                  {t("home.accountLoadError")}
-                </Text>
-              </View>
+                ))
             ) : (
-              accounts.map((account, index) => (
-                <AccountRow
-                  key={account.id}
-                  account={account}
-                  displayCurrency={displayCurrency}
-                  rates={rates}
-                  isFirst={index === 0}
-                  isActive={activeRowId === account.id}
-                  onActivate={setActiveRowId}
-                  onOpenAccount={handleOpenAccount}
-                  onRemove={handleRemove}
-                />
-              ))
+              <View
+                style={[
+                  styles.distributionSegment,
+                  { backgroundColor: COLORS.border, flex: 1 },
+                ]}
+              />
             )}
           </View>
+          <View style={[styles.legend, isCompact && styles.legendCompact]}>
+            {distribution.map((item) => (
+              <View key={item.kind} style={styles.legendItem}>
+                <View
+                  style={[
+                    styles.legendDot,
+                    {
+                      backgroundColor: hasDistribution
+                        ? item.color
+                        : COLORS.border,
+                    },
+                  ]}
+                />
+                <Text numberOfLines={1} style={styles.legendLabel}>
+                  {item.label}
+                </Text>
+                <Text style={styles.legendValue}>{item.percent}%</Text>
+              </View>
+            ))}
+          </View>
+        </View>
 
-          <Text style={styles.privacyNote}>{t("home.accountDataPrivacy")}</Text>
-        </ScrollView>
-      </SafeAreaView>
-    </>
+        <SectionHeader
+          title={t("home.myAccounts")}
+          detail={
+            <Link href="/accounts/new" asChild>
+              <Pressable
+                accessibilityLabel={t("common.addAccount")}
+                style={actionLinkButton}
+              >
+                <Text style={actionLink}>{t("home.add")}</Text>
+              </Pressable>
+            </Link>
+          }
+        />
+
+        <View style={styles.accountsCard}>
+          {accountsAreLoading ? (
+            <View style={styles.accountsPlaceholder} />
+          ) : accountLoadingFailed ? (
+            <View style={styles.accountStatus}>
+              <Text style={styles.accountErrorText}>
+                {t("home.accountLoadError")}
+              </Text>
+            </View>
+          ) : (
+            accounts.map((account, index) => (
+              <AccountRow
+                key={account.id}
+                account={account}
+                displayCurrency={displayCurrency}
+                rates={rates}
+                isFirst={index === 0}
+                isActive={activeRowId === account.id}
+                onActivate={setActiveRowId}
+                onOpenAccount={handleOpenAccount}
+                onRemove={handleRemove}
+              />
+            ))
+          )}
+        </View>
+
+        <Text style={styles.privacyNote}>{t("home.accountDataPrivacy")}</Text>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
@@ -584,6 +664,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.sm,
     paddingVertical: SPACING.sm,
   },
+  // Decline treatment for the pill — same geometry, decline tones, so the chip
+  // doesn't resize when the trend flips.
+  changePillNegative: {
+    backgroundColor: COLORS.negativeOnDarkSoft,
+    borderColor: COLORS.negativeOnDarkBorder,
+  },
   changePillCompact: {
     alignSelf: "flex-start",
   },
@@ -601,6 +687,9 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZE.eyebrow,
     fontWeight: FONT_WEIGHT.bold,
   },
+  changeTextNegative: {
+    color: COLORS.negativeOnDark,
+  },
   chartWrap: {
     marginHorizontal: -SPACING.xl,
     marginTop: SPACING.md,
@@ -612,25 +701,25 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: SPACING.sm,
     justifyContent: "space-between",
-    paddingVertical: SPACING.lg,
+    // The range picker carries its own 48pt touch target, so the row only pads
+    // enough to clear the divider — the previous 16pt would stack on top of
+    // that height and bloat the card.
+    paddingVertical: SPACING.xs,
   },
   chartFooterCompact: {
     alignItems: "flex-start",
     flexDirection: "column",
-  },
-  chartPeriod: {
-    color: COLORS.mutedOnDark,
-    fontSize: FONT_SIZE.eyebrow,
+    // Stacked, the delta sits below the picker and needs its own bottom
+    // breathing room, which the row layout gets from the picker's height.
+    paddingBottom: SPACING.md,
   },
   chartDelta: {
     color: COLORS.accentOnDark,
     fontSize: FONT_SIZE.eyebrow,
     fontWeight: FONT_WEIGHT.bold,
   },
-  sectionHeader: {
-    marginBottom: SPACING.md,
-    marginTop: SPACING.xxl,
-    paddingHorizontal: 2,
+  chartDeltaNegative: {
+    color: COLORS.negativeOnDark,
   },
   sectionMeta: {
     color: COLORS.muted,

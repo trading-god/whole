@@ -1,11 +1,12 @@
 import { z } from "zod";
 
-import { getItem, setItem } from "@/storage/kv-store";
+import { readJson, setItem } from "@/storage/kv-store";
 
 import {
   type Currency,
   currencySchema,
   knownAssetCurrencies,
+  mapCurrencies,
 } from "./currencies";
 
 // Exchange rates expressed relative to a base currency: `rates[X]` is "how much
@@ -26,17 +27,11 @@ export type ExchangeRates = Record<Currency, number>;
 // against `base` after parsing, since it is a runtime argument.
 const rateValueSchema = z.number().nonnegative();
 
-// `z.record` checks that present keys are known currencies with valid rates
-// but does not require every currency to be present — the refine restores
-// the "all known currencies required" invariant the old guard enforced.
-const exchangeRatesSchema = z
-  .record(currencySchema, rateValueSchema)
-  .refine(
-    (rates) => knownAssetCurrencies.every((currency) => currency in rates),
-    {
-      message: "exchange rates missing one or more known currencies",
-    },
-  );
+// Exhaustive: `z.record` over an enum requires every member, so a cache
+// written before a currency was added no longer parses and is refetched —
+// which is exactly right for rates. (Same property `currencyAmountsSchema`
+// relies on; there it means adding a currency needs a stored-data migration.)
+const exchangeRatesSchema = z.record(currencySchema, rateValueSchema);
 
 const storedRatesSchema = z.object({
   version: z.literal(2),
@@ -58,20 +53,14 @@ const RATES_CACHE_MS = 6 * 60 * 60 * 1000;
 // summing only base-currency balances (or, with direct conversion, balances
 // already in the target currency).
 function ratesForBaseOnly(base: Currency): ExchangeRates {
-  const rates = {} as ExchangeRates;
-  for (const currency of knownAssetCurrencies) {
-    rates[currency] = currency === base ? 1 : 0;
-  }
-  return rates;
+  return mapCurrencies((currency) => (currency === base ? 1 : 0));
 }
 
 async function readStoredRates(base: Currency): Promise<StoredRates | null> {
   try {
-    const raw = await getItem(RATES_STORAGE_KEY);
-    if (!raw) {
-      return null;
-    }
-    const parsed = storedRatesSchema.safeParse(JSON.parse(raw));
+    const parsed = storedRatesSchema.safeParse(
+      await readJson(RATES_STORAGE_KEY),
+    );
     if (!parsed.success || parsed.data.base !== base) {
       return null;
     }
@@ -108,11 +97,22 @@ async function fetchFreshRates(base: Currency): Promise<ExchangeRates> {
     }
     const data = (await response.json()) as { rates?: Record<string, number> };
     const rates = ratesForBaseOnly(base);
+    let usableCount = 0;
     for (const currency of others) {
       const apiRate = data.rates?.[currency];
       if (isUsableRate(apiRate)) {
         rates[currency] = 1 / apiRate;
+        usableCount += 1;
       }
+    }
+    // A 200 with no usable rates (a captive-portal JSON body, or a proxy that
+    // dropped the `rates` field) is a failed fetch, not a fresh base-only
+    // result. Caching base-only rates for the TTL would pin every foreign-
+    // currency total to "—" for hours; throwing lets `resolveExchangeRates`
+    // fall back to the prior stored/memo rates and leaves the cache untouched
+    // so the next focus retries.
+    if (others.length > 0 && usableCount === 0) {
+      throw new Error("Exchange rate response had no usable rates");
     }
     return rates;
   } finally {
@@ -122,25 +122,26 @@ async function fetchFreshRates(base: Currency): Promise<ExchangeRates> {
 
 let cachedRates: StoredRates | null = null;
 
-// Loads exchange rates for `base`, preferring a fresh in-memory cache, then a
-// fresh persisted cache, then a network fetch, then a stale stored copy,
-// before falling back to base-only rates. Never throws: a network failure
-// degrades to summing only base-currency (or same-currency) balances.
-export async function loadExchangeRates(
+// Resolves rates for `base`, preferring a fresh in-memory cache, then a fresh
+// persisted cache, then a network fetch, then a stale copy, before falling back
+// to base-only rates. `force` skips both freshness checks and goes straight to
+// the network — the caches are still read, so a failed fetch can fall back to
+// them rather than degrading a working screen to base-only rates. Never throws:
+// a network failure degrades to summing only base-currency (or same-currency)
+// balances.
+async function resolveExchangeRates(
   base: Currency,
+  force: boolean,
 ): Promise<ExchangeRates> {
   const now = Date.now();
+  const memo = cachedRates && cachedRates.base === base ? cachedRates : null;
 
-  if (
-    cachedRates &&
-    cachedRates.base === base &&
-    now - cachedRates.fetchedAt < RATES_CACHE_MS
-  ) {
-    return cachedRates.rates;
+  if (!force && memo && now - memo.fetchedAt < RATES_CACHE_MS) {
+    return memo.rates;
   }
 
   const stored = await readStoredRates(base);
-  if (stored && now - stored.fetchedAt < RATES_CACHE_MS) {
+  if (!force && stored && now - stored.fetchedAt < RATES_CACHE_MS) {
     cachedRates = stored;
     return stored.rates;
   }
@@ -156,8 +157,26 @@ export async function loadExchangeRates(
       cachedRates = stored;
       return stored.rates;
     }
+    // A forced refresh may hold a usable in-memory copy that `readStoredRates`
+    // couldn't return (an unreadable store). Preferring it over base-only rates
+    // keeps a pull-to-refresh from blanking totals that were converting a
+    // moment ago.
+    if (memo) {
+      return memo.rates;
+    }
     return ratesForBaseOnly(base);
   }
+}
+
+export function loadExchangeRates(base: Currency): Promise<ExchangeRates> {
+  return resolveExchangeRates(base, false);
+}
+
+// Bypasses the cache TTL and refetches. Backs pull-to-refresh: the rates are
+// the only figure on the home screen sourced from outside the device, so
+// "refresh" means "ask the rate service again", not "re-read local storage".
+export function refreshExchangeRates(base: Currency): Promise<ExchangeRates> {
+  return resolveExchangeRates(base, true);
 }
 
 // A rate is usable for conversion when it is a positive finite number. A rate

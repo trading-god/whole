@@ -8,7 +8,7 @@ import { Platform } from "react-native";
 // `PHAsset` localIdentifier, but `new Asset(id)` expects the `ph://<id>` form
 // (it strips the scheme to recover the localIdentifier) — passing the bare id
 // truncates it and the asset can't be resolved. We re-attach the scheme before
-// deleting. The web build is overridden by `source-image-cleanup.web.ts`.
+// deleting.
 export const sourceImageDeletionIsSupported = Platform.OS === "ios";
 
 export type DeleteSourceImageResult = {

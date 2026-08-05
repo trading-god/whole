@@ -3,7 +3,6 @@ import type { MessageShape } from "@/i18n/schema";
 
 export const enMessages = {
   common: {
-    brandName: "Whole",
     wordmark: "WHOLE",
     addAccount: "Add account",
     backToAssetOverview: "Back to asset overview",
@@ -12,28 +11,20 @@ export const enMessages = {
     required: "Required",
     stepIndicator: "Step {{current}} of {{total}}",
   },
-  metadata: {
-    homeTitle: "Whole — Your complete asset overview",
-    homeDescription: "Your whole financial life, in one place.",
-    newAccountTitle: "Add account — Whole",
-    newAccountDescription: "Add an account to Whole and confirm its details.",
-    settingsTitle: "Settings — Whole",
-    settingsDescription: "Configure account screenshot recognition.",
-    onboardingTitle: "Get started — Whole",
-    onboardingDescription:
-      "Set up your name and model to get started with Whole.",
-    notFoundTitle: "Page not found — Whole",
-    accountDetailTitle: "Edit account — Whole",
-    accountDetailDescription:
-      "Edit an account's name, balances, and type in Whole.",
-  },
   home: {
     greeting: "Hello, {{name}}",
     greetingFallback: "Hello",
     totalAssetsLabel: "Total assets · in",
     displayCurrency: "Display currency",
-    pastMonths: "Past {{count}} months",
+    chartRange: "Chart range",
+    pastMonths_one: "Past month",
+    pastMonths_other: "Past {{count}} months",
+    pastYears_one: "Past year",
+    pastYears_other: "Past {{count}} years",
+    allTime: "All time",
     chartAccumulating: "Building chart history…",
+    chartRatesUnavailable:
+      "Chart history needs exchange rates. Connect to the internet and reopen Whole.",
     assetComposition: "Asset composition",
     loading: "Loading",
     accountCount_one: "{{count}} account",
@@ -56,25 +47,15 @@ export const enMessages = {
     emptyBalanceHint: "Add an account to start tracking",
     openAccountHint: "View account details",
   },
-  newAccount: {
-    screenTitle: "Add account",
-    introTitle: "Add an account",
-    introDescription:
-      "Choose an account screenshot, then complete and confirm the account details.",
-    uploadScreenshot: "Upload account screenshot",
-    changeScreenshot: "Change account screenshot",
-    screenshotReady: "Account screenshot ready",
-    tapToChangeScreenshot: "Tap to change the account screenshot",
-    screenshotGuidance:
-      "Choose a screenshot that clearly shows the account name, last four digits, and balance",
-    chooseScreenshot: "Choose account screenshot",
-    screenshotPrivacy:
-      "Your account screenshot is used only to confirm account details and will not appear in your asset overview",
-    accountInformation: "Account details",
-    formHint: "Complete or edit the details using the account screenshot",
+  // Copy for the account form itself (AccountEditorFields), shared verbatim by
+  // the add-account screen, its multi-account wizard, and the edit-account
+  // screen — the form has one owner, so its labels do too. Screen-specific
+  // copy (intro, hints, save/error wording) stays in `newAccount` /
+  // `accountDetail`.
+  accountForm: {
     accountName: "Account name",
     accountNameExample: "For example: DBS Multiplier",
-    accountNumberLastFour: "Last four digits",
+    lastFourDigits: "Last four digits",
     accountBalance: "Account balance",
     currency: "Currency",
     accountKind: "Account type",
@@ -84,32 +65,51 @@ export const enMessages = {
     addCurrency: "Add currency",
     allCurrenciesAdded: "All currencies added",
     removeCurrencyRow: "Remove this currency",
+  },
+  newAccount: {
+    screenTitle: "Add account",
+    introTitle: "Add an account",
+    introDescription:
+      "Choose an account screenshot, then complete and confirm the account details.",
+    accountInformation: "Account details",
+    formHint: "Complete or edit the details using the account screenshot",
+    saving: "Saving…",
+    saveAccount: "Save account",
+    saveErrorTitle: "Unable to save",
+    saveErrorMessage: "The account could not be saved. Try again later.",
+  },
+  // Copy owned by the two shared account-screenshot components
+  // (AccountScreenshotUploader and SourceImageCleanupModal), which the add- and
+  // edit-account screens both render. Kept out of `newAccount` so editing the
+  // add screen's copy can't silently change what the edit screen says.
+  accountScreenshot: {
+    uploadScreenshot: "Upload account screenshot",
+    replaceScreenshot: "Replace screenshot",
+    replaceScreenshotHint: "Choose a different account screenshot",
+    screenshotReady: "Account screenshot ready",
+    screenshotGuidance:
+      "Choose a screenshot that clearly shows the account name, last four digits, and balance",
+    chooseScreenshot: "Choose account screenshot",
+    screenshotPrivacy:
+      "Your account screenshot is used only to confirm account details and will not appear in your asset overview",
     recognizing: "Recognizing…",
     recognized: "Recognized — please review",
     recognitionFailed:
       "Couldn't read the screenshot. Please fill in the details manually.",
-    missingLlmConfigTitle: "Set up recognition",
+    noMatchingAccount:
+      "This screenshot doesn't show the account you're editing, so nothing was filled in. Choose a screenshot of this account.",
     missingLlmConfigMessage:
       "Add an OpenAI-compatible endpoint and model to recognize accounts from screenshots.",
     goToSettings: "Open settings",
-    saving: "Saving…",
-    saveAccount: "Save account",
     accountSaved: "Account saved",
     cleanupPrompt:
       "This account screenshot was used to confirm the account details. Delete it from your photo library? The system will ask you to confirm.",
     cleanupManualPhotoLibrary:
       "The system could not locate the account screenshot. Delete it manually from your photo library.",
-    cleanupManualBrowser:
-      "The browser cannot delete the account screenshot from your device. Delete it manually from your photos or downloads.",
     keepScreenshot: "Keep screenshot",
     deletingScreenshot: "Deleting…",
     deleteScreenshot: "Delete screenshot",
     acknowledge: "Got it",
-    validationTitle: "Check account details",
-    validationMessage:
-      "Enter an account name, the last four digits, and at least one currency balance.",
-    saveErrorTitle: "Unable to save",
-    saveErrorMessage: "The account could not be saved. Try again later.",
     deletionErrorTitle: "Unable to delete account screenshot",
     deletionErrorMessage:
       "The account was saved. Delete the account screenshot manually from your photo library.",
@@ -117,7 +117,6 @@ export const enMessages = {
     deletionPermissionMessage:
       "Whole needs full access to your photo library to delete the screenshot. Open Settings, tap Whole, and enable Full Access.",
     openSystemSettings: "Open settings",
-    pickerErrorTitle: "Unable to choose account screenshot",
     pickerErrorMessage:
       "Try again later or check Whole's permission to access your photos.",
   },
@@ -127,27 +126,40 @@ export const enMessages = {
     introDescription: "Update the account name, balances, and type.",
     accountInformation: "Account details",
     formHint: "Edit the details you want to update",
-    accountName: "Account name",
-    accountNameExample: "For example: DBS Multiplier",
-    lastFourDigits: "Last four digits",
     lastFourDigitsLocked:
       "The last four digits can't be changed after the account is created",
-    accountBalance: "Account balance",
-    currency: "Currency",
-    accountKind: "Account type",
-    addCurrency: "Add currency",
-    allCurrenciesAdded: "All currencies added",
-    removeCurrencyRow: "Remove this currency",
+    lastFourDigitsOptional:
+      "Optional — fill in the last four digits if the account has a card number",
     saving: "Saving…",
     saveAccount: "Save changes",
-    validationTitle: "Check account details",
-    validationMessage:
-      "Enter an account name and at least one currency balance.",
     conflictTitle: "Account already exists",
     conflictMessage:
       'Another account named "{{name}}" has the same last four digits. Use a different name.',
     saveErrorTitle: "Unable to save",
     saveErrorMessage: "The account could not be saved. Try again later.",
+  },
+  multiAccount: {
+    title: "Recognized {{count}} accounts",
+    accountPosition: "{{current}} of {{total}}",
+    previous: "Previous account",
+    next: "Next account",
+    saveAll: "Save all",
+    removeAccount: "Remove this account",
+    duplicateAccounts:
+      "Two accounts have the same name and last four digits. Rename one, or give one a different last four, so they save as separate accounts.",
+    incompleteAccounts_one:
+      "1 account still needs a name and at least one balance. Complete it, or remove it, to save.",
+    incompleteAccounts_other:
+      "{{count}} accounts still need a name and at least one balance. Complete them, or remove them, to save.",
+    replaceDraftsTitle: "Replace the accounts in this form?",
+    replaceDraftsMessage_one:
+      "Reading this screenshot replaces the account you're filling in, including anything you've changed.",
+    replaceDraftsMessage_other:
+      "Reading this screenshot replaces the {{count}} accounts you're filling in, including anything you've changed.",
+    replaceDraftsConfirm: "Replace",
+    // Only the plural body differs from newAccount's — the busy label and the
+    // error title read identically, so both modes share those keys.
+    saveErrorMessage: "The accounts could not be saved. Try again later.",
   },
   settings: {
     screenTitle: "Settings",

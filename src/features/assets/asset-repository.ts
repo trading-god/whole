@@ -13,16 +13,28 @@ import {
   type ExchangeRates,
   convertCurrency,
 } from "@/features/assets/currency-conversion";
-import { type Currency, currencySchema } from "@/features/assets/currencies";
+import {
+  type Currency,
+  type CurrencyAmounts,
+  currencySchema,
+  mapCurrencies,
+} from "@/features/assets/currencies";
 
 const ASSET_ACCOUNTS_STORAGE_KEY = "whole.assetAccounts";
 
 const LAST_FOUR_DIGITS_PATTERN = /^\d{4}$/;
 
 // Schema for a 4-digit last-four string. Owned here (alongside the pattern) so
-// `accountBaseSchema` and `screenshot-recognition.ts` share one definition of
+// `accountIdentitySchema` and `screenshot-recognition.ts` share one definition of
 // "what is a valid last four" instead of each re-declaring the regex.
 export const lastFourDigitsSchema = z.string().regex(LAST_FOUR_DIGITS_PATTERN);
+
+// Form-input variant: the last four is optional (brokerage/stock accounts may
+// not have a card number), so an empty string is also valid. Shared by every
+// account form's save gate so "empty or exactly 4 digits" is defined once.
+export const optionalLastFourDigitsSchema = lastFourDigitsSchema.or(
+  z.literal(""),
+);
 
 // Schemas for the persisted account data, replacing the hand-written
 // `isAccountBalance`/`isAccountBase`/`isAssetAccount`/`isAssetAccountV1` shape
@@ -34,35 +46,47 @@ export const lastFourDigitsSchema = z.string().regex(LAST_FOUR_DIGITS_PATTERN);
 // a valid stored account" is defined once alongside the validation, not
 // maintained as a parallel interface. Mirrors `storedRatesSchema` in
 // currency-conversion.ts.
-const accountBalanceSchema = z.object({
+export const accountBalanceSchema = z.object({
   currency: currencySchema,
   balance: z.number(),
 });
 
-// Shared base for the v2 and v1 account shapes — only the balance clause
-// differs (v2: a `balances` array; v1: a single `balance` + `currency`), so
-// `.extend()` shares the id/name/last-four/kind fields instead of the old
-// `isAccountBase` helper.
-const accountBaseSchema = z.object({
+// Shared identity fields across every account kind — the stable per-account
+// attributes that don't depend on what the account holds. `lastFourDigits` is
+// optional so accounts without a card-style number (brokerage, stock, some
+// wallets) are first-class; the dedup key in `accountMatchKey` degrades from
+// name|lastFour to name alone when it's absent.
+const accountIdentitySchema = z.object({
   id: z.string(),
   name: z.string(),
-  accountLastFourDigits: lastFourDigitsSchema,
-  kind: assetKindSchema,
+  accountLastFourDigits: lastFourDigitsSchema.optional(),
 });
 
-const assetAccountSchema = accountBaseSchema.extend({
+// Stored account shape. Every kind currently carries the same `balances`
+// array (balance-aggregation code reads `account.balances` without narrowing
+// on `kind`), so the shape is flat rather than a per-kind discriminated
+// union — add the union when a kind actually diverges (e.g. `holdings` on
+// investment), at which point TypeScript narrowing earns its keep.
+const assetAccountSchema = accountIdentitySchema.extend({
+  kind: assetKindSchema,
   balances: z.array(accountBalanceSchema),
 });
 
 // Legacy v1 shape (one balance + currency per account). Kept only for the
-// one-time v1 → v2 migration below; new code never writes this shape.
-const v1AssetAccountSchema = accountBaseSchema.extend({
+// one-time v1 → v3 migration below; new code never writes this shape.
+const v1AssetAccountSchema = accountIdentitySchema.extend({
+  kind: assetKindSchema,
   balance: z.number(),
   currency: currencySchema,
 });
 
+// Stored accounts envelope. `version` accepts both v2 (required last four) and
+// v3 (optional last four): making `accountLastFourDigits` optional was
+// backward-compatible, so v2 data parses unchanged under the current schema. A
+// v2 record is marked `migrated` so `listAssetAccounts` rewrites it as v3 on
+// the next save; v3 is the only version ever written.
 const storedAssetAccountsSchema = z.object({
-  version: z.literal(2),
+  version: z.union([z.literal(2), z.literal(3)]),
   accounts: z.array(assetAccountSchema),
 });
 
@@ -78,15 +102,15 @@ type StoredAssetAccounts = z.infer<typeof storedAssetAccountsSchema>;
 
 export type NewAssetAccount = {
   name: string;
-  accountLastFourDigits: string;
+  accountLastFourDigits?: string;
   balances: AccountBalance[];
   kind?: AssetKind;
 };
 
 // Schema for a form-entered balance string: strips grouping separators
 // (commas/whitespace) and parses to a non-negative number. Used by the account
-// forms' `validBalanceRows` so "what is a valid balance input" is defined once,
-// alongside the other balance schemas, instead of a hand-written parse.
+// forms' `deriveValidBalances` so "what is a valid balance input" is defined
+// once, alongside the other balance schemas, instead of a hand-written parse.
 // Allows 0 (a real balance), unlike `screenshot-recognition.ts`'s
 // `balanceEntrySchema` which drops 0 as model noise.
 export const balanceInputSchema = z
@@ -103,13 +127,21 @@ function normalizeAccountName(name: string): string {
 }
 
 // Business dedup key for an account: normalized product name + last four
-// digits. Used only by upsert to match "the same account" across re-uploads
-// (same screenshot twice → one account with merged balances; same product with
-// different last-four digits → distinct accounts). This is NOT the stored
-// primary key — `AssetAccount.id` is a stable random id (see createAccountId)
-// so editing the name in the detail page never moves the account's identity.
-function buildAccountId(name: string, accountLastFourDigits: string): string {
-  return `${normalizeAccountName(name)}|${accountLastFourDigits}`;
+// digits when present, else the name alone. Used by upsert/update to match
+// "the same account" across re-uploads (same screenshot twice → one account
+// with merged balances; same product with different last-four digits →
+// distinct accounts). Accounts without a last four (brokerage, stock, some
+// wallets) dedupe by name alone. This is NOT the stored primary key —
+// `AssetAccount.id` is a stable random id (see createAccountId) so editing
+// the name in the detail page never moves the account's identity.
+function accountMatchKey(account: {
+  name: string;
+  accountLastFourDigits?: string;
+}): string {
+  const lastFour = account.accountLastFourDigits?.trim();
+  return lastFour
+    ? `${normalizeAccountName(account.name)}|${lastFour}`
+    : normalizeAccountName(account.name);
 }
 
 // Mints a stable random primary key for a newly created account. Decoupled
@@ -122,9 +154,11 @@ function createAccountId(): string {
 }
 
 // Merges an incoming per-currency balance into a list: replaces an existing
-// entry for the same currency, otherwise appends. Shared by the v1→v2
-// migration, upsert, and the screenshot parser so the merge rule lives once.
-export function mergeBalance(
+// entry for the same currency, otherwise appends. Shared by the v1→v3 migration
+// and upsert so the merge rule lives once. Deliberately module-private: the
+// screenshot parser sums same-currency rows instead of replacing them (a bank
+// overview can list one account's currency twice), so it owns its own merge.
+function mergeBalance(
   balances: AccountBalance[],
   incoming: AccountBalance,
 ): AccountBalance[] {
@@ -137,7 +171,7 @@ export function mergeBalance(
   return [...balances, incoming];
 }
 
-// Converts v1 single-balance accounts to v2 multi-balance accounts,
+// Converts v1 single-balance accounts to v3 multi-balance accounts,
 // regenerating stable ids and deduping by id (same product + last four → one
 // account with merged balances). Same-currency collisions resolve to the last
 // value, mirroring upsert semantics.
@@ -145,7 +179,7 @@ function migrateV1Accounts(v1Accounts: V1AssetAccount[]): AssetAccount[] {
   const byId = new Map<string, AssetAccount>();
 
   for (const v1 of v1Accounts) {
-    const id = buildAccountId(v1.name, v1.accountLastFourDigits);
+    const id = accountMatchKey(v1);
     const incoming: AccountBalance = {
       currency: v1.currency,
       balance: v1.balance,
@@ -169,8 +203,9 @@ function migrateV1Accounts(v1Accounts: V1AssetAccount[]): AssetAccount[] {
 
 type ParsedStoredAccounts = {
   accounts: AssetAccount[];
-  // True when the stored data was v1 and has been upgraded in memory; the
-  // caller persists the v2 form so the migration never runs twice.
+  // True when the stored data was an older version (v1 or v2) and has been
+  // upgraded in memory; the caller persists the v3 form so the migration never
+  // runs twice.
   migrated: boolean;
 };
 
@@ -179,9 +214,15 @@ function parseStoredAssetAccounts(
 ): ParsedStoredAccounts {
   const stored: unknown = JSON.parse(serializedAccounts);
 
-  const v2 = storedAssetAccountsSchema.safeParse(stored);
-  if (v2.success) {
-    return { accounts: v2.data.accounts, migrated: false };
+  const parsed = storedAssetAccountsSchema.safeParse(stored);
+  if (parsed.success) {
+    // v2 records are rewritten as v3 on the next save (migrated: true); v3 is
+    // already current. Making lastFour optional was backward-compatible, so v2
+    // data parses unchanged under the current union.
+    return {
+      accounts: parsed.data.accounts,
+      migrated: parsed.data.version === 2,
+    };
   }
 
   const v1 = storedV1AssetAccountsSchema.safeParse(stored);
@@ -193,17 +234,26 @@ function parseStoredAssetAccounts(
 }
 
 export async function saveAssetAccounts(accounts: readonly AssetAccount[]) {
-  const storedAccounts: StoredAssetAccounts = {
-    version: 2,
-    accounts: [...accounts],
-  };
+  // Validate at the write boundary so a malformed account can never reach disk.
+  // A single bad record (e.g. a 2-digit lastFour) would make the whole list
+  // unparseable on read — parseStoredAssetAccounts rejects the entire array and
+  // throws, so every account would become inaccessible. Constructing callers
+  // (upsert/update/migrate) build from validated inputs, but this is the last
+  // line of defense if a caller ever bypasses the form-level canSave gate.
+  // Parsed for the throw only — zod deep-clones what it returns, and caching
+  // that clone would hand every account a new identity on every write,
+  // breaking the reference stability the cache below exists to provide.
+  z.array(assetAccountSchema).parse(accounts);
+
+  const next = [...accounts];
+  const storedAccounts: StoredAssetAccounts = { version: 3, accounts: next };
 
   await setItem(ASSET_ACCOUNTS_STORAGE_KEY, JSON.stringify(storedAccounts));
   // Update the cache only after persistence succeeds, so a failed write (disk
   // full, SQLite error) leaves the cache matching storage instead of holding
   // a value that was never persisted. Mirrors net-worth-history's
   // cachedSnapshots update order.
-  cachedAccounts = [...accounts];
+  cachedAccounts = next;
 }
 
 // Cache of the last loaded/written accounts so repeated reads (e.g. every home
@@ -228,7 +278,7 @@ export async function listAssetAccounts(): Promise<AssetAccount[]> {
 
   const { accounts, migrated } = parseStoredAssetAccounts(serializedAccounts);
 
-  // Persist the upgraded v2 form so the migration is one-shot and idempotent.
+  // Persist the upgraded v3 form so the migration is one-shot and idempotent.
   if (migrated) {
     await saveAssetAccounts(accounts);
   }
@@ -274,10 +324,20 @@ export function sumBalancesByKindInCurrency(
   return { totals, total: contributed ? total : null };
 }
 
-type UpsertAssetAccountResult = {
-  account: AssetAccount;
-  created: boolean;
-};
+// The accounts' worth in every known currency, for the per-currency net-worth
+// snapshot. A currency with nothing convertible yields 0 rather than null: with
+// complete rates (which the snapshot path requires) the only way to convert
+// nothing is to hold nothing, and holding nothing is genuinely zero — not
+// "unknown", which is what null means to the display paths.
+export function sumBalancesInEveryCurrency(
+  accounts: readonly AssetAccount[],
+  rates: ExchangeRates,
+): CurrencyAmounts {
+  return mapCurrencies(
+    (currency) =>
+      sumBalancesByKindInCurrency(accounts, currency, rates).total ?? 0,
+  );
+}
 
 // Serializes account mutations so two concurrent calls (e.g. a double-tapped
 // save) can't both read the same account list and clobber each other's write —
@@ -285,64 +345,104 @@ type UpsertAssetAccountResult = {
 // both read-then-write the same accounts array and storage key.
 const mutate = createAsyncSerializer();
 
-// Creates or merges an account by its business key (name + last four digits).
-// Same product + last four digits resolves to an existing account whose
-// per-currency balances are merged (same currency → incoming balance wins; new
-// currency → appended; currencies absent from input are retained), so
-// re-uploading a screenshot updates balances instead of spawning a duplicate.
-// Different last-four digits resolve to a new account, keeping multiple
-// same-product accounts distinct. The match is by business key, NOT by id —
-// ids are opaque random PKs (createAccountId), so id-equality would miss an
-// existing account after its name was edited. The existing account's id is
-// preserved on merge so editing never moves the PK. `kind` defaults to "cash"
-// for new accounts and otherwise follows the input, falling back to the
-// existing kind defensively.
-export function upsertAssetAccount(
-  input: NewAssetAccount,
-): Promise<UpsertAssetAccountResult> {
-  const run = async (): Promise<UpsertAssetAccountResult> => {
-    const businessKey = buildAccountId(input.name, input.accountLastFourDigits);
-    const accounts = await listAssetAccounts();
-    const index = accounts.findIndex(
-      (account) =>
-        buildAccountId(account.name, account.accountLastFourDigits) ===
-        businessKey,
-    );
+// Applies one upsert to `next` in place: merges into the account whose
+// business key matches `input`, else appends a newly created account. The
+// business key is name + last four digits when present, else the name alone
+// (see `accountMatchKey`): same product + last four resolves to an existing
+// account whose per-currency balances are merged via `mergeBalance` (same
+// currency → incoming balance wins; new currency → appended; currencies
+// absent from input are retained), so re-uploading a screenshot updates
+// balances instead of spawning a duplicate. Different last-four digits
+// resolve to a new account, keeping multiple same-product accounts distinct;
+// accounts without a last four (brokerage, stock) dedupe by name alone. The
+// match is by business key, NOT by id — ids are opaque random PKs
+// (createAccountId), so id-equality would miss an existing account after its
+// name was edited. The existing account's id is preserved on merge so editing
+// never moves the PK. `kind` defaults to "cash" for new accounts and
+// otherwise follows the input, falling back to the existing kind defensively.
+// `next` is a fresh copy the caller owns; this mutates it, not the cached
+// account list.
+function applyAccountUpsert(next: AssetAccount[], input: NewAssetAccount) {
+  const businessKey = accountMatchKey(input);
+  const index = next.findIndex(
+    (account) => accountMatchKey(account) === businessKey,
+  );
 
-    if (index >= 0) {
-      const existing = accounts[index];
-      const balances = input.balances.reduce(mergeBalance, existing.balances);
-      const updated: AssetAccount = {
-        id: existing.id,
-        name: input.name,
-        accountLastFourDigits: input.accountLastFourDigits,
-        balances,
-        kind: input.kind ?? existing.kind,
-      };
-      const nextAccounts = [...accounts];
-      nextAccounts[index] = updated;
-      await saveAssetAccounts(nextAccounts);
-      return { account: updated, created: false };
-    }
-
-    const newAccount: AssetAccount = {
-      id: createAccountId(),
+  if (index >= 0) {
+    const existing = next[index];
+    next[index] = {
+      id: existing.id,
       name: input.name,
-      accountLastFourDigits: input.accountLastFourDigits,
-      balances: input.balances,
-      kind: input.kind ?? "cash",
+      // A merge matches on the business key, so input and existing share the
+      // same last-four state; fall back to existing defensively so an
+      // undefined input lastFour can never erase a present one.
+      accountLastFourDigits:
+        input.accountLastFourDigits ?? existing.accountLastFourDigits,
+      balances: input.balances.reduce(mergeBalance, existing.balances),
+      kind: input.kind ?? existing.kind,
     };
-    await saveAssetAccounts([...accounts, newAccount]);
-    return { account: newAccount, created: true };
-  };
+    return;
+  }
 
-  return mutate(run);
+  next.push({
+    id: createAccountId(),
+    name: input.name,
+    accountLastFourDigits: input.accountLastFourDigits,
+    balances: input.balances,
+    kind: input.kind ?? "cash",
+  });
+}
+
+// True when two or more of `inputs` share a business key (accountMatchKey).
+// The wizard uses this to block a batch save that would otherwise silently
+// merge same-key drafts: applyAccountUpsert searches the whole `next` array
+// (including accounts added earlier in the same batch), so a second draft with
+// the same name + last-four would merge into the first — and for a shared
+// currency mergeBalance overwrites (last-wins), permanently losing a balance.
+// The user must differentiate (rename or enter a different last four) so each
+// draft saves as a distinct account.
+export function hasDuplicateAccountKeys(
+  inputs: readonly NewAssetAccount[],
+): boolean {
+  const keys = inputs.map(accountMatchKey);
+  return new Set(keys).size !== keys.length;
+}
+
+// Creates or merges many accounts in one read-modify-write pass — the
+// multi-account wizard's "save all". Each input matches an existing account by
+// business key (accountMatchKey): a match merges per-currency balances (same
+// currency → incoming wins; new currency → appended; absent currencies
+// retained), a miss mints a new account. Serialized through `mutate` so a
+// concurrent `updateAssetAccount` (or another batch) can't read the same
+// cached list and clobber this write —
+// the whole batch is one read-modify-write under the shared lock. The batch is
+// a single `saveAssetAccounts` write, so it is inherently all-or-nothing; no
+// `withTransaction` is needed (one would only wrap a write that's already
+// atomic, and would mask the cache/storage divergence a failed commit would
+// cause). Inputs that share a business key with each other (e.g. two recognized
+// accounts with the same name and last four) merge into the same target,
+// last-wins per currency.
+export async function upsertAssetAccounts(
+  inputs: readonly NewAssetAccount[],
+): Promise<void> {
+  await mutate(async () => {
+    const next = [...(await listAssetAccounts())];
+    for (const input of inputs) {
+      applyAccountUpsert(next, input);
+    }
+    await saveAssetAccounts(next);
+  });
 }
 
 export type AssetAccountPatch = {
   name: string;
   balances: AccountBalance[];
   kind: AssetKind;
+  // Optional last four. Fill-once: it only takes effect when the account has
+  // no last four yet (accounts created without one — brokerage, stock, etc.);
+  // updateAssetAccount always keeps an existing value, so a patch can never
+  // rewrite this identity field.
+  accountLastFourDigits?: string;
 };
 
 export type UpdateAssetAccountError =
@@ -355,9 +455,11 @@ export type UpdateAssetAccountResult =
 // Updates an account by its stable id — the detail page's save path. name,
 // balances, and kind are replaced wholesale (balances are NOT merged — that is
 // upsert's job — so a currency row the user deleted actually disappears). The
-// last four digits are immutable: they're never in the patch, so the account
-// keeps its existing lastFour. The id is preserved, so renaming the account
-// doesn't move its PK/React key/nav param. Returns a result union (not a
+// last four is fill-once: an existing value always wins (it is the account's
+// immutable identity — no caller can rewrite or hijack it), and the patch
+// value lands only when the account had none. The edit screen's field lock
+// mirrors this rule as UX. The id is preserved, so renaming the
+// account doesn't move its PK/React key/nav param. Returns a result union (not a
 // throw) so the caller can branch: `notFound` when the account was deleted
 // elsewhere (bail to overview), `conflict` when the new name + the account's
 // existing lastFour collides with a DIFFERENT account's business key (prompt
@@ -379,22 +481,20 @@ export function updateAssetAccount(
     const updated: AssetAccount = {
       id: existing.id,
       name: patch.name,
-      accountLastFourDigits: existing.accountLastFourDigits,
+      // Fill-once: an existing last four is immutable identity and always
+      // wins; the patch only fills a previously-empty one.
+      accountLastFourDigits:
+        existing.accountLastFourDigits ?? patch.accountLastFourDigits,
       balances: patch.balances,
       kind: patch.kind,
     };
 
     // Reject if another account (different id) already owns this business key
     // — otherwise a later upsert would non-deterministically merge the two.
-    const newBusinessKey = buildAccountId(
-      updated.name,
-      updated.accountLastFourDigits,
-    );
+    const newBusinessKey = accountMatchKey(updated);
     const conflictIndex = accounts.findIndex(
       (account) =>
-        account.id !== id &&
-        buildAccountId(account.name, account.accountLastFourDigits) ===
-          newBusinessKey,
+        account.id !== id && accountMatchKey(account) === newBusinessKey,
     );
     if (conflictIndex >= 0) {
       return {
@@ -413,4 +513,21 @@ export function updateAssetAccount(
   };
 
   return mutate(run);
+}
+
+// Removes an account by id under the shared `mutate` lock so a concurrent
+// upsert/update (or another remove) can't read the same list and clobber this
+// write — the home screen's remove and the add/edit screens' saves all write
+// ASSET_ACCOUNTS_STORAGE_KEY, so they share one serializer. Returns the
+// post-remove list so the caller updates its in-memory cache and UI from
+// storage, rather than filtering a ref that may not yet reflect a concurrent
+// save (which would drop the just-saved account from the written list).
+export async function removeAssetAccount(id: string): Promise<AssetAccount[]> {
+  return mutate(async () => {
+    const next = (await listAssetAccounts()).filter(
+      (account) => account.id !== id,
+    );
+    await saveAssetAccounts(next);
+    return next;
+  });
 }

@@ -4,9 +4,12 @@
 
 > **Your whole financial life, in one place.**
 
-Whole is a privacy-conscious, cross-platform financial overview for seeing
-accounts and assets together. It is built with Expo and React Native for iOS,
-Android, and the web.
+Whole is a privacy-conscious mobile financial overview for seeing accounts and
+assets together. It is built with Expo and React Native for iOS and Android.
+
+Whole is mobile-only by design: account recognition reads account screenshots
+through the native image-picker and media-library pipeline, which a browser
+build cannot provide. There is no web version.
 
 The current product prototype focuses on a clear asset overview and a guided
 account-import flow. Users can select an account screenshot, confirm the
@@ -33,7 +36,6 @@ source screenshot afterward.
 - Optional deletion of the selected source screenshot where the platform
   supports it
 - Simplified Chinese and English interfaces
-- Installable web app (PWA)
 
 Account recognition is not yet connected to an OCR or AI service. In the
 current flow, the user completes and confirms the account information
@@ -45,7 +47,7 @@ manually.
 
 - Node.js 22.13 or newer
 - pnpm 11.11.0, as pinned in `package.json`
-- An iOS simulator, Android emulator, or supported web browser
+- An iOS simulator or Android emulator
 
 ### Install
 
@@ -64,7 +66,6 @@ Or start a specific platform:
 ```bash
 pnpm ios
 pnpm android
-pnpm web
 ```
 
 ## Privacy and screenshot handling
@@ -77,7 +78,6 @@ After an account is saved, Whole may offer to delete the source screenshot:
 
 - deletion is always initiated by the user;
 - the operating system may request an additional confirmation;
-- browser environments cannot delete the original file from the user's device;
 - if the system cannot locate or delete the screenshot, Whole instructs the
   user to remove it manually.
 

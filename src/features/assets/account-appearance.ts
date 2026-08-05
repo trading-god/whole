@@ -44,16 +44,16 @@ export const ASSET_KIND_DISTRIBUTION_COLORS: Record<AssetKind, string> = {
 // string>` keeps the values as literal key unions (so the strictly-typed `t()`
 // accepts them) and forces every kind to provide a key in both contexts.
 export const ASSET_KIND_PICKER_LABEL_KEYS = {
-  cash: "newAccount.kindCash",
-  investment: "newAccount.kindInvestment",
-  crypto: "newAccount.kindCrypto",
+  cash: "accountForm.kindCash",
+  investment: "accountForm.kindInvestment",
+  crypto: "accountForm.kindCrypto",
 } as const satisfies Record<AssetKind, string>;
 
 // Builds the kind-picker options (label + value) for the account form's
 // ChoiceChipGroup, co-located with the label keys. Takes a translator so this
 // module stays free of an i18n dependency while the kind → label mapping lives
 // in one place.
-// The literal label-key union (e.g. "newAccount.kindCash" | …), derived from
+// The literal label-key union (e.g. "accountForm.kindCash" | …), derived from
 // the key map so the translator parameter accepts exactly those keys. Typing
 // the param as `(key: string) => string` would reject i18next's strictly-typed
 // `t` (whose parameter is the union of ALL known keys, not arbitrary strings);

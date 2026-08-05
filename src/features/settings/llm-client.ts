@@ -1,6 +1,14 @@
 import OpenAI, { APIError } from "openai";
+import type { ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
 
-import type { LlmConfig } from "@/features/settings/llm-config-store";
+import {
+  type LlmConfig,
+  normalizeBaseUrl,
+} from "@/features/settings/llm-config-store";
+import {
+  isJsonModeUnsupported,
+  rememberJsonModeUnsupported,
+} from "@/features/settings/llm-json-mode";
 
 // Constructs the OpenAI-compatible client shared by screenshot recognition and
 // the settings connectivity test. Lives in the settings feature because the
@@ -14,7 +22,7 @@ function createOpenAIClient(config: LlmConfig, timeoutMs = 30_000) {
   // placeholder to satisfy the constructor and explicitly drop the
   // Authorization header so no credential is sent.
   return new OpenAI({
-    baseURL: config.baseUrl.replace(/\/+$/, ""),
+    baseURL: normalizeBaseUrl(config.baseUrl),
     apiKey: apiKey || "unused",
     defaultHeaders: apiKey ? undefined : { Authorization: null },
     // The SDK refuses to run outside Node by default to avoid leaking keys.
@@ -75,35 +83,111 @@ const VISION_TIMEOUT_MS = 120_000;
 // budget on out-of-band reasoning before emitting the JSON answer, and a fixed
 // cap can be consumed entirely by reasoning and leave `content` empty — so the
 // model uses its default completion budget.
+// The statuses an endpoint returns when it refuses the request *as written* —
+// which is what an endpoint without JSON-mode support does with
+// `response_format`. Retrying the same request minus `response_format` then
+// costs one rejected round-trip (no tokens are generated) and only on
+// endpoints that would otherwise be unusable.
+//
+// Deliberately an allow-list of 400/422 rather than "any 4xx": the conclusion
+// drawn from a match is recorded permanently (rememberJsonModeUnsupported), so
+// a status that merely means "not now" must never reach it. A 429 or 408
+// retried a moment later usually succeeds, which under a broad rule would
+// silently pin the endpoint as JSON-mode-incapable for good — costing every
+// later recognition the formatting guarantee, with no way to undo it short of
+// clearing app storage. 401/403/404 are excluded for the same reason from the
+// other direction: a misconfigured endpoint should report its real problem
+// instead of being probed twice.
+const REQUEST_REJECTED_STATUSES = [400, 422];
+
+function isRequestRejected(error: unknown): boolean {
+  return (
+    error instanceof APIError &&
+    typeof error.status === "number" &&
+    REQUEST_REJECTED_STATUSES.includes(error.status)
+  );
+}
+
+// One chat request: sends it and returns the model's text, or "" when the
+// response carried none (a thinking model can spend its whole budget on
+// reasoning). Throws the SDK's own error untouched, so `isRequestRejected` can
+// still inspect its status — the callers below decide when to normalize it.
+async function requestContent(
+  client: OpenAI,
+  request: ChatCompletionCreateParamsNonStreaming,
+): Promise<string> {
+  const completion = await client.chat.completions.create(request);
+  return completion.choices[0]?.message?.content ?? "";
+}
+
 export async function callVisionModel(
   config: LlmConfig,
   prompt: string,
   imageBase64: string,
 ): Promise<string> {
   const client = createOpenAIClient(config, VISION_TIMEOUT_MS);
+  const request = {
+    model: config.model,
+    messages: [
+      {
+        role: "user" as const,
+        content: [
+          { type: "text" as const, text: prompt },
+          {
+            type: "image_url" as const,
+            image_url: { url: `data:image/jpeg;base64,${imageBase64}` },
+          },
+        ],
+      },
+    ],
+  };
+
+  // JSON mode keeps the model from wrapping its answer in a markdown fence or
+  // prefacing it with prose — the two failure modes `stripCodeFence` and the
+  // parser's degrade-to-empty path exist to absorb. Deliberately JSON mode and
+  // not a strict `json_schema`: schemas constrain shape, and the recognition
+  // errors that actually occur are semantic (a sub-account read as its own
+  // account, same-currency balances left unsummed), which no schema catches.
+  // Strict grammars also carry real cost here — they demand every property be
+  // required with `["string","null"]` unions, which thin proxies handle
+  // unevenly, and they constrain decoding from the first token, which fights
+  // the thinking models this app targets (see VISION_TIMEOUT_MS). JSON mode
+  // buys the formatting win without either.
+  const skipJsonMode = await isJsonModeUnsupported(config);
+
+  // The request without `response_format`, with SDK errors normalized to a
+  // plain Error carrying a display-ready message — the contract
+  // testLlmConnection documents, so callers never import the SDK. Both the
+  // known-unsupported path and the post-rejection retry send exactly this.
+  const sendPlainRequest = async (): Promise<string> => {
+    try {
+      return await requestContent(client, request);
+    } catch (error) {
+      throw new Error(describeLlmError(error));
+    }
+  };
+
+  if (skipJsonMode) {
+    return sendPlainRequest();
+  }
 
   try {
-    const completion = await client.chat.completions.create({
-      model: config.model,
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: prompt },
-            {
-              type: "image_url",
-              image_url: { url: `data:image/jpeg;base64,${imageBase64}` },
-            },
-          ],
-        },
-      ],
+    return await requestContent(client, {
+      ...request,
+      response_format: { type: "json_object" },
     });
-
-    return completion.choices[0]?.message?.content ?? "";
   } catch (error) {
-    // Normalize SDK errors to a plain Error with a display-ready message, so
-    // callers can surface `error.message` without importing the SDK — matching
-    // the contract testLlmConnection already documents.
-    throw new Error(describeLlmError(error));
+    if (!isRequestRejected(error)) {
+      throw new Error(describeLlmError(error));
+    }
+
+    // Retry without `response_format`. When this succeeds, `response_format`
+    // was the reason for the rejection and the endpoint is recorded so later
+    // recognitions skip the probe. When it fails too, the rejection was about
+    // something else, so nothing is recorded and the retry's error — raised by
+    // the plainer request — is the one worth showing.
+    const content = await sendPlainRequest();
+    await rememberJsonModeUnsupported(config);
+    return content;
   }
 }

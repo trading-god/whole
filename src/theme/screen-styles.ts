@@ -66,11 +66,13 @@ export const actionLink: TextStyle = {
   fontWeight: FONT_WEIGHT.bold,
 };
 
-// Shared layout primitives for the secondary form screens (add-account,
-// settings) and the home screen: safe area, scroll content padding, intro
-// block, form card, field divider, action link, pressed feedback, and the
-// bottom action bar. Centralized so these screens stay in lockstep instead of
-// each redeclaring the same rules and drifting.
+// Shared layout primitives for the secondary form screens (add-account, edit
+// account, settings) and the home screen: safe area, scroll content padding,
+// wordmark, form card, field divider, hint/error copy, pressed feedback, and
+// the bottom action bar. Centralized so these screens stay in lockstep instead
+// of each redeclaring the same rules and drifting. Blocks with their own
+// structure (screen intro, section header) are components, not fragments —
+// see ScreenIntro and SectionHeader.
 export const screenStyles = StyleSheet.create({
   safeArea: {
     backgroundColor: COLORS.background,
@@ -82,22 +84,6 @@ export const screenStyles = StyleSheet.create({
   content: {
     paddingBottom: SPACING.xxl,
     paddingHorizontal: SPACING.xl,
-  },
-  intro: {
-    paddingBottom: SPACING.xl,
-    paddingTop: SPACING.md,
-  },
-  title: {
-    color: COLORS.ink,
-    fontSize: 28,
-    fontWeight: FONT_WEIGHT.bold,
-    letterSpacing: -0.8,
-  },
-  subtitle: {
-    color: COLORS.muted,
-    fontSize: FONT_SIZE.body,
-    lineHeight: LINE_HEIGHT.body,
-    marginTop: SPACING.sm,
   },
   // Brand wordmark shown in the home and onboarding headers. Centralized so a
   // change to the wordmark treatment lands in one place instead of per screen.
@@ -115,17 +101,25 @@ export const screenStyles = StyleSheet.create({
     backgroundColor: COLORS.border,
     height: StyleSheet.hairlineWidth,
   },
-  // Section header above a form card (the "Account information" block on the
-  // add-account and edit-account screens). Shared so the two forms stay in
-  // lockstep instead of each redeclaring it.
-  formHeader: {
-    marginBottom: SPACING.md,
-    marginTop: SPACING.xxl,
-    paddingHorizontal: 2,
-  },
   formHint: {
     color: COLORS.muted,
     fontSize: FONT_SIZE.micro,
+  },
+  // Explanatory copy under an individual field, spaced off the input it
+  // annotates — quieter than `formHint`, which sits under a section header.
+  fieldHint: {
+    color: COLORS.subtle,
+    fontSize: FONT_SIZE.micro,
+    lineHeight: LINE_HEIGHT.body,
+    marginTop: SPACING.sm,
+  },
+  // Inline validation/error hint — the danger twin of `formHint`. Shared so
+  // blocking-error copy renders identically on every screen and stays on
+  // screen next to the field it blocks, instead of a dismissable alert.
+  errorHint: {
+    color: COLORS.danger,
+    fontSize: FONT_SIZE.micro,
+    fontWeight: FONT_WEIGHT.semibold,
   },
   pressed: {
     opacity: PRESSED_OPACITY_SURFACE,

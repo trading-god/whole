@@ -4,6 +4,23 @@ A personal finance aggregation app built on Expo + React Native. This file
 is the source of truth for project conventions; `CLAUDE.md` includes it via
 `@AGENTS.md`.
 
+# Supported Platforms
+
+Whole ships to **iOS and Android only**. The web platform is deliberately
+unsupported and its code has been removed.
+
+- Account recognition depends on OCR / LLM handling of account screenshots
+  that only works reliably through the native image-picker and media-library
+  pipeline, so a browser build could not deliver the app's core flow.
+- Do not add `react-native-web`, `react-dom`, an `expo.web` block in
+  `app.json`, a `pnpm web` script, a `+html.tsx` root, a PWA manifest, or
+  `public/` web assets.
+- Do not write `.web.ts` / `.web.tsx` platform overrides or
+  `Platform.OS === "web"` branches. `Platform` checks are for distinguishing
+  `ios` from `android` only.
+- Verify changes with `pnpm ios` / `pnpm android`; there is no web export
+  gate.
+
 # Tooling & Environment
 
 ## Expo SDK
@@ -25,7 +42,7 @@ Use pnpm exclusively for dependency installation and package scripts.
 
 - [Expo SDK 57](https://docs.expo.dev/versions/v57.0.0/)
 - React 19 and React Native 0.86
-- Expo Router with typed routes and static web rendering
+- Expo Router with typed routes
 - TypeScript
 - ESLint with Expo's recommended rules
 - Prettier
@@ -53,8 +70,6 @@ rules. Prettier is the only formatter.
 
 - Run `pnpm lint`, `pnpm format:check`, and `pnpm exec tsc --noEmit` before
   submitting a change.
-- Run `pnpm exec expo export --platform web` to verify static web output
-  builds.
 - Run `pnpm format` to format all supported, non-ignored files.
 - Keep `eslint-plugin-prettier/recommended` after `eslint-config-expo/flat` in
   the ESLint Flat Config so formatting conflicts are disabled and formatting
@@ -72,7 +87,6 @@ rules. Prettier is the only formatter.
 
 ```text
 config/locales/        Native permission translations
-public/                PWA manifest and public web assets
 scripts/               Repeatable asset-generation scripts
 src/app/               Expo Router routes and layouts
 src/features/assets/   Account storage, currencies, and screenshot cleanup
@@ -113,9 +127,9 @@ spacings from `src/theme/` instead of hard-coding literal values.
   lockstep.
 - Optical micro-values (`0`, `2`) and layout-specific alignment constants may
   stay literal — the 4pt spacing grid is the default, not a straitjacket.
-- `COLORS.brand` is the canonical brand color. `app.json`
-  (`expo.web.themeColor`) and `public/manifest.json` (`theme_color`) mirror it
-  — keep all three in sync when it changes.
+- `COLORS.brand` is the canonical brand color, and the splash wordmark baked
+  by `scripts/generate-app-icons.mjs` mirrors it — regenerate the icons when
+  it changes.
 - Share reusable style fragments (card surface, modal overlay, screen layout)
   from `src/theme/screen-styles.ts` instead of redeclaring them per screen.
 
@@ -132,15 +146,17 @@ consistent across the component library.
 
 ## Platform-Specific Modules
 
-Split platform differences into per-platform files with a consistent API
-rather than runtime `Platform.OS` branches scattered through feature code.
+iOS and Android are the only supported targets, so most code is shared. Where
+they genuinely diverge, keep the branch in one place with a consistent API
+rather than re-inlining `Platform.OS` through feature code.
 
-- The key-value store is split as `src/storage/kv-store.ts` (native, SQLite)
-  and `src/storage/kv-store.web.ts` (web, AsyncStorage); both export the same
-  `getItem` / `setItem` / `removeItem` / `withTransaction` surface so callers
-  stay platform-agnostic.
-- Follow the same `<name>.web.ts` / `<name>.native.ts` pattern for any new
-  module that needs a different backend per platform.
+- Isolate the branch behind a named export or a small wrapper — see
+  `sourceImageDeletionIsSupported` in
+  `src/features/assets/source-image-cleanup.ts` (deletion is iOS-only) and
+  `src/components/KeyboardAvoidingView.tsx`.
+- If a difference is large enough to warrant separate files, use
+  `<name>.ios.ts` / `<name>.android.ts`. Never add a `.web.ts` variant — see
+  [Supported Platforms](#supported-platforms).
 
 ## Storage
 

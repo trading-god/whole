@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { ButtonBase } from "@/components/ButtonBase";
@@ -5,7 +6,7 @@ import { CurrencyPicker } from "@/components/CurrencyPicker";
 import { FormField } from "@/components/FormField";
 import { Icon } from "@/components/Icon";
 import { knownAssetCurrencies } from "@/features/assets/currencies";
-import { type BalanceRow } from "@/features/assets/use-balance-rows";
+import { type BalanceRow } from "@/features/assets/balance-rows";
 import { COLORS } from "@/theme/colors";
 import { MIN_INTERACTIVE_SIZE } from "@/theme/layout";
 import { actionLink, screenStyles } from "@/theme/screen-styles";
@@ -13,36 +14,27 @@ import { CHIP_RADIUS } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
 import { FONT_SIZE } from "@/theme/typography";
 
-// Resolved label strings for the balance-rows field. Passed in (rather than
-// taking `t`) so the component stays free of an i18n dependency and the
-// add-account/edit-account screens resolve their own namespace keys.
-export type BalanceRowsFieldLabels = {
-  accountBalance: string;
-  currency: string;
-  removeCurrencyRow: string;
-  addCurrency: string;
-  allCurrenciesAdded: string;
-};
-
-// The per-currency balance rows shared by the add-account and edit-account
-// forms: each row is a decimal input with a currency picker and an inline
-// delete, followed by an "add currency" action (or an "all currencies added"
-// notice once every tracked currency has a row). Extracted so the row markup
-// and the add-currency action have one owner instead of being copy-pasted
-// across both screens.
+// The per-currency balance rows of the account form: each row is a decimal
+// input with a currency picker and an inline delete, followed by an "add
+// currency" action (or an "all currencies added" notice once every tracked
+// currency has a row). Extracted so the row markup and the add-currency action
+// have one owner instead of being copy-pasted across both screens. Its copy
+// comes from the form's own `accountForm` namespace — every screen rendering
+// this field renders the same words.
 export function BalanceRowsField({
   balanceRows,
-  labels,
   onAdd,
   onUpdate,
   onRemove,
 }: {
   balanceRows: BalanceRow[];
-  labels: BalanceRowsFieldLabels;
   onAdd: () => void;
   onUpdate: (index: number, patch: Partial<BalanceRow>) => void;
   onRemove: (index: number) => void;
 }) {
+  const { t } = useTranslation();
+  const accountBalanceLabel = t("accountForm.accountBalance");
+  const addCurrencyLabel = t("accountForm.addCurrency");
   // The add-currency action is available while any tracked currency is still
   // missing — judged by distinct currencies, not raw row count, so a duplicate
   // row (e.g. [SGD, SGD, USD, HKD] with CNY missing) doesn't hide the button
@@ -56,8 +48,8 @@ export function BalanceRowsField({
         <View key={row.id}>
           {index > 0 ? <View style={screenStyles.fieldDivider} /> : null}
           <FormField
-            label={index === 0 ? labels.accountBalance : undefined}
-            accessibilityLabel={`${labels.accountBalance} ${row.currency}`}
+            label={index === 0 ? accountBalanceLabel : undefined}
+            accessibilityLabel={`${accountBalanceLabel} ${row.currency}`}
             keyboardType="decimal-pad"
             onChangeText={(value) => onUpdate(index, { balance: value })}
             placeholder="0.00"
@@ -66,14 +58,14 @@ export function BalanceRowsField({
               <View style={styles.balanceRowTrailing}>
                 <CurrencyPicker
                   currencies={knownAssetCurrencies}
-                  dialogTitle={labels.currency}
+                  dialogTitle={t("accountForm.currency")}
                   value={row.currency}
                   variant="onLight"
                   onChange={(currency) => onUpdate(index, { currency })}
                 />
                 {balanceRows.length > 1 ? (
                   <ButtonBase
-                    accessibilityLabel={labels.removeCurrencyRow}
+                    accessibilityLabel={t("accountForm.removeCurrencyRow")}
                     hitSlop={10}
                     onPress={() => onRemove(index)}
                     baseStyle={styles.deleteButton}
@@ -92,17 +84,17 @@ export function BalanceRowsField({
 
       {!allCurrenciesAdded ? (
         <Pressable
-          accessibilityLabel={labels.addCurrency}
+          accessibilityLabel={addCurrencyLabel}
           style={styles.addCurrencyField}
           onPress={onAdd}
         >
           <Icon name="plus" size="sm" color={COLORS.brand} />
-          <Text style={actionLink}>{labels.addCurrency}</Text>
+          <Text style={actionLink}>{addCurrencyLabel}</Text>
         </Pressable>
       ) : (
         <View style={styles.addCurrencyField}>
           <Text style={styles.addCurrencyComplete}>
-            {labels.allCurrenciesAdded}
+            {t("accountForm.allCurrenciesAdded")}
           </Text>
         </View>
       )}

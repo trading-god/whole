@@ -4,30 +4,20 @@ import {
   createContext,
   type PropsWithChildren,
   useContext,
-  useEffect,
   useMemo,
-  useSyncExternalStore,
 } from "react";
 import { I18nextProvider, initReactI18next } from "react-i18next";
-import { Platform } from "react-native";
 
 import { type Currency } from "@/features/assets/currencies";
 import { type AppLocale, defaultNamespace, resources } from "@/i18n/resources";
 
 type LocaleContextValue = {
   formatCurrency: (value: number, currency: Currency) => string;
-  // True once the device locale has been resolved. On native this is always
-  // true; on web it is false during SSR/first render and flips after
-  // hydration. Consumers that seed persisted state from the locale (e.g. the
-  // base currency) must wait for this before reading the languageTag, or the
-  // pre-hydration fallback would get pinned.
-  isHydrated: boolean;
   languageTag: string;
   locale: AppLocale;
 };
 
 const LocaleContext = createContext<LocaleContextValue | null>(null);
-const subscribeToHydration = () => () => {};
 
 // Standard international (ISO 4217) currency symbols, applied explicitly.
 // Intl's currency-symbol resolution can fall back to the ISO code on Hermes
@@ -89,16 +79,9 @@ function createI18n(locale: AppLocale) {
 
 export function I18nProvider({ children }: PropsWithChildren) {
   const preferredLocales = useLocales();
-  const webHasHydrated = useSyncExternalStore(
-    subscribeToHydration,
-    () => true,
-    () => Platform.OS !== "web",
+  const supportedLocale = preferredLocales.find((candidate) =>
+    resolveLocale(candidate.languageCode),
   );
-  const supportedLocale = webHasHydrated
-    ? preferredLocales.find((candidate) =>
-        resolveLocale(candidate.languageCode),
-      )
-    : undefined;
   const locale = resolveLocale(supportedLocale?.languageCode ?? null) ?? "en";
   const languageTag = supportedLocale?.languageTag ?? "en-SG";
   const i18n = useMemo(() => createI18n(locale), [locale]);
@@ -106,18 +89,11 @@ export function I18nProvider({ children }: PropsWithChildren) {
   const value = useMemo<LocaleContextValue>(
     () => ({
       formatCurrency: formatCurrencyAmount,
-      isHydrated: webHasHydrated,
       languageTag,
       locale,
     }),
-    [languageTag, locale, webHasHydrated],
+    [languageTag, locale],
   );
-
-  useEffect(() => {
-    if (Platform.OS === "web") {
-      document.documentElement.lang = locale;
-    }
-  }, [locale]);
 
   return (
     <I18nextProvider i18n={i18n}>

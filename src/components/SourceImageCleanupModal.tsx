@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Alert, Linking, Platform, StyleSheet, Text } from "react-native";
+import { Alert, Linking, StyleSheet, Text } from "react-native";
 
 import { Button } from "@/components/Button";
 import { ButtonGroup } from "@/components/ButtonGroup";
@@ -76,16 +76,16 @@ export function SourceImageCleanupModal({
       // in system settings rather than showing a generic failure.
       if (result.reason === "permission") {
         Alert.alert(
-          t("newAccount.deletionPermissionTitle"),
-          t("newAccount.deletionPermissionMessage"),
+          t("accountScreenshot.deletionPermissionTitle"),
+          t("accountScreenshot.deletionPermissionMessage"),
           [
             {
               style: "cancel",
-              text: t("newAccount.keepScreenshot"),
+              text: t("accountScreenshot.keepScreenshot"),
               onPress: onFinished,
             },
             {
-              text: t("newAccount.openSystemSettings"),
+              text: t("accountScreenshot.openSystemSettings"),
               onPress: () => {
                 void Linking.openSettings();
                 onFinished();
@@ -101,8 +101,8 @@ export function SourceImageCleanupModal({
 
     setIsBeingDeleted(false);
     Alert.alert(
-      t("newAccount.deletionErrorTitle"),
-      t("newAccount.deletionErrorMessage"),
+      t("accountScreenshot.deletionErrorTitle"),
+      t("accountScreenshot.deletionErrorMessage"),
     );
   };
 
@@ -112,13 +112,11 @@ export function SourceImageCleanupModal({
       onDismiss={handleDismiss}
       visible={visible}
     >
-      <Text style={styles.title}>{t("newAccount.accountSaved")}</Text>
+      <Text style={styles.title}>{t("accountScreenshot.accountSaved")}</Text>
       <Text style={styles.description}>
         {sourceImageCanBeDeleted
-          ? t("newAccount.cleanupPrompt")
-          : Platform.OS === "web"
-            ? t("newAccount.cleanupManualBrowser")
-            : t("newAccount.cleanupManualPhotoLibrary")}
+          ? t("accountScreenshot.cleanupPrompt")
+          : t("accountScreenshot.cleanupManualPhotoLibrary")}
       </Text>
 
       {sourceImageCanBeDeleted ? (
@@ -129,7 +127,7 @@ export function SourceImageCleanupModal({
             disabled={isBeingDeleted}
             onPress={onFinished}
           >
-            {t("newAccount.keepScreenshot")}
+            {t("accountScreenshot.keepScreenshot")}
           </Button>
           <Button
             size="md"
@@ -138,8 +136,8 @@ export function SourceImageCleanupModal({
             onPress={() => void handleDelete()}
           >
             {isBeingDeleted
-              ? t("newAccount.deletingScreenshot")
-              : t("newAccount.deleteScreenshot")}
+              ? t("accountScreenshot.deletingScreenshot")
+              : t("accountScreenshot.deleteScreenshot")}
           </Button>
         </ButtonGroup>
       ) : (
@@ -149,7 +147,7 @@ export function SourceImageCleanupModal({
           style={styles.actions}
           onPress={onFinished}
         >
-          {t("newAccount.acknowledge")}
+          {t("accountScreenshot.acknowledge")}
         </Button>
       )}
     </ScrimModal>
