@@ -11,13 +11,7 @@
       "icon": "./assets/images/icon.png",
       "bundleIdentifier": "com.whole.app",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false,
-        "CFBundleLocalizations": [
-          "en",
-          "zh-Hans",
-          "en",
-          "zh-Hans"
-        ]
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -68,10 +62,10 @@
       [
         "expo-localization",
         {
-          "supportedLocales": [
-            "en",
-            "zh-Hans"
-          ]
+          "supportedLocales": {
+            "ios": ["en", "zh-Hans"],
+            "android": ["en", "zh-Hans"]
+          }
         }
       ],
       "expo-secure-store",
