@@ -46,6 +46,11 @@ export const enMessages = {
     deleteAccountError: "Couldn't delete the account. Try again later.",
     emptyBalanceHint: "Add an account to start tracking",
     openAccountHint: "View account details",
+    showAssetAmounts: "Show asset amounts",
+    hideAssetAmounts: "Hide asset amounts",
+    showAssetAmountsHint: "Show amounts and percentages on the asset overview",
+    hideAssetAmountsHint:
+      "Replace amounts and percentages on the asset overview with bullets",
   },
   // Copy for the account form itself (AccountEditorFields), shared verbatim by
   // the add-account screen, its multi-account wizard, and the edit-account

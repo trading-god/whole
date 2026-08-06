@@ -5,7 +5,7 @@ import { PRESSED_OPACITY } from "@/theme/interaction";
 import { ELEVATED_SHADOW } from "@/theme/shadow";
 
 export type ButtonVariant =
-  "primary" | "secondary" | "danger" | "outline" | "ghost";
+  "primary" | "secondary" | "danger" | "outline" | "ghost" | "onDark";
 
 export type ButtonVariantStyle = {
   /** 容器背景色。 */
@@ -29,6 +29,8 @@ export type ButtonVariantStyle = {
  *   `danger` 用于破坏性操作（清空、删除），红底白字与 `primary` 同等视觉权重。
  * - `outline`：透明底 + 描边，按压时浮出浅底提供明确触感。
  * - `ghost`：纯文字态，按压时浮出品牌色柔光底，呼应品牌。
+ * - `onDark`：深色面的 ghost——icon tint 用 `accentOnDark`（`brand` 在
+ *   `brandDark` 上只有 2.7:1），按压时浮出同色系柔光底。仅图标按钮使用。
  */
 export const BUTTON_VARIANTS: Record<ButtonVariant, ButtonVariantStyle> = {
   primary: {
@@ -61,6 +63,12 @@ export const BUTTON_VARIANTS: Record<ButtonVariant, ButtonVariantStyle> = {
     labelColor: COLORS.brand,
     iconColor: COLORS.brand,
     pressedStyle: { backgroundColor: COLORS.brandSoft },
+  },
+  onDark: {
+    backgroundColor: "transparent",
+    labelColor: COLORS.accentOnDark,
+    iconColor: COLORS.accentOnDark,
+    pressedStyle: { backgroundColor: COLORS.accentOnDarkSoft },
   },
 };
 

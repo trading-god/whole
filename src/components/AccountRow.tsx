@@ -26,6 +26,7 @@ import {
   type AssetAccount,
   sumBalancesByKindInCurrency,
 } from "@/features/assets/asset-repository";
+import { maskAssetAmount } from "@/features/assets/asset-privacy-store";
 import { type ExchangeRates } from "@/features/assets/currency-conversion";
 import { type Currency } from "@/features/assets/currencies";
 import { useAppLocale } from "@/i18n";
@@ -43,6 +44,10 @@ type AccountRowProps = {
   account: AssetAccount;
   displayCurrency: Currency;
   rates: ExchangeRates;
+  // When true, the converted balance renders as the shared asset mask instead
+  // of the formatted figure. An account whose balance couldn't convert still
+  // renders its "—" so missing data isn't mistaken for a hidden amount.
+  isBalanceHidden: boolean;
   isFirst: boolean;
   isActive: boolean;
   onActivate: (id: string | null) => void;
@@ -58,6 +63,7 @@ export const AccountRow = memo(function AccountRow({
   account,
   displayCurrency,
   rates,
+  isBalanceHidden,
   isFirst,
   isActive,
   onActivate,
@@ -271,7 +277,10 @@ export const AccountRow = memo(function AccountRow({
                 style={styles.accountBalance}
               >
                 {convertedTotal !== null
-                  ? formatCurrency(convertedTotal, displayCurrency)
+                  ? maskAssetAmount(
+                      formatCurrency(convertedTotal, displayCurrency),
+                      isBalanceHidden,
+                    )
                   : "—"}
               </Text>
               {subtitleText ? (

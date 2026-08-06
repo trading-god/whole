@@ -24,6 +24,11 @@ import {
   ASSET_KIND_DISTRIBUTION_COLORS,
   knownAssetKinds,
 } from "@/features/assets/account-appearance";
+import {
+  loadAssetPrivacyMode,
+  maskAssetAmount,
+  saveAssetPrivacyMode,
+} from "@/features/assets/asset-privacy-store";
 import { sumBalancesByKindInCurrency } from "@/features/assets/asset-repository";
 import {
   amountsConvertible,
@@ -100,7 +105,7 @@ function useStoredPreference<T>(
   load: () => Promise<T>,
   fallback: T,
   save?: (value: T) => Promise<void>,
-): [T, (value: T) => void] {
+): [T, (value: T | ((prev: T) => T)) => void] {
   const [value, setValue] = useState(fallback);
   // Set the moment the user picks a value, so a read that resolves late can't
   // revert what they just chose — and already persisted. A cold start opens the
@@ -123,11 +128,20 @@ function useStoredPreference<T>(
     };
   }, [load]);
 
+  // Accepts a functional update so a caller can flip the value from inside the
+  // updater without reading a stale closure (the eye toggle double-taps). The
+  // setter resolves `next` against the current value and persists the result —
+  // the save rides the same updater so a double-tap writes the value the UI
+  // actually switched to.
   const set = useCallback(
-    (next: T) => {
+    (next: T | ((prev: T) => T)) => {
       hasUserChoice.current = true;
-      setValue(next);
-      void save?.(next).catch(() => {});
+      setValue((current) => {
+        const resolved =
+          typeof next === "function" ? (next as (prev: T) => T)(current) : next;
+        void save?.(resolved).catch(() => {});
+        return resolved;
+      });
     },
     [save],
   );
@@ -181,6 +195,29 @@ function HomeScreen() {
     loadStoredDisplayCurrency,
     defaultDisplayCurrency,
     saveDisplayCurrency,
+  );
+  // Assets start visible and hydrate from storage in the background; a failed
+  // read stays visible and a failed write reverts on the next launch, neither
+  // worth an alert over a view setting (see useStoredPreference).
+  const loadStoredAssetPrivacyMode = useCallback(
+    () => loadAssetPrivacyMode("visible"),
+    [],
+  );
+  const [assetPrivacyMode, setAssetPrivacyMode] = useStoredPreference(
+    loadStoredAssetPrivacyMode,
+    "visible",
+    saveAssetPrivacyMode,
+  );
+  // The eye toggle flips the mode. Functional update (supported by
+  // useStoredPreference) so a rapid double-tap toggles twice instead of
+  // re-reading a stale closure of the mode.
+  const isAssetPrivacyModeEnabled = assetPrivacyMode === "hidden";
+  const toggleAssetPrivacyMode = useCallback(
+    () =>
+      setAssetPrivacyMode((current) =>
+        current === "hidden" ? "visible" : "hidden",
+      ),
+    [setAssetPrivacyMode],
   );
   const [chartRange, handleChartRangeChange] = useStoredPreference(
     loadNetWorthRange,
@@ -255,6 +292,12 @@ function HomeScreen() {
   // unavailable for every balance) → "—"; otherwise the formatted total.
   const isWaiting = accountsAreLoading || accountLoadingFailed || !ratesReady;
   const showEmptyBalanceHint = !isWaiting && accounts.length === 0;
+  // Privacy mode masks asset figures with a fixed string, but an unavailable
+  // figure ("—", or the 0.00 that means "no accounts yet") is a state the user
+  // must still be able to read — a mask would masquerade missing data as hidden
+  // assets. So the mask replaces only a real, loaded amount: the placeholder
+  // branches return early and maskAssetAmount wraps just the formatted figure
+  // (the same gate AccountRow uses for its converted balance).
   const totalDisplayValue = (() => {
     if (isWaiting) {
       return "—";
@@ -262,7 +305,10 @@ function HomeScreen() {
     if (displayTotal === null) {
       return showEmptyBalanceHint ? formatCurrency(0, displayCurrency) : "—";
     }
-    return formatCurrency(displayTotal, displayCurrency);
+    return maskAssetAmount(
+      formatCurrency(displayTotal, displayCurrency),
+      isAssetPrivacyModeEnabled,
+    );
   })();
 
   const chartDeltaText = (() => {
@@ -273,7 +319,10 @@ function HomeScreen() {
       return "—";
     }
     const sign = trend.delta >= 0 ? "+" : "-";
-    return `${sign}${formatCurrency(Math.abs(trend.delta), displayCurrency)}`;
+    return maskAssetAmount(
+      `${sign}${formatCurrency(Math.abs(trend.delta), displayCurrency)}`,
+      isAssetPrivacyModeEnabled,
+    );
   })();
 
   const [activeRowId, setActiveRowId] = useState<string | null>(null);
@@ -374,6 +423,27 @@ function HomeScreen() {
                   value={displayCurrency}
                   onChange={handleDisplayCurrencyChange}
                 />
+                <IconButton
+                  name={isAssetPrivacyModeEnabled ? "eye-off" : "eye"}
+                  size="sm"
+                  variant="onDark"
+                  iconSize="sm"
+                  accessibilityLabel={
+                    isAssetPrivacyModeEnabled
+                      ? t("home.showAssetAmounts")
+                      : t("home.hideAssetAmounts")
+                  }
+                  accessibilityHint={
+                    isAssetPrivacyModeEnabled
+                      ? t("home.showAssetAmountsHint")
+                      : t("home.hideAssetAmountsHint")
+                  }
+                  accessibilityState={{
+                    checked: isAssetPrivacyModeEnabled,
+                  }}
+                  hitSlop={8}
+                  onPress={toggleAssetPrivacyMode}
+                />
               </View>
               <Text
                 adjustsFontSizeToFit
@@ -419,8 +489,10 @@ function HomeScreen() {
                     isDeclining && styles.changeTextNegative,
                   ]}
                 >
-                  {trend.changePercent >= 0 ? "+" : ""}
-                  {trend.changePercent.toFixed(1)}%
+                  {maskAssetAmount(
+                    `${trend.changePercent >= 0 ? "+" : ""}${trend.changePercent.toFixed(1)}%`,
+                    isAssetPrivacyModeEnabled,
+                  )}
                 </Text>
               </View>
             ) : null}
@@ -518,7 +590,12 @@ function HomeScreen() {
                 <Text numberOfLines={1} style={styles.legendLabel}>
                   {item.label}
                 </Text>
-                <Text style={styles.legendValue}>{item.percent}%</Text>
+                <Text style={styles.legendValue}>
+                  {maskAssetAmount(
+                    `${item.percent}%`,
+                    isAssetPrivacyModeEnabled,
+                  )}
+                </Text>
               </View>
             ))}
           </View>
@@ -554,6 +631,7 @@ function HomeScreen() {
                 account={account}
                 displayCurrency={displayCurrency}
                 rates={rates}
+                isBalanceHidden={isAssetPrivacyModeEnabled}
                 isFirst={index === 0}
                 isActive={activeRowId === account.id}
                 onActivate={setActiveRowId}

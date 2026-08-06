@@ -4,6 +4,8 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Eye,
+  EyeOff,
   Minus,
   Plus,
   Settings,
@@ -15,6 +17,8 @@ import { COLORS } from "@/theme/colors";
 
 const ICONS = {
   plus: Plus,
+  eye: Eye,
+  "eye-off": EyeOff,
   "trending-up": TrendingUp,
   "trending-down": TrendingDown,
   "chevron-down": ChevronDown,

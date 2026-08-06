@@ -41,6 +41,10 @@ export const zhHansMessages = {
     deleteAccountError: "无法删除账户，请稍后重试。",
     emptyBalanceHint: "添加账户，开始追踪总资产",
     openAccountHint: "查看账户详情",
+    showAssetAmounts: "显示资产数字",
+    hideAssetAmounts: "隐藏资产数字",
+    showAssetAmountsHint: "显示首页中的资产金额与比例",
+    hideAssetAmountsHint: "将首页中的资产金额与比例替换为圆点",
   },
   // 账户表单本身（AccountEditorFields）的文案，添加账户页、多账户向导与编辑
   // 账户页逐字共用——表单只有一个归属，它的标签也只有一份。各屏专属文案
