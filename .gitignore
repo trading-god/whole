@@ -44,5 +44,3 @@ yarn-error.*
 # OCR eval — real account screenshots are private. Only the recorded
 # blocks.json + expected.json fixtures (no PII) are committed as regression data.
 /packages/ocr-eval/samples/*/screenshot.*
-/packages/ocr-eval/samples/*/normalized.json
-

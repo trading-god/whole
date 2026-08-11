@@ -31,13 +31,9 @@ before writing any code.
 
 ## Package Manager
 
-Use pnpm exclusively for dependency installation and package scripts.
-
-- Use the pnpm version pinned by the `packageManager` field in `package.json`.
-- Keep `pnpm-lock.yaml` as the only dependency lockfile.
-- Do not run `npm install`, `npm ci`, `npm run`, `npx`, Yarn, or Bun in this
-  repository.
-- Use `pnpm install`, `pnpm <script>`, and `pnpm exec <binary>` instead.
+Use pnpm exclusively, at the version pinned by the `packageManager` field in
+`package.json`, with `pnpm-lock.yaml` as the only lockfile — never `npm`,
+`npx`, Yarn, or Bun (`pnpm install`, `pnpm <script>`, `pnpm exec <binary>`).
 
 ## Technology stack
 
@@ -172,15 +168,10 @@ rather than re-inlining `Platform.OS` through feature code.
 
 ## Internationalization
 
-Whole uses the standard React localization stack: `expo-localization` detects
-the system locale, `i18next` handles resources, fallback, interpolation, and
-plurals, and `react-i18next` connects localization to the React rendering
-lifecycle. Native permission copy is a build-time concern and lives in
-`config/locales/*.json`.
+All user-visible copy goes through i18next — `src/i18n/locales/en.ts` and
+`zh-Hans.ts` stay synchronized (every new key is added to both) — while native
+permission copy is build-time config in `config/locales/*.json`.
 
-- All user-visible text goes through i18next (`src/i18n/locales/en.ts` and
-  `zh-Hans.ts`). Keep the two locale files synchronized: every new key is
-  added to both.
 - Use semantic translation keys through `useTranslation()`; do not embed
   user-facing copy directly in UI code.
 - Format money through `useAppLocale().formatCurrency`. Do not hand-build
@@ -218,15 +209,21 @@ shapes. Do not hand-write `if`/`else` conditional checks to validate data.
 
 # Documentation
 
-## README Translations
+## Language & Translations
 
-`README.md` is the English source and `README.zh-Hans.md` is its Simplified
-Chinese counterpart. Keep both documents synchronized.
+English is the default for all documentation and doc comments. When a Chinese
+version is required, apply the `README.md` / `README.zh-Hans.md` pattern to
+every README pair: English is the source of truth, both files carry the
+language-switch links at the top, and the pair updates together in the same
+change with semantically equivalent content. The product slogan is brand copy
+and stays exactly `Your whole financial life, in one place.` in both versions
+unless the user explicitly approves a localized one.
 
-- Any change to either README must update the other README in the same change.
-- Keep their section structure, product facts, commands, links, and status
-  statements semantically equivalent.
-- Preserve the language switch links at the top of both files.
-- The product slogan is brand copy and must remain exactly
-  `Your whole financial life, in one place.` in both versions unless the user
-  explicitly approves a localized slogan.
+## Punctuation
+
+Do not mix Chinese and English punctuation in any documentation. Chinese text
+uses full-width punctuation (`，`、`。`、`：`、`（）`, and `“”` for double
+quotes), English text uses half-width punctuation (`,`, `.`, `:`, `()`, and
+`"`) — keep each language's punctuation consistent within its own text. Never
+use half-width straight quotes in Chinese prose; use `“”` instead. Code blocks
+and inline code keep their own ASCII punctuation untouched.
