@@ -9,9 +9,10 @@ is the source of truth for project conventions; `CLAUDE.md` includes it via
 Whole ships to **iOS and Android only**. The web platform is deliberately
 unsupported and its code has been removed.
 
-- Account recognition depends on OCR / LLM handling of account screenshots
-  that only works reliably through the native image-picker and media-library
-  pipeline, so a browser build could not deliver the app's core flow.
+- Account recognition depends on OCR handling of account screenshots
+  that only works reliably through the native image-picker, media-library,
+  and on-device OCR pipeline, so a browser build could not deliver the
+  app's core flow.
 - Do not add `react-native-web`, `react-dom`, an `expo.web` block in
   `app.json`, a `pnpm web` script, a `+html.tsx` root, a PWA manifest, or
   `public/` web assets.
@@ -89,8 +90,11 @@ rules. Prettier is the only formatter.
 config/locales/        Native permission translations
 scripts/               Repeatable asset-generation scripts
 src/app/               Expo Router routes and layouts
-src/features/assets/   Account storage, currencies, and screenshot cleanup
+src/app/dev/           Dev-only routes (OCR fixture capture), gated by __DEV__
+src/features/assets/   Account storage, currencies, the OCR recognition
+                       pipeline, and screenshot cleanup
 src/i18n/              Runtime localization, message catalogs, and terminology
+packages/ocr-eval/     OCR parser regression eval harness (Node workspace)
 assets/branding/       Source brand artwork
 assets/app-icons/      Generated platform icon deliverables
 eslint.config.js        Expo ESLint and Prettier integration
@@ -165,10 +169,6 @@ rather than re-inlining `Platform.OS` through feature code.
 - Wrap a batch of dependent writes in `withTransaction` so the commit is
   all-or-nothing (the kv and net-worth-history migrations use this to keep
   data and migration marker atomic).
-- Store secrets (API keys, credentials) with `expo-secure-store`, falling
-  back to the key-value store where SecureStore is unavailable — see
-  `src/features/settings/llm-config-store.ts` for the read/write/clear
-  pattern.
 
 ## Internationalization
 
@@ -201,15 +201,6 @@ lifecycle. Native permission copy is a build-time concern and lives in
   so callers can skip the account — never substitute `0`, which would
   understate totals and distort percentages.
 
-## LLM Access
-
-- All LLM calls go through `src/features/settings/llm-client.ts`. Feature
-  modules depend on settings one-way; settings must not reach into a feature
-  that consumes it (that would recreate a settings ↔ assets cycle).
-- The client normalizes SDK errors to a plain `Error` with a display-ready
-  `message`. Surface `error.message` directly in feature code rather than
-  importing the OpenAI SDK.
-
 ## Validation
 
 Use zod for all runtime validation of forms, JSON payloads, and object
@@ -220,8 +211,8 @@ shapes. Do not hand-write `if`/`else` conditional checks to validate data.
 - Express type, required-field, and value-range rules in the schema rather
   than scattering `if`/`else` guards.
 - Share one schema between form validation and runtime guards so "what is a
-  valid X" is defined once — see `llmConfigSchema` in
-  `src/features/settings/llm-config-store.ts`.
+  valid X" is defined once — see `userNameSchema` in
+  `src/features/user/user-store.ts`.
 - Derive TypeScript types from the schema with `z.infer` instead of
   maintaining a parallel interface.
 

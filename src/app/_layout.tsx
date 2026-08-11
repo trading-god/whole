@@ -14,6 +14,12 @@ import { loadOnboardingCompleted } from "@/features/onboarding/onboarding-store"
 // auto-hid (e.g. a second call), which we swallow.
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
+// Development-only helpers are gated behind `__DEV__` (Metro-injected, true in
+// dev bundles, false in production builds) so the OCR fixture capture screen
+// never ships in a release with no route to it. Kept as a module constant so
+// consumers don't spread `__DEV__` through render bodies.
+const isDev = __DEV__;
+
 export default function RootLayout() {
   const router = useRouter();
   const segments = useSegments();
@@ -109,6 +115,32 @@ export default function RootLayout() {
                     gestureEnabled: true,
                   }}
                 />
+                {/* Dev-only OCR fixture capture. Registered only in dev builds:
+                      the route file under `app/dev/` still gets bundled by Metro,
+                      but without this registration it has no in-app surface, and
+                      production builds drop the entry entirely. Each Screen is
+                      its own conditional element — Stack's children mapper does
+                      not understand React Fragments, so wrapping them in one
+                      would warn "Unknown child element" (and crash in dev via
+                      Symbol-to-string coercion). */}
+                {isDev ? (
+                  <Stack.Screen
+                    name="dev/index"
+                    options={{
+                      animation: "slide_from_right",
+                      gestureEnabled: true,
+                    }}
+                  />
+                ) : null}
+                {isDev ? (
+                  <Stack.Screen
+                    name="dev/ocr-capture"
+                    options={{
+                      animation: "slide_from_right",
+                      gestureEnabled: true,
+                    }}
+                  />
+                ) : null}
               </Stack>
             </>
           )}

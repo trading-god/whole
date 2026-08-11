@@ -8,6 +8,7 @@ import {
 } from "react-native";
 
 import { ButtonBase } from "@/components/ButtonBase";
+import { Icon, type IconName } from "@/components/Icon";
 import {
   BUTTON_VARIANTS,
   DISABLED_BUTTON,
@@ -24,6 +25,7 @@ export type ButtonProps = {
   children: ReactNode;
   size?: Size;
   variant?: ButtonVariant;
+  icon?: IconName;
   disabled?: boolean;
   loading?: boolean;
   elevated?: boolean;
@@ -50,10 +52,19 @@ const LABEL_BY_SIZE: Record<
   lg: { fontSize: FONT_SIZE.bodyLg, fontWeight: FONT_WEIGHT.extrabold },
 };
 
+// Leading icon glyph size per button size — the icon sits beside the label, so
+// its glyph tracks the label scale rather than the icon-button's square size.
+const BUTTON_LEADING_ICON_SIZE: Record<Size, number> = {
+  sm: 16,
+  md: 20,
+  lg: 24,
+};
+
 export function Button({
   children,
   size = "md",
   variant = "primary",
+  icon,
   disabled = false,
   loading = false,
   elevated = false,
@@ -91,6 +102,10 @@ export function Button({
     paddingVertical: SPACING.sm,
   };
 
+  // Leading icon scaled to the button height so it reads with the label
+  // rather than overpowering it (sm buttons get a 16pt glyph, lg a 24pt one).
+  const iconSize = BUTTON_LEADING_ICON_SIZE[size];
+
   return (
     <ButtonBase
       {...rest}
@@ -108,6 +123,9 @@ export function Button({
       testID={testID}
       onPress={onPress}
     >
+      {icon ? (
+        <Icon name={icon} size={iconSize} color={visual.labelColor} />
+      ) : null}
       <Text
         style={{
           color: visual.labelColor,

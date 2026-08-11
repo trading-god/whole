@@ -1,12 +1,12 @@
 import { getItem, setItem } from "@/storage/kv-store";
 import { z } from "zod";
 
-// The user's preferred name — captured during onboarding (first step) and shown
-// in the home greeting forever after. This is permanent user-profile data, not
+// The user's preferred name — captured during onboarding and shown in the
+// home greeting forever after. This is permanent user-profile data, not
 // onboarding state, so it lives in its own store: onboarding writes it, the home
 // screen reads it, and neither owns the other. The value isn't secret, so it
-// lives in the plain key-value store rather than SecureStore — see AGENTS.md on
-// namespacing keys with `whole.`.
+// lives in the plain key-value store — see AGENTS.md on namespacing keys with
+// `whole.`.
 
 // 单一的「合法称呼」定义：trim 后非空、上限 USER_NAME_MAX_LENGTH 字符。
 // 引导页用 safeParse 校验、输入框 maxLength 引用 USER_NAME_MAX_LENGTH，二者

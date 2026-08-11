@@ -1,5 +1,4 @@
 import * as ImagePicker from "expo-image-picker";
-import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -15,17 +14,12 @@ import { IconButton } from "@/components/IconButton";
 import { PrivacyNote } from "@/components/PrivacyNote";
 import { ScreenshotMediaViewer } from "@/components/ScreenshotMediaViewer";
 import {
-  MissingLlmConfigError,
   type RecognizedAccount,
+  RecognitionUnsupportedError,
   recognizeAccountFromScreenshot,
 } from "@/features/assets/screenshot-recognition";
 import { COLORS } from "@/theme/colors";
-import {
-  actionLink,
-  actionLinkButton,
-  cardSurface,
-  screenStyles,
-} from "@/theme/screen-styles";
+import { cardSurface, screenStyles } from "@/theme/screen-styles";
 import { CARD_RADIUS, RADIUS } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
 import { FONT_SIZE, FONT_WEIGHT } from "@/theme/typography";
@@ -38,15 +32,15 @@ export type SelectedSourceImage = {
 type AccountScreenshotUploaderProps = {
   sourceImage: SelectedSourceImage | null;
   onSourceImageChange: (image: SelectedSourceImage | null) => void;
-  // Fired with every account the model returned — a single-account screenshot
-  // yields a one-element list, a bank-overview screenshot yields several. The
-  // parent decides how to apply them (the add screen routes ≥2 accounts to
-  // the multi-account wizard and otherwise fills the single-account form; the
-  // edit screen applies the entry matching its account) and reports whether
-  // anything was applied, so the badge only reads "Recognized" when the result
-  // actually landed on the form. May answer asynchronously: the add screen
-  // confirms before a re-upload replaces drafts the user has edited, and the
-  // badge waits on that answer rather than guessing it.
+  // Fired with every account the recognizer returned — a single-account
+  // screenshot yields a one-element list, a bank-overview screenshot yields
+  // several. The parent decides how to apply them (the add screen routes ≥2
+  // accounts to the multi-account wizard and otherwise fills the single-
+  // account form; the edit screen applies the entry matching its account) and
+  // reports whether anything was applied, so the badge only reads "Recognized"
+  // when the result actually landed on the form. May answer asynchronously:
+  // the add screen confirms before a re-upload replaces drafts the user has
+  // edited, and the badge waits on that answer rather than guessing it.
   onRecognized: (accounts: RecognizedAccount[]) => boolean | Promise<boolean>;
 };
 
@@ -57,31 +51,28 @@ const SCREENSHOT_CARD_HEIGHT = 220;
 // Which failure to surface under the card. Rendered as an inline error hint
 // rather than Alert.alert, so the reason stays anchored to the screenshot slot
 // that failed instead of vanishing on dismiss.
-// "missingConfig" additionally renders a link to the settings screen.
 type UploadIssue =
-  "missingConfig" | "recognitionFailed" | "noMatchingAccount" | "pickerFailed";
+  "recognitionFailed" | "noMatchingAccount" | "pickerFailed" | "ocrUnsupported";
 
 const ISSUE_MESSAGE_KEY = {
-  missingConfig: "accountScreenshot.missingLlmConfigMessage",
   recognitionFailed: "accountScreenshot.recognitionFailed",
   noMatchingAccount: "accountScreenshot.noMatchingAccount",
   pickerFailed: "accountScreenshot.pickerErrorMessage",
+  ocrUnsupported: "accountScreenshot.ocrUnsupported",
 } as const;
 
-// Screenshot picker + LLM recognition + preview card, shared by the add-account
-// and edit-account screens. Owns the recognizing/recognized UI state and the
-// recognition error hints (missing LLM config → inline link to settings;
-// picker / recognition failures → inline error text) so both screens stay in
-// lockstep. The parent owns the selected image (so it can decide whether to
-// run the post-save cleanup flow) and applies recognized accounts to its own
-// form.
+// Screenshot picker + on-device OCR recognition + preview card, shared by the
+// add-account and edit-account screens. Owns the recognizing/recognized UI
+// state and the recognition error hints (recognition / picker failures →
+// inline error text) so both screens stay in lockstep. The parent owns the
+// selected image (so it can decide whether to run the post-save cleanup
+// flow) and applies recognized accounts to its own form.
 export function AccountScreenshotUploader({
   sourceImage,
   onSourceImageChange,
   onRecognized,
 }: AccountScreenshotUploaderProps) {
   const { t } = useTranslation();
-  const router = useRouter();
   const [isRecognizing, setIsRecognizing] = useState(false);
   const [hasRecognized, setHasRecognized] = useState(false);
   const [issue, setIssue] = useState<UploadIssue | null>(null);
@@ -98,8 +89,8 @@ export function AccountScreenshotUploader({
   useEffect(() => {
     onRecognizedRef.current = onRecognized;
   }, [onRecognized]);
-  // Drops the recognition side effects if the uploader unmounts before the LLM
-  // call resolves. Without it, navigating away mid-recognition still fires
+  // Drops the recognition side effects if the uploader unmounts before the
+  // OCR pass resolves. Without it, navigating away mid-recognition still fires
   // `onRecognized` (and the add screen's replace-drafts alert) on whatever
   // screen came next, and calls setState on a gone component.
   const isMountedRef = useRef(true);
@@ -110,7 +101,11 @@ export function AccountScreenshotUploader({
     };
   }, []);
 
-  const recognizeScreenshot = async (uri: string, originalWidth?: number) => {
+  const recognizeScreenshot = async (
+    uri: string,
+    width?: number,
+    height?: number,
+  ) => {
     setIsRecognizing(true);
     setIssue(null);
     // The outcome leaves the try as a plain variable rather than a `finally`
@@ -123,7 +118,7 @@ export function AccountScreenshotUploader({
     let recognizedCount = 0;
     let applied = false;
     try {
-      const accounts = await recognizeAccountFromScreenshot(uri, originalWidth);
+      const accounts = await recognizeAccountFromScreenshot(uri, width, height);
       if (!isMountedRef.current) {
         return;
       }
@@ -134,11 +129,13 @@ export function AccountScreenshotUploader({
       // form.
       applied = await onRecognizedRef.current(accounts);
     } catch (error) {
-      if (error instanceof MissingLlmConfigError) {
-        failure = "missingConfig";
-      } else {
-        failure = "recognitionFailed";
-      }
+      // The recognizer gates unsupported hardware itself and throws this typed
+      // error so we can tell "this device can't do OCR" from "OCR ran but
+      // failed", instead of collapsing both into `recognitionFailed`.
+      failure =
+        error instanceof RecognitionUnsupportedError
+          ? "ocrUnsupported"
+          : "recognitionFailed";
     }
     if (!isMountedRef.current) {
       return;
@@ -150,11 +147,11 @@ export function AccountScreenshotUploader({
       setIssue(failure);
       return;
     }
-    // Nothing threw and nothing landed. Say which of the two it was: the model
+    // Nothing threw and nothing landed. Say which of the two it was: the OCR
     // read no account at all, or it read accounts and none of them was the one
     // being edited. Without this the badge just reverts to "ready" with every
-    // field unchanged, and the user cannot tell a failed endpoint from a
-    // screenshot of the wrong account — so they retry the same upload.
+    // field unchanged, and the user cannot tell a failed pass from a screenshot
+    // of the wrong account — so they retry the same upload.
     setIssue(recognizedCount === 0 ? "recognitionFailed" : "noMatchingAccount");
   };
 
@@ -174,11 +171,25 @@ export function AccountScreenshotUploader({
       setIssue("pickerFailed");
       return;
     }
+    // `assets` is typed non-empty when not canceled, but the contract doesn't
+    // guarantee it — guard against an empty array rather than crashing on
+    // `picked.assetId` below.
+    if (!picked) {
+      setIssue("pickerFailed");
+      return;
+    }
 
     onSourceImageChange({ assetId: picked.assetId ?? null, uri: picked.uri });
     setHasRecognized(false);
+    // On-device OCR may be unavailable on some hardware (e.g. very old devices
+    // or certain Android builds). Fall back to manual entry: show the selected
+    // screenshot so the user can reference it while filling the form, and
+    // surface the reason instead of a confusing engine error. The recognizer
+    // throws RecognitionUnsupportedError in that case.
     // Cannot throw — recognizeScreenshot funnels every failure into `issue`.
-    await recognizeScreenshot(picked.uri, picked.width);
+    // The picker already decoded the image, so hand its pixel dimensions to the
+    // recognizer instead of the recognizer re-decoding just to read them.
+    await recognizeScreenshot(picked.uri, picked.width, picked.height);
   };
 
   const badgeLabel = isRecognizing
@@ -254,20 +265,6 @@ export function AccountScreenshotUploader({
           <Text accessibilityLiveRegion="polite" style={screenStyles.errorHint}>
             {t(ISSUE_MESSAGE_KEY[issue])}
           </Text>
-          {issue === "missingConfig" ? (
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => router.push("/settings")}
-              style={({ pressed }) => [
-                actionLinkButton,
-                pressed && screenStyles.pressed,
-              ]}
-            >
-              <Text style={actionLink}>
-                {t("accountScreenshot.goToSettings")}
-              </Text>
-            </Pressable>
-          ) : null}
         </View>
       ) : null}
       <PrivacyNote message={t("accountScreenshot.screenshotPrivacy")} />

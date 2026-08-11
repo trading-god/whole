@@ -6,9 +6,9 @@ import {
   ChevronRight,
   Eye,
   EyeOff,
+  FlaskConical,
   Minus,
   Plus,
-  Settings,
   TrendingDown,
   TrendingUp,
 } from "lucide-react-native";
@@ -26,7 +26,7 @@ const ICONS = {
   "chevron-right": ChevronRight,
   check: Check,
   "arrow-up": ArrowUp,
-  settings: Settings,
+  "flask-conical": FlaskConical,
   minus: Minus,
 } as const;
 

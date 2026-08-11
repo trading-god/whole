@@ -4,8 +4,21 @@ export const knownAssetCurrencies = ["SGD", "USD", "HKD", "CNY"] as const;
 
 export type Currency = (typeof knownAssetCurrencies)[number];
 
+// Standard (ISO 4217) display symbols per currency. Intl's currency-symbol
+// resolution can fall back to the ISO code on Hermes (e.g. "SGD" instead of
+// "S$" when the currency isn't the locale's own), so the app formats the
+// symbol explicitly; CN¥ disambiguates CNY from JPY (also ¥). Single source of
+// truth for the currency↔symbol mapping, shared by `formatCurrency` (i18n) and
+// the OCR currency scanner, so adding a currency updates both in one place.
+export const CURRENCY_SYMBOLS: Record<Currency, string> = {
+  SGD: "S$",
+  USD: "$",
+  HKD: "HK$",
+  CNY: "CN¥",
+};
+
 // Schema for a known currency code. Owned here (alongside
-// `knownAssetCurrencies`) so `asset-repository.ts`, `screenshot-recognition.ts`,
+// `knownAssetCurrencies`) so `asset-repository.ts`, `ocr-parser.ts`,
 // `currency-conversion.ts`, and the currency preference stores validate against one
 // definition instead of each re-declaring `z.enum(knownAssetCurrencies)` or a
 // hand-written guard.

@@ -3,7 +3,6 @@ export const zhHansMessages = {
     wordmark: "WHOLE",
     addAccount: "添加账户",
     backToAssetOverview: "返回资产总览",
-    settings: "设置",
     cancel: "取消",
     required: "必填",
     stepIndicator: "第 {{current}} 步，共 {{total}} 步",
@@ -45,6 +44,9 @@ export const zhHansMessages = {
     hideAssetAmounts: "隐藏资产数字",
     showAssetAmountsHint: "显示首页中的资产金额与比例",
     hideAssetAmountsHint: "将首页中的资产金额与比例替换为圆点",
+    // 首页右上角开发者模式入口，仅在 __DEV__ 下注册（见 _layout.tsx），发布版
+    // 本中没有这个入口。
+    devToolsLabel: "开发者模式",
   },
   // 账户表单本身（AccountEditorFields）的文案，添加账户页、多账户向导与编辑
   // 账户页逐字共用——表单只有一个归属，它的标签也只有一份。各屏专属文案
@@ -88,11 +90,9 @@ export const zhHansMessages = {
     recognizing: "正在识别…",
     recognized: "已识别，请核对",
     recognitionFailed: "无法识别截图，请手动填写账户信息。",
+    ocrUnsupported: "当前设备不支持截图识别，请手动填写账户信息。",
     noMatchingAccount:
       "这张截图中没有你正在编辑的账户，因此未填入任何信息。请选择该账户的截图。",
-    missingLlmConfigMessage:
-      "请先填写 OpenAI 兼容的接口地址与模型，以便从截图识别账户。",
-    goToSettings: "打开设置",
     accountSaved: "账户已保存",
     cleanupPrompt:
       "这张账户截图已用于确认账户信息。是否从系统相册删除？系统会再次请求确认。",
@@ -149,50 +149,12 @@ export const zhHansMessages = {
     // 误标题在两种模式下共用 newAccount 的键。
     saveErrorMessage: "无法保存账户，请稍后重试。",
   },
-  settings: {
-    screenTitle: "设置",
-    introTitle: "截图识别",
-    introDescription:
-      "Whole 会在本设备直接调用 OpenAI 兼容的视觉模型来识别账户截图。请在下方填写接口地址与模型；若接口不需要 API 密钥，可留空。",
-    baseUrl: "接口地址",
-    baseUrlPlaceholder: "https://api.openai.com/v1",
-    apiKey: "API 密钥",
-    apiKeyPlaceholder: "sk-…",
-    model: "模型",
-    modelPlaceholder: "gpt-4o",
-    save: "保存",
-    saving: "正在保存…",
-    saved: "配置已保存",
-    saveErrorTitle: "保存失败",
-    saveErrorMessage: "无法保存配置，请稍后重试。",
-    statusSaved: "已配置",
-    statusNotSet: "未配置",
-    clear: "清除",
-    clearConfirmTitle: "清除配置？",
-    clearConfirmMessage: "将从本设备移除已保存的接口地址、API 密钥与模型。",
-    clearErrorTitle: "清除失败",
-    clearErrorMessage: "无法清除配置，请稍后重试。",
-    privacy:
-      "若填写，API 密钥将保存在本设备的安全存储中，仅发送到你填写的接口地址。",
-    testConnection: "测试连通性",
-    testing: "测试中…",
-    testSuccess: "已连接",
-    testFailed: "失败",
-  },
   onboarding: {
     nameTitle: "欢迎使用 Whole",
     nameSubtitle: "告诉我们该如何称呼你，它会出现在首页。",
     nameLabel: "称呼",
     namePlaceholder: "例如：小明",
-    modelTitle: "连接你的模型",
-    modelSubtitle:
-      "Whole 会调用 OpenAI 兼容的视觉模型来识别账户截图。可现在填写，也可跳过后在设置里配置。",
-    modelHint: "可稍后在设置里测试连通性。",
-    modelInvalid: "请同时填写接口地址和模型，或跳过",
-    next: "下一步",
-    back: "上一步",
     finish: "开始使用",
-    skip: "暂时跳过",
     completionErrorTitle: "无法完成设置",
     completionErrorMessage: "保存进度时出错，请重试。",
   },
@@ -200,5 +162,43 @@ export const zhHansMessages = {
     screenTitle: "页面不存在",
     title: "找不到这个页面",
     description: "这个链接可能已经失效，或者页面地址有误。",
+  },
+  // 仅供开发的文案：OCR 回归样本采集屏（AccountScreenshotCapture）。该路由
+  // 仅在 __DEV__ 下注册，无生产入口；仍走同一套 i18n 类型系统，方便与其余
+  // 页面保持一致。
+  devTools: {
+    title: "开发者工具",
+    subtitle: "仅供开发使用的工具，发布版本中不可用。",
+    ocrCaptureTitle: "OCR 采集",
+    ocrCaptureSubtitle: "用真实截图生成 packages/ocr-eval 的 OCR 回归样本。",
+  },
+  devOcr: {
+    screenTitle: "OCR 采集",
+    pickScreenshot: "选择账户截图",
+    recognizing: "正在识别…",
+    pickerFailed: "无法打开相册，请稍后重试，或检查 Whole 的照片访问权限。",
+    recognitionFailed: "无法识别这张截图。",
+    ocrUnsupported: "当前设备不支持端上 OCR，请使用受支持的设备或模拟器。",
+    resultsTitle: "识别结果",
+    blocksLabel_one: "{{count}} 个 OCR 文本块",
+    blocksLabel_other: "{{count}} 个 OCR 文本块",
+    moreBlocks_one: "+{{count}} 个文本块",
+    moreBlocks_other: "+{{count}} 个文本块",
+    accountsLabel_one: "{{count}} 个账户",
+    accountsLabel_other: "{{count}} 个账户",
+    noAccounts: "这张截图中未识别到账户。",
+    copyBlocks: "复制 blocks.json",
+    copyExpected: "复制 expected.json",
+    copyTitle: "已复制到剪贴板",
+    copyBlocksSuccess:
+      "blocks.json 已复制。请保存为 packages/ocr-eval/samples/<slug>/blocks.json。",
+    copyExpectedSuccess:
+      "expected.json 模板已复制。请核对并编辑字段后，保存为 packages/ocr-eval/samples/<slug>/expected.json。",
+    copyFailed: "复制到剪贴板失败，请重试。",
+    unnamed: "未命名账户",
+    noBalances: "无数额",
+    lastFour: "后四位：",
+    kindLabel: "类型：",
+    unknownKind: "未知类型",
   },
 } as const;

@@ -1,0 +1,23 @@
+{
+  "name": "@whole/ocr-eval",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Node harness that drives and verifies whole's OCR semantic parser against recorded screenshots (regression evaluation).",
+  "packageManager": "pnpm@11.11.0",
+  "type": "module",
+  "scripts": {
+    "eval": "tsx src/run-eval.ts",
+    "annotate": "tsx src/annotate.ts",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "tsx": "^4.23.11",
+    "typescript": "~6.0.3"
+  }
+}

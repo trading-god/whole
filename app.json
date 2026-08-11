@@ -68,8 +68,13 @@
           }
         }
       ],
-      "expo-secure-store",
-      "expo-sqlite"
+      "expo-sqlite",
+      [
+        "expo-mlkit-ocr",
+        {
+          "iosEngine": "auto"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

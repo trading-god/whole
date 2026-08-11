@@ -265,7 +265,7 @@ export const AccountRow = memo(function AccountRow({
               </Text>
               {account.accountLastFourDigits ? (
                 <Text style={styles.accountNumber}>
-                  •••• {account.accountLastFourDigits}
+                  **** {account.accountLastFourDigits}
                 </Text>
               ) : null}
             </View>

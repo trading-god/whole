@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "paths": {
+      "@/*": ["../../src/*"],
+      "@/assets/*": ["../../assets/*"]
+    }
+  },
+  "include": [
+    "./src/**/*.ts",
+    "../../src/features/assets/ocr-*.ts",
+    "../../src/features/assets/recognition-types.ts",
+    "../../src/features/assets/account-appearance.ts",
+    "../../src/features/assets/account-balance-schema.ts",
+    "../../src/features/assets/currencies.ts"
+  ],
+  "exclude": ["node_modules"]
+}

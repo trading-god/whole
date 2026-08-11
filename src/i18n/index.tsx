@@ -8,7 +8,7 @@ import {
 } from "react";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 
-import { type Currency } from "@/features/assets/currencies";
+import { CURRENCY_SYMBOLS, type Currency } from "@/features/assets/currencies";
 import { type AppLocale, defaultNamespace, resources } from "@/i18n/resources";
 
 type LocaleContextValue = {
@@ -19,18 +19,10 @@ type LocaleContextValue = {
 
 const LocaleContext = createContext<LocaleContextValue | null>(null);
 
-// Standard international (ISO 4217) currency symbols, applied explicitly.
-// Intl's currency-symbol resolution can fall back to the ISO code on Hermes
-// (e.g. "SGD" instead of "S$" when the currency isn't the locale's own), so
-// the symbol is prepended here and Intl only formats the decimal number —
-// which Hermes handles reliably. CN¥ disambiguates CNY from JPY (also ¥).
-const CURRENCY_SYMBOLS: Record<Currency, string> = {
-  SGD: "S$",
-  USD: "$",
-  HKD: "HK$",
-  CNY: "CN¥",
-};
-
+// The symbol map itself lives in `currencies.ts` (next to `knownAssetCurrencies`
+// and `currencySchema`), shared with the OCR currency scanner. Here it only
+// drives `formatCurrency`; the symbol is prepended and Intl formats just the
+// decimal number, which Hermes handles reliably.
 let decimalFormatter: Intl.NumberFormat | null = null;
 
 function formatCurrencyAmount(amount: number, currency: Currency): string {

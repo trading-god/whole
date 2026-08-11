@@ -87,7 +87,7 @@ export const AccountEditorFields = memo(function AccountEditorFields({
           patch({ lastFour: text.replace(/\D/g, "").slice(0, 4) })
         }
         placeholder="0000"
-        prefix="••••"
+        prefix="****"
         value={draft.lastFour}
       />
       {lastFourHint ? (

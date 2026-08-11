@@ -37,9 +37,8 @@ source screenshot afterward.
   supports it
 - Simplified Chinese and English interfaces
 
-Account recognition is not yet connected to an OCR or AI service. In the
-current flow, the user completes and confirms the account information
-manually.
+Account recognition runs entirely on device — a screenshot is read by native
+OCR (Apple Vision on iOS, ML Kit on Android) and never leaves the device.
 
 ## Getting started
 

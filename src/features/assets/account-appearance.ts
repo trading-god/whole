@@ -14,9 +14,17 @@ export const knownAssetKinds = ["cash", "investment", "crypto"] as const;
 export type AssetKind = (typeof knownAssetKinds)[number];
 
 // Schema for a known asset kind, owned alongside `knownAssetKinds` so
-// `asset-repository.ts` and `screenshot-recognition.ts` validate against one
-// enum instead of each re-declaring `z.enum(knownAssetKinds)`.
+// `asset-repository.ts` and `ocr-parser.ts` validate against one enum
+// instead of each re-declaring `z.enum(knownAssetKinds)`.
 export const assetKindSchema = z.enum(knownAssetKinds);
+
+const LAST_FOUR_DIGITS_PATTERN = /^\d{4}$/;
+
+// Schema for a 4-digit last-four string. Owned here (alongside the pattern) so
+// `asset-repository.ts`'s account identity schema and the OCR parser share one
+// definition of "what is a valid last four" instead of each re-declaring the
+// regex.
+export const lastFourDigitsSchema = z.string().regex(LAST_FOUR_DIGITS_PATTERN);
 
 export type AccountAppearance = {
   color: string;

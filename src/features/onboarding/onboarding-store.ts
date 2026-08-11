@@ -3,8 +3,8 @@ import { getItem, setItem } from "@/storage/kv-store";
 // First-run onboarding persistence: a one-shot completion flag. The user's
 // preferred name is permanent profile data and lives in `user-store` —
 // onboarding is just one of its writers. Neither value is secret, so both live
-// in the plain key-value store rather than SecureStore — see AGENTS.md on
-// namespacing keys with `whole.`.
+// in the plain key-value store — see AGENTS.md on namespacing keys with
+// `whole.`.
 
 const ONBOARDING_COMPLETED_KEY = "whole.onboarding.completed";
 

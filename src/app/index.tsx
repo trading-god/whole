@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AccountRow } from "@/components/AccountRow";
+import { Button } from "@/components/Button";
 import { CurrencyPicker } from "@/components/CurrencyPicker";
 import { Icon } from "@/components/Icon";
 import { IconButton } from "@/components/IconButton";
@@ -166,6 +167,10 @@ export default function Index() {
 }
 
 function HomeScreen() {
+  // Dev-mode entry is dev-only, exactly like the /dev route registration in
+  // _layout.tsx (Metro-injected, false in production bundles). Kept as a local
+  // constant so the render reads "isDev" instead of spreading `__DEV__`.
+  const isDev = __DEV__;
   const { formatCurrency, languageTag } = useAppLocale();
   const { t } = useTranslation();
   const router = useRouter();
@@ -293,17 +298,25 @@ function HomeScreen() {
   const isWaiting = accountsAreLoading || accountLoadingFailed || !ratesReady;
   const showEmptyBalanceHint = !isWaiting && accounts.length === 0;
   // Privacy mode masks asset figures with a fixed string, but an unavailable
-  // figure ("—", or the 0.00 that means "no accounts yet") is a state the user
-  // must still be able to read — a mask would masquerade missing data as hidden
-  // assets. So the mask replaces only a real, loaded amount: the placeholder
-  // branches return early and maskAssetAmount wraps just the formatted figure
-  // (the same gate AccountRow uses for its converted balance).
+  // figure ("—") is a state the user must still be able to read — a mask
+  // would masquerade missing data as hidden assets. So the mask replaces only
+  // real, loaded amounts: the 0.00 "no accounts yet" total is a genuine figure
+  // and masks like any other (a bare "0" among bulleted figures would read as
+  // a leak); only the "—" unavailability placeholder stays readable.
   const totalDisplayValue = (() => {
     if (isWaiting) {
+      // Waiting state shows the "—" placeholder, which the mask leaves readable
+      // (no digits to hide): revealing "—" while loaded figures are masked
+      // doesn't leak anything real, unlike showing an actual amount would.
       return "—";
     }
     if (displayTotal === null) {
-      return showEmptyBalanceHint ? formatCurrency(0, displayCurrency) : "—";
+      return showEmptyBalanceHint
+        ? maskAssetAmount(
+            formatCurrency(0, displayCurrency),
+            isAssetPrivacyModeEnabled,
+          )
+        : "—";
     }
     return maskAssetAmount(
       formatCurrency(displayTotal, displayCurrency),
@@ -386,14 +399,21 @@ function HomeScreen() {
             </Text>
           </View>
           <View style={styles.headerActions}>
-            <IconButton
-              name="settings"
-              size="md"
-              variant="ghost"
-              accessibilityLabel={t("common.settings")}
-              hitSlop={12}
-              onPress={() => router.push("/settings")}
-            />
+            {/* Dev-mode entry, shown only in dev builds (production drops the
+                /dev route and renders a plain round add button instead; see
+                _layout.tsx). Placed left of the add button with the flask icon
+                so it reads as a developer utility next to the primary action. */}
+            {isDev ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                icon="flask-conical"
+                accessibilityLabel={t("devTools.title")}
+                onPress={() => router.push("/dev")}
+              >
+                {t("home.devToolsLabel")}
+              </Button>
+            ) : null}
             <IconButton
               name="plus"
               size="md"
@@ -669,7 +689,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flexDirection: "row",
     flexShrink: 0,
-    gap: SPACING.xs,
+    // A labeled button sits next to the circular add button, which is tighter
+    // than two pure icon buttons — give the pair air so the primary action
+    // keeps its own breathing room.
+    gap: SPACING.md,
   },
   greeting: {
     color: COLORS.ink,

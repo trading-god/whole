@@ -4,10 +4,13 @@ import { z } from "zod";
 import { getItem, setItem } from "@/storage/kv-store";
 
 import { createAsyncSerializer } from "./async-serializer";
+import { accountBalanceSchema } from "./account-balance-schema";
+import type { AccountBalance } from "./account-balance-schema";
 import {
   type AssetKind,
   assetKindSchema,
   knownAssetKinds,
+  lastFourDigitsSchema,
 } from "@/features/assets/account-appearance";
 import {
   type ExchangeRates,
@@ -21,13 +24,6 @@ import {
 } from "@/features/assets/currencies";
 
 const ASSET_ACCOUNTS_STORAGE_KEY = "whole.assetAccounts";
-
-const LAST_FOUR_DIGITS_PATTERN = /^\d{4}$/;
-
-// Schema for a 4-digit last-four string. Owned here (alongside the pattern) so
-// `accountIdentitySchema` and `screenshot-recognition.ts` share one definition of
-// "what is a valid last four" instead of each re-declaring the regex.
-export const lastFourDigitsSchema = z.string().regex(LAST_FOUR_DIGITS_PATTERN);
 
 // Form-input variant: the last four is optional (brokerage/stock accounts may
 // not have a card number), so an empty string is also valid. Shared by every
@@ -46,10 +42,11 @@ export const optionalLastFourDigitsSchema = lastFourDigitsSchema.or(
 // a valid stored account" is defined once alongside the validation, not
 // maintained as a parallel interface. Mirrors `storedRatesSchema` in
 // currency-conversion.ts.
-export const accountBalanceSchema = z.object({
-  currency: currencySchema,
-  balance: z.number(),
-});
+// `accountBalanceSchema`/`AccountBalance` live in their own pure-zod module
+// (`account-balance-schema.ts`) — they're shared with the OCR recognition
+// contract and the Node eval harness, which must not pull in this storage
+// module's React Native / Expo dependency chain.
+export { accountBalanceSchema } from "./account-balance-schema";
 
 // Shared identity fields across every account kind — the stable per-account
 // attributes that don't depend on what the account holds. `lastFourDigits` is
@@ -95,7 +92,7 @@ const storedV1AssetAccountsSchema = z.object({
   accounts: z.array(v1AssetAccountSchema),
 });
 
-export type AccountBalance = z.infer<typeof accountBalanceSchema>;
+export type { AccountBalance } from "./account-balance-schema";
 export type AssetAccount = z.infer<typeof assetAccountSchema>;
 type V1AssetAccount = z.infer<typeof v1AssetAccountSchema>;
 type StoredAssetAccounts = z.infer<typeof storedAssetAccountsSchema>;
@@ -111,8 +108,7 @@ export type NewAssetAccount = {
 // (commas/whitespace) and parses to a non-negative number. Used by the account
 // forms' `deriveValidBalances` so "what is a valid balance input" is defined
 // once, alongside the other balance schemas, instead of a hand-written parse.
-// Allows 0 (a real balance), unlike `screenshot-recognition.ts`'s
-// `balanceEntrySchema` which drops 0 as model noise.
+// Allows 0 (a real balance).
 export const balanceInputSchema = z
   .string()
   .transform((value) => Number(value.replace(/[,\s]/g, "")))
