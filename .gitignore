@@ -44,3 +44,8 @@ yarn-error.*
 # OCR eval — real account screenshots are private. Only the recorded
 # blocks.json + expected.json fixtures (no PII) are committed as regression data.
 /packages/ocr-eval/samples/*/screenshot.*
+# Derived parser trace for LLM diagnosis — regenerated from blocks.json via
+# `pnpm eval:ocr:trace`, so it's a debuggable artifact, not a committed fixture.
+/packages/ocr-eval/samples/*/trace.json
+# LLM-generated diagnosis report — regenerated via `pnpm eval:ocr:teach`.
+/packages/ocr-eval/samples/*/diagnosis.md

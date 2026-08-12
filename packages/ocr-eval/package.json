@@ -8,6 +8,8 @@
   "scripts": {
     "eval": "tsx src/run-eval.ts",
     "annotate": "tsx src/annotate.ts",
+    "dump": "tsx src/dump.ts",
+    "teach": "tsx src/teach.ts",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

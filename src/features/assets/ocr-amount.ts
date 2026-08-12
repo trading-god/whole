@@ -11,8 +11,10 @@
 //
 // Deliberately conservative: when the text looks like a number but the digits
 // don't form a sane amount (a date "12/05", a phone number, a card number
-// "**** 1234", a zero balance "0.00"), we return `ok: false` and the caller
-// treats the row as not an amount. The parser is heuristic — the UI's
+// "**** 1234", a negative figure a screenshot never shows as a plain amount),
+// we return `ok: false` and the caller treats the row as not an amount. A
+// zero balance "0.00" IS a real balance — OCR reads it (including 0) and the
+// form layer decides whether to keep it. The parser is heuristic — the UI's
 // review/edit loop absorbs the misses.
 import type { Currency } from "./currencies";
 import { currencyMention } from "./ocr-currency";
@@ -29,7 +31,7 @@ export type ParsedAmount = {
 // decimals, no dangling fragment) is applied in `toParsed`, which keeps the
 // regex readable instead of layering lookarounds onto it. Exported as a string
 // so the currency-adjacent search can re-emit it.
-const NUMBER_SOURCE = String.raw`-?(?:\d{1,3}(?:[,' ]\d{3})+|\d+)(?:\.\d+)?`;
+const NUMBER_SOURCE = String.raw`(?:-\s*)?(?:\d{1,3}(?:[,' ]\d{3})+|\d+)(?:\.\d+)?`;
 const NUMBER_RE = new RegExp(NUMBER_SOURCE);
 const NUMBER_GLOBAL_RE = new RegExp(NUMBER_SOURCE, "g");
 
@@ -111,7 +113,13 @@ export function matchAmount(text: string): ParsedAmount {
     // own number ("360 Account"). Require thousands grouping or a 2-decimal
     // shape so a bare integer doesn't masquerade as a balance — the anchored
     // match above already handled currency-paired amounts.
-    if (raw && !/[,' ]/.test(raw) && !/\.\d{2}$/.test(raw)) {
+    //
+    // Only `,`/`'` count as "thousands grouping" here, NOT the literal space
+    // separator: ML-Kit word-splitting renders "1 100.00" (with a decimal tail)
+    // but a space-joined bare integer ("360 360 Account") is an account name's
+    // digits, not a balance — treating space as grouping would merge "360 360"
+    // into 360360 and misclassify a name row as an amount.
+    if (raw && !/[,'']/.test(raw) && !/\.\d{2}$/.test(raw)) {
       return { amount: 0, currency: undefined, ok: false };
     }
   }
@@ -131,13 +139,14 @@ function toParsed(token: string, currency: Currency | undefined): ParsedAmount {
     return { amount: 0, currency: undefined, ok: false };
   }
   const amount = Number(rawNumber);
-  // A non-positive value is no balance: an empty sub-account ("Available 0.00")
-  // must not surface as a $0.00 row the user has to delete, and a negative
-  // figure is rejected here so it never pre-fills a field that
-  // `balanceInputSchema` (.nonnegative()) would silently drop at save time —
-  // the deleted LLM recognizer dropped 0 the same way. A card-like string is
-  // not an amount either.
-  if (!Number.isFinite(amount) || amount <= 0 || isCardLike(token)) {
+  // A zero balance is a real balance — "0.00" (an empty sub-account) must be
+  // recognized, not dropped. Whether a zero-balance account is worth carrying
+  // into the form is the FORM layer's decision (`deriveValidBalances`), not
+  // the OCR layer's: OCR's job is to read the balance correctly (including 0),
+  // the form's job is to decide what to keep. Only a negative figure (which
+  // a screenshot never shows as a plain amount) and a card-like string are
+  // rejected here.
+  if (!Number.isFinite(amount) || amount < 0 || isCardLike(token)) {
     return { amount: 0, currency: undefined, ok: false };
   }
   return { amount, currency, ok: true };

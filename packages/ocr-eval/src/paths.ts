@@ -12,6 +12,7 @@ import {
   lastFourDigitsSchema,
 } from "@/features/assets/account-appearance";
 import { accountBalanceSchema } from "@/features/assets/account-balance-schema";
+import type { OcrTextBlock } from "@/features/assets/ocr-types";
 
 function currentFileDir(): string {
   return path.dirname(fileURLToPath(import.meta.url));
@@ -75,4 +76,48 @@ export function listSampleSlugs(): string[] {
 export function parseSampleFlag(args: string[]): string | null {
   const idx = args.indexOf("--sample");
   return idx !== -1 && args[idx + 1] ? args[idx + 1] : null;
+}
+
+// Resolves the sample slugs a CLI should process: the `--sample <slug>` target
+// when given, otherwise every sample under `samplesDir`. Exits the process
+// with a clear message when none are found, so each CLI's `main` is a single
+// call instead of repeating the slice → parse → list → guard sequence.
+export function resolveSampleTargets(args: string[]): string[] {
+  const onlySlug = parseSampleFlag(args);
+  const slugs = onlySlug ? [onlySlug] : listSampleSlugs();
+  if (slugs.length === 0) {
+    console.error(
+      "No samples found (create samples/<slug>/blocks.json first).",
+    );
+    process.exit(1);
+  }
+  return slugs;
+}
+
+// Loads a sample's recorded `blocks.json` and returns the validated fixture
+// blocks (the raw `box` shape). The single read+validate site for
+// `blocks.json`; callers that need the parser's `normalizedBox` contract use
+// `loadOcrBlocks` below, and callers that need the raw `box` for an LLM
+// prompt (`annotate.ts`) use this directly.
+export function loadFixtureBlocks(slug: string) {
+  const raw: unknown = JSON.parse(
+    fs.readFileSync(path.join(samplesDir, slug, "blocks.json"), "utf8"),
+  );
+  return blocksFixtureSchema.parse(raw).blocks;
+}
+
+// Loads a sample's recorded `blocks.json` mapped to the parser's
+// `normalizedBox` contract (recorded boxes are already normalized 0..1, so
+// they pass straight through). Shared by `run-eval.ts` and `dump.ts` so the
+// blocks→parser-input mapping can't drift between them.
+export function loadOcrBlocks(slug: string): OcrTextBlock[] {
+  return loadFixtureBlocks(slug).map((b) => ({
+    text: b.text,
+    normalizedBox: {
+      x: b.box.x,
+      y: b.box.y,
+      width: b.box.width,
+      height: b.box.height,
+    },
+  }));
 }

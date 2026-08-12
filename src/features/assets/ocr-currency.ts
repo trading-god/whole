@@ -15,11 +15,17 @@ import {
   knownAssetCurrencies,
 } from "./currencies";
 
-// Symbol spellings the OCR scanner recognizes beyond the display map. Kept
-// explicit and ordered so `US$` is tested before `S$` (it contains it).
+// Symbol/alias spellings the OCR scanner recognizes beyond the display map.
+// Kept explicit and ordered so `US$` is tested before `S$` (it contains it).
+// CNH (offshore RMB) is normalized to CNY — in this app they are the same
+// currency for account-recognition purposes; the amount lands as CNY and no
+// new currency is introduced into the display schema.
 const OCR_ONLY_SYMBOLS: { token: string; currency: Currency }[] = [
   { token: "US$", currency: "USD" },
   { token: "¥", currency: "CNY" },
+  // ISO alias, not a symbol: `CNH` is a real code some banks print (offshore
+  // RMB). Treated as the same currency as CNY.
+  { token: "CNH", currency: "CNY" },
 ];
 
 // The full symbol scan order: OCR-only aliases first, then the shared display

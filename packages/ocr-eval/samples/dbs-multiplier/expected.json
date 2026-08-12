@@ -1,0 +1,20 @@
+[
+  {
+    "accountName": "DBS Multiplier Account",
+    "balances": [
+      {
+        "currency": "SGD",
+        "balance": 100554.59
+      },
+      {
+        "currency": "HKD",
+        "balance": 0.0
+      },
+      {
+        "currency": "USD",
+        "balance": 0.0
+      }
+    ],
+    "kind": "cash"
+  }
+]

@@ -16,7 +16,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import { parseOcrBlocks } from "@/features/assets/ocr-parser";
-import type { OcrTextBlock } from "@/features/assets/ocr-types";
 import type { RecognizedAccount } from "@/features/assets/recognition-types";
 import {
   compareOneGold,
@@ -25,31 +24,19 @@ import {
 } from "./compare";
 import { renderHeader, renderSample, renderSummary } from "./render";
 import {
-  blocksFixtureSchema,
   listSampleSlugs,
+  loadOcrBlocks,
   parseSampleFlag,
   recognizedAccountSchema,
   samplesDir,
 } from "./paths";
 
 function loadSample(slug: string): {
-  blocks: OcrTextBlock[];
+  blocks: ReturnType<typeof loadOcrBlocks>;
   expected: RecognizedAccount[];
 } {
   const dir = path.join(samplesDir, slug);
-  const raw = blocksFixtureSchema.parse(
-    JSON.parse(fs.readFileSync(path.join(dir, "blocks.json"), "utf8")),
-  );
-  // Recorded boxes are already normalized (0..1); pass them straight through.
-  const blocks: OcrTextBlock[] = raw.blocks.map((b) => ({
-    text: b.text,
-    normalizedBox: {
-      x: b.box.x,
-      y: b.box.y,
-      width: b.box.width,
-      height: b.box.height,
-    },
-  }));
+  const blocks = loadOcrBlocks(slug);
   const expected = recognizedAccountSchema
     .array()
     .parse(
