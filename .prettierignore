@@ -1,3 +1,10 @@
 # pnpm
 pnpm-lock.yaml
 pnpm-workspace.yaml
+
+# OCR eval samples — captured OCR output (blocks.json), gold expectations
+# (expected.json), and derived debugging artifacts (trace.json) are recorded
+# data, not hand-edited source.
+packages/ocr-eval/samples/*/blocks.json
+packages/ocr-eval/samples/*/expected.json
+packages/ocr-eval/samples/*/trace.json

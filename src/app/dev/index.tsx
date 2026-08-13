@@ -6,7 +6,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { cardSurface, screenStyles } from "@/theme/screen-styles";
 import { COLORS } from "@/theme/colors";
-import { CARD_RADIUS } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
 import { FONT_SIZE, FONT_WEIGHT } from "@/theme/typography";
 
@@ -28,7 +27,7 @@ export default function DevToolsScreen() {
     <SafeAreaView style={screenStyles.safeArea}>
       <ScreenHeader title={t("devTools.title")} />
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={screenStyles.contentScrollEnd}
         showsVerticalScrollIndicator={false}
       >
         <Text style={screenStyles.formHint}>{t("devTools.subtitle")}</Text>
@@ -58,10 +57,6 @@ export default function DevToolsScreen() {
 }
 
 const styles = StyleSheet.create({
-  content: {
-    paddingHorizontal: SPACING.xl,
-    paddingBottom: SPACING.xxxl,
-  },
   section: {
     gap: SPACING.sm,
     marginTop: SPACING.lg,
@@ -69,7 +64,6 @@ const styles = StyleSheet.create({
   row: {
     ...cardSurface,
     alignItems: "center",
-    borderRadius: CARD_RADIUS,
     flexDirection: "row",
     gap: SPACING.md,
     paddingHorizontal: SPACING.lg,

@@ -1,0 +1,13 @@
+[
+  {
+    "accountName": "中国建设银行",
+    "accountLastFourDigits": "7732",
+    "balances": [
+      {
+        "currency": "CNY",
+        "balance": 10922.04
+      }
+    ],
+    "kind": "cash"
+  }
+]

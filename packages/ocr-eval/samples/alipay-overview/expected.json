@@ -1,0 +1,12 @@
+[
+  {
+    "accountName": "稳健理财",
+    "balances": [
+      {
+        "currency": "CNY",
+        "balance": 5203.47
+      }
+    ],
+    "kind": "investment"
+  }
+]

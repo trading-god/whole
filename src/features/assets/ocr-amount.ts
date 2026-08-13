@@ -32,8 +32,13 @@ export type ParsedAmount = {
 // regex readable instead of layering lookarounds onto it. Exported as a string
 // so the currency-adjacent search can re-emit it.
 const NUMBER_SOURCE = String.raw`(?:-\s*)?(?:\d{1,3}(?:[,' ]\d{3})+|\d+)(?:\.\d+)?`;
-const NUMBER_RE = new RegExp(NUMBER_SOURCE);
-const NUMBER_GLOBAL_RE = new RegExp(NUMBER_SOURCE, "g");
+export const NUMBER_RE = new RegExp(NUMBER_SOURCE);
+// `NUMBER_RE` unanchored (it matches any digit run inside the text), so it
+// can't tell a whole amount from a dangling fragment the merge step splits off
+// a larger figure. This anchored variant matches only a complete, standalone
+// amount — the token classifier uses it to decide the previous token already
+// forms a full amount and needs no merge.
+export const WHOLE_AMOUNT_RE = new RegExp(`^${NUMBER_SOURCE}$`);
 
 // Card-mask characters as they print in masked card numbers ("•••• 4242",
 // "**** 1234", "4111 **** **** 1234"). Shared by the amount guard and the row
@@ -91,6 +96,14 @@ function anchoredAmountRegex(escapedToken: string): RegExp {
   return re;
 }
 
+// Whether `text` has the shape that distinguishes a real money figure from a
+// bare integer: a thousands separator (`,`/`'`) or a 2-decimal tail. A bare
+// digit run ("360") is an account name's number, not a balance. Shared with the
+// token classifier so "what counts as a well-formed amount" lives here once.
+export function hasAmountShape(text: string): boolean {
+  return /[,'']/.test(text) || /\.\d{2}$/.test(text);
+}
+
 export function matchAmount(text: string): ParsedAmount {
   const cleaned = stripDateFragments(text);
   const mention = currencyMention(cleaned);
@@ -119,7 +132,7 @@ export function matchAmount(text: string): ParsedAmount {
     // but a space-joined bare integer ("360 360 Account") is an account name's
     // digits, not a balance — treating space as grouping would merge "360 360"
     // into 360360 and misclassify a name row as an amount.
-    if (raw && !/[,'']/.test(raw) && !/\.\d{2}$/.test(raw)) {
+    if (raw && !hasAmountShape(raw)) {
       return { amount: 0, currency: undefined, ok: false };
     }
   }
@@ -129,7 +142,10 @@ export function matchAmount(text: string): ParsedAmount {
   return toParsed(raw, mention?.currency);
 }
 
-function toParsed(token: string, currency: Currency | undefined): ParsedAmount {
+export function toParsed(
+  token: string,
+  currency: Currency | undefined,
+): ParsedAmount {
   const rawNumber = token.replace(/[,' ]/g, "");
   // Strict fraction: exactly 0 or 2 decimal places. A longer fractional tail
   // ("1,234.567") is not a well-formed amount — reject rather than truncate,
@@ -150,32 +166,4 @@ function toParsed(token: string, currency: Currency | undefined): ParsedAmount {
     return { amount: 0, currency: undefined, ok: false };
   }
   return { amount, currency, ok: true };
-}
-
-// The trimmed text that precedes the currency-anchored amount in `text` — the
-// part that isn't the number — used by the grouping step to recover an account
-// name from a name+amount line ("360 Account $5,000.00" → "360 Account").
-// Returns "" when the amount starts the row or there's no currency mention.
-export function prefixBeforeAmount(text: string): string {
-  const cleaned = stripDateFragments(text);
-  const mention = currencyMention(cleaned);
-  if (!mention) {
-    return "";
-  }
-  // Currency-before-number ("$5,000.00", "SGD 1,234.56"): prefix is everything
-  // before the token. Number-before-currency ("360 Account 5,000.00 SGD"):
-  // prefix is everything before the LAST number before the token (the amount —
-  // the name may itself carry digits, so we find the trailing amount, not the
-  // first digit run).
-  const afterToken = cleaned.slice(mention.index + mention.token.length);
-  if (/^\s*\d/.test(afterToken)) {
-    return cleaned.slice(0, mention.index).trim();
-  }
-  const beforeToken = cleaned.slice(0, mention.index);
-  const beforeNumbers = [...beforeToken.matchAll(NUMBER_GLOBAL_RE)];
-  const last = beforeNumbers[beforeNumbers.length - 1];
-  if (!last || last.index === undefined) {
-    return "";
-  }
-  return beforeToken.slice(0, last.index).trim();
 }

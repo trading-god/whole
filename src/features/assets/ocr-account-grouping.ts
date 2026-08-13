@@ -9,16 +9,16 @@
 // Amounts are summed per currency and the last four extracted during grouping
 // itself. This module is pure and operable on recorded OCR output, so it
 // composes with the eval harness.
-import { currencySchema, type Currency } from "./currencies";
+import { type Currency } from "./currencies";
+import { isCardLike, matchAmount, stripDateFragments } from "./ocr-amount";
 import {
-  isCardLike,
-  matchAmount,
-  prefixBeforeAmount,
-  stripDateFragments,
-  type ParsedAmount,
-} from "./ocr-amount";
-import { ACCOUNT_KEYWORD_RE, hasLabelMarker } from "./ocr-line-classify";
+  buildAccountKeywordRegex,
+  DEFAULT_CONFIG,
+  type BankConfig,
+} from "./ocr-bank-config";
+import { hasLabelMarker } from "./ocr-line-classify";
 import type { RowRole } from "./ocr-line-classify";
+import type { TokenWithRole } from "./ocr-token-classify";
 
 // A multi-currency table (a bank shows a "SGD HKD USD" header row aligned
 // over "100,554.59 0.00 0.00" value row). Column-aligned parsing needs the
@@ -26,20 +26,22 @@ import type { RowRole } from "./ocr-line-classify";
 // row classification can't see the two-row column alignment.
 const COLUMN_ALIGN_TOLERANCE = 0.08;
 
-// Whether a row's tokens are all known ISO currency codes (≥2, each with a
-// position) — i.e. this row is a multi-currency header like "SGD HKD USD".
-// Reuses `currencySchema` (the single definition of "what is a known currency
-// code") instead of re-deriving a parallel lookup map.
-function isCurrencyCode(token: string): token is Currency {
-  return currencySchema.safeParse(token).success;
+// Center-x of a token's normalized box (0..1), used for column alignment.
+function centerX(box: TokenWithRole["box"]): number {
+  return box.x + box.width / 2;
 }
 
+// Whether a row's tokens are all currency tokens (≥2) — i.e. this row is a
+// multi-currency header like "SGD HKD USD". Consumes the token-level roles
+// (`role === "currency"`) instead of re-parsing each token against
+// `currencySchema`, so a header row is recognized by its tokens' roles, not by
+// re-deriving a parallel lookup.
 function isCurrencyHeaderRow(line: ClassifiedLine): boolean {
-  const toks = line.tokens ?? [];
+  const toks = line.tokens;
   if (toks.length < 2) {
     return false;
   }
-  return toks.every((t) => isCurrencyCode(t.text.trim().toUpperCase()));
+  return toks.every((t) => t.role === "currency");
 }
 
 // Pairs a currency-header row's codes with the value amount in the same
@@ -49,25 +51,40 @@ function parseMultiCurrencyRow(
   header: ClassifiedLine,
   value: ClassifiedLine,
 ): { currency: Currency; amount: number }[] | null {
-  const headerToks = header.tokens ?? [];
-  const valueToks = value.tokens ?? [];
+  const headerToks = header.tokens;
+  const valueToks = value.tokens;
   if (headerToks.length !== valueToks.length || headerToks.length === 0) {
     return null;
   }
   const out: { currency: Currency; amount: number }[] = [];
   for (let i = 0; i < headerToks.length; i++) {
-    const codeText = headerToks[i].text.trim().toUpperCase();
-    if (!isCurrencyCode(codeText)) {
+    const headerTok = headerToks[i];
+    if (headerTok.role !== "currency" || !headerTok.currency) {
       return null;
     }
-    if (Math.abs(headerToks[i].x - valueToks[i].x) > COLUMN_ALIGN_TOLERANCE) {
+    if (
+      Math.abs(centerX(headerTok.box) - centerX(valueToks[i].box)) >
+      COLUMN_ALIGN_TOLERANCE
+    ) {
       return null;
     }
-    const parsed = matchAmount(valueToks[i].text);
-    if (!parsed.ok) {
-      return null;
+    // Value token should be an amount; use its pre-parsed amount if available,
+    // else re-parse (covers a value row whose tokens weren't labeled amount). A
+    // value that doesn't parse as a well-formed amount makes the whole column
+    // alignment invalid — skip the row rather than recording a 0 balance.
+    const valueTok = valueToks[i];
+    let amount =
+      valueTok.role === "amount" && valueTok.amount !== undefined
+        ? valueTok.amount
+        : undefined;
+    if (amount === undefined) {
+      const parsed = matchAmount(valueTok.text);
+      if (!parsed.ok) {
+        return null;
+      }
+      amount = parsed.amount;
     }
-    out.push({ currency: codeText, amount: parsed.amount });
+    out.push({ currency: headerTok.currency, amount });
   }
   return out;
 }
@@ -86,10 +103,12 @@ export type OcrAccountGroup = {
 type ClassifiedLine = {
   text: string;
   role: RowRole;
-  // Horizontal position of each originating block (0..1, center), preserved
-  // for column-aligned multi-currency parsing (header + value rows). Optional
-  // so the eval harness can call `groupIntoAccounts` with text-only lines.
-  tokens?: { text: string; x: number }[];
+  // Per-token roles for this line (from `classifyTokens`). The grouping step
+  // consumes these directly — filtering by role to assemble account name,
+  // balance, and card number — instead of re-splitting the joined text.
+  // Required: the parser always produces token roles; the eval harness goes
+  // through the same parser entry point.
+  tokens: TokenWithRole[];
 };
 
 // A balance row whose currency may not have been stated yet — resolved against
@@ -143,7 +162,10 @@ function lastFourFromCardText(text: string): string | undefined {
 // account, unlike a real summary block ("Total") which discards following
 // rows. The "currencies" arm is anchored to "in <digits> currencies" so a
 // real balance row like "Currencies Held: SGD 1,234.56" is NOT swallowed.
-const EQUIVALENT_TOTAL_RE = /\b(?:equivalent|in\s+\d+\s+currencies)\b/i;
+//
+// The pattern is bank-specific (OCBC's multi-currency UI); `bankConfig` carries
+// it. When undefined, equivalent-total detection is skipped (no bank-specific
+// aggregate display to suppress).
 
 // Whether the row is a converted/aggregate total written in a currency the
 // account does NOT hold: on a CNY/USD card, a trailing "2,009.85 SGD" is the
@@ -152,18 +174,24 @@ const EQUIVALENT_TOTAL_RE = /\b(?:equivalent|in\s+\d+\s+currencies)\b/i;
 // currency outside that set, and never for a sub-account row that carries the
 // chevron ">" (a real per-currency row is tappable — "0.00 USD >" is a current
 // USD sub-account, not a conversion). A single-currency account's own balance
-// (360's only "6,672.59 SGD") is never affected.
+// (360's only "6,672.59 SGD") is never affected. `text` is the already-trimmed
+// row text (hoisted by the caller so it isn't re-trimmed per amount token).
 function isConvertedTotalAmount(
   group: Pick<OpenGroup, "establishedCurrencies">,
-  amount: { currency: Currency | undefined },
+  amountToken: TokenWithRole,
   text: string,
+  lineCurrency: Currency | undefined,
 ): boolean {
+  const currency = amountToken.currency ?? lineCurrency;
   return (
     group.establishedCurrencies.size > 0 &&
-    amount.currency !== undefined &&
-    !group.establishedCurrencies.has(amount.currency) &&
+    currency !== undefined &&
+    !group.establishedCurrencies.has(currency) &&
+    // A zero balance is a real (empty) holding, never a converted total —
+    // an equivalent amount is the sum of converted holdings, which can't be 0.
+    amountToken.amount !== 0 &&
     // A tappable sub-account row is a holding, not a conversion total.
-    !/>\s*$/.test(text.trim())
+    !/>\s*$/.test(text)
   );
 }
 
@@ -179,21 +207,21 @@ function attachSource(
   open?.sourceLineNumbers.push(lineIndex + 1);
 }
 
-// Groups classified lines into tentative accounts.
-//
-// Region boundaries: an account is a small visual region on a bank screen — a
-// real account name plus its attached rows (account number, balance). Screen
-// scaffolding that OCR classifies as accountName (nav tabs like "Overview Bank
-// & Earn Manage", shortcut icons, block headers) is NOT a new region. So the
-// grouping step treats an accountName line as a NEW region only when it looks
-// like a real account name (contains an account word such as "Account"/"Savings"
-// /"Card"); otherwise it's scaffolding attached to the open region, which keeps
-// an account's balance from being split across scaffolding rows.
-function isRealAccountName(text: string): boolean {
-  return ACCOUNT_KEYWORD_RE.test(text);
-}
+// Whether a line looks like a real account name — contains an account word
+// ("Account"/"Savings"/"Card"/"Global" for OCBC, "Multiplier" for DBS, …).
+// `keywordRegex` is built from the shared defaults plus the detected bank's
+// product keywords (see `buildAccountKeywordRegex`).
+export function groupIntoAccounts(
+  lines: ClassifiedLine[],
+  bankConfig: BankConfig = DEFAULT_CONFIG,
+): OcrAccountGroup[] {
+  // Bank-specific rules resolved once per parse: the keyword regex (shared
+  // defaults + this bank's product keywords) and the equivalent-total pattern
+  // (OCBC's multi-currency aggregate display; undefined for banks without it).
+  const keywordRegex = buildAccountKeywordRegex(bankConfig);
+  const equivalentTotalRe = bankConfig.equivalentTotalPattern;
+  const iconTags = bankConfig.iconTags ?? [];
 
-export function groupIntoAccounts(lines: ClassifiedLine[]): OcrAccountGroup[] {
   const groups: OcrAccountGroup[] = [];
   let open: OpenGroup | null = null;
   // True while skipping rows that belong to a summary (e.g. "Total" followed by
@@ -244,34 +272,44 @@ export function groupIntoAccounts(lines: ClassifiedLine[]): OcrAccountGroup[] {
         discarding = false;
         // A real account name closes the previous region and opens a new one.
         // Scaffolding that OCR classified as accountName (nav tabs, shortcut
-        // labels) stays attached to the open region instead of splitting the
-        // account apart — that's what keeps "DBS Multiplier Account" from
-        // being decoupled from its balance by the "Overview Bank & Earn
-        // Manage" nav row above the balance.
-        if (isRealAccountName(line.text)) {
+        // labels, greeting text) stays attached to the open region instead of
+        // splitting the account apart — that's what keeps "DBS Multiplier
+        // Account" from being decoupled from its balance by the "Overview Bank
+        // & Earn Manage" nav row above the balance.
+        const nameTokens = line.tokens.filter(
+          (t) => t.role === "accountName" || t.role === "unknown",
+        );
+        if (keywordRegex.test(line.text)) {
           if (open && open.name && groupHasContent(open)) {
             groups.push(finish(open));
           }
-          open = createGroup(line.text);
+          open = createGroup(
+            cleanAccountName(nameTokens, keywordRegex, iconTags),
+          );
           attachSource(open, line, lineIndex);
-        } else {
-          // Scaffolding accountName: don't close the open region; keep it as
-          // source context so the real account's rows below aren't mis-assigned.
-          if (!open) {
-            open = createGroup(line.text);
-          }
+        } else if (open) {
+          // Scaffolding accountName with an open region: keep it as source
+          // context so the real account's rows below aren't mis-assigned.
           attachSource(open, line, lineIndex);
         }
+        // Scaffolding with NO open region: do nothing. A greeting ("欢迎") or
+        // nav tab alone never opens a spurious account — the real account opens
+        // when a row with an account keyword ("Account"/"Savings") arrives.
         break;
       }
       case "cardNumber": {
         if (discarding) {
           break;
         }
-        // A classifier-flagged card number always carries a last four — but be
-        // conservative about a row that slips through classification without
-        // card shape ("1,234.56" has 6 digits and can't yield a last four).
-        if (!isCardLike(line.text)) {
+        // Extract the last-four from the full row text, not just the
+        // cardNumber-role tokens: `classifyTokens` labels the mask characters
+        // ("••••"/"****") as cardNumber, but the trailing digit block ("1234")
+        // comes back `unknown`, so filtering to cardNumber tokens would drop the
+        // digits and lose the last four. The row is already classified
+        // `cardNumber` by `classifyRow`, and `lastFourFromCardText`'s regex is
+        // anchored to the mask chars, so the full text is safe to use here.
+        const cardText = line.text;
+        if (!cardText || !isCardLike(cardText)) {
           attachSource(open, line, lineIndex);
           break;
         }
@@ -280,7 +318,7 @@ export function groupIntoAccounts(lines: ClassifiedLine[]): OcrAccountGroup[] {
         if (!open) {
           open = createGroup("");
         }
-        const lastFour = lastFourFromCardText(line.text);
+        const lastFour = lastFourFromCardText(cardText);
         if (lastFour && !open.lastFour) {
           open.lastFour = lastFour;
         }
@@ -298,18 +336,32 @@ export function groupIntoAccounts(lines: ClassifiedLine[]): OcrAccountGroup[] {
         // 100,554.59", "Equivalent in SGD 2,009.85") is a display summary, not
         // a per-currency holding — don't add it to balances (it would
         // double-count the currency table), but keep it attached to the open
-        // account so it never splits the region. `parsedAmount` is reused for
-        // `attachAmount` below so the row's amount is parsed once, not twice.
-        const parsedAmount = matchAmount(line.text);
+        // account so it never splits the region.
+        const trimmedText = line.text.trim();
+        const lineCurrency = line.tokens.find(
+          (t) => t.role === "currency",
+        )?.currency;
+        // Snapshot the (now non-null) open group for the `.some` callback
+        // below, where TS can't narrow the mutating `let open`.
+        const openGroup = open;
         if (
-          EQUIVALENT_TOTAL_RE.test(line.text) ||
-          (parsedAmount.ok &&
-            isConvertedTotalAmount(open, parsedAmount, line.text))
+          (equivalentTotalRe?.test(line.text) ?? false) ||
+          line.tokens.some(
+            (t) =>
+              t.role === "amount" &&
+              isConvertedTotalAmount(openGroup, t, trimmedText, lineCurrency),
+          )
         ) {
           attachSource(open, line, lineIndex);
           break;
         }
-        attachAmount(open, line.text, parsedAmount);
+        attachAmountFromTokens(
+          open,
+          line.tokens,
+          keywordRegex,
+          iconTags,
+          lineCurrency,
+        );
         attachSource(open, line, lineIndex);
         break;
       }
@@ -353,30 +405,43 @@ function createGroup(name: string): OpenGroup {
   };
 }
 
-// Attaches one text row to the open group: if it parses as an amount, queue it
-// (its currency is resolved later in `finish`) and record the currency as held
-// by this account; otherwise ignore it. A label row ("Available Balance") that
-// doesn't parse is NOT promoted to the name — that used to spawn a spurious
-// account named after the label. A name+amount row ("360 Account $5,000.00")
-// recovers its leading name as the group's name when the group is still
-// unnamed, unless the prefix is just a field label. The caller passes the
-// already-parsed amount so the row's amount is matched once, not twice.
-function attachAmount(
+// Attaches one row's amount tokens to the open group: queue each as a pending
+// balance (currency resolved later in `finish`) and record currencies the
+// account holds. Consumes the token-level roles directly — amount tokens carry
+// their pre-parsed `amount` — so the row's amount is never re-parsed.
+//
+// Currency pairing: an amount token's `currency` is only set when the currency
+// symbol was fused into the token ("$5,000.00"). When currency is a separate
+// token on the same line ("6,672.59 SGD"), the amount token has no currency —
+// pair it with the line's `currency` token (there is at most one per row in
+// bank overviews). A group that is still unnamed after the amount row recovers
+// its name from the row's `accountName` tokens (a name+amount row like "360
+// Account $5,000.00" has both roles on one line), unless the name prefix is
+// just a field label.
+function attachAmountFromTokens(
   group: OpenGroup,
-  text: string,
-  parsed: ParsedAmount,
+  tokens: TokenWithRole[],
+  keywordRegex: RegExp,
+  iconTags: string[],
+  lineCurrency: Currency | undefined,
 ): void {
-  if (!parsed.ok) {
-    return;
-  }
-  group.pending.push({ currency: parsed.currency, amount: parsed.amount });
-  if (parsed.currency) {
-    group.establishedCurrencies.add(parsed.currency);
+  for (const token of tokens) {
+    if (token.role !== "amount" || token.amount === undefined) {
+      continue;
+    }
+    const currency = token.currency ?? lineCurrency;
+    group.pending.push({ currency, amount: token.amount });
+    if (currency) {
+      group.establishedCurrencies.add(currency);
+    }
   }
   if (!group.name) {
-    const prefix = prefixBeforeAmount(text);
-    if (prefix && !hasLabelMarker(prefix.toLowerCase())) {
-      group.name = prefix;
+    const nameTokens = tokens.filter(
+      (t) => t.role === "accountName" || t.role === "unknown",
+    );
+    const candidate = cleanAccountName(nameTokens, keywordRegex, iconTags);
+    if (candidate && !hasLabelMarker(candidate.toLowerCase())) {
+      group.name = candidate;
     }
   }
 }
@@ -392,58 +457,62 @@ function groupHasContent(group: OpenGroup): boolean {
   );
 }
 
-// Cleans a raw account-name row into the account's real display name. Bank
-// overview rows carry OCR/card-apparatus noise that should not be part of the
-// stored name:
-// - A trailing navigation chevron / arrow: "360 Account >" → "360 Account".
+// Cleans a set of account-name tokens into the account's real display name.
+// Bank overview rows carry OCR/card-apparatus noise that should not be part of
+// the stored name:
+// - Trailing navigation chevrons / arrows: skipped (navArrow tokens are never
+//   `accountName`, so they're already excluded by the caller's filter).
 // - A leading icon tag that duplicates or prefixes the real name: the beige
 //   circle icon renders as a word before the name. "360 360 Account" is the
 //   icon "360" + the real name "360 Account" (same leading token); "GSA
 //   Global Savings Account" is the icon label "GSA" + the real name. When the
-//   remaining words after the first token already form a complete account
-//   name (contain "Account"/"Savings" etc.), the first token is icon noise.
-// Conservative: only strips a trailing arrow or a single leading token when
-// the rest is clearly still a full account name — real single-token account
-// names ("Savings", "Cash") are never split.
-const TRAILING_ARROW_RE = /\s*[>›»]\s*$/;
-// `cleanAccountName` decides whether the "rest" after a candidate icon tag is
-// itself a full account name. It reuses the shared account-keyword regex,
-// plus `360` — a brand product token (DBS 360) that reads as a complete name
-// on its own ("360 360 Account" → rest "360 Account"; "360 Account" → rest
-// "Account") but is NOT a generic account keyword, so it stays out of the
-// shared regex used by region-boundary / noise classification.
-const NAME_REST_WORD_RE = new RegExp(`(360|${ACCOUNT_KEYWORD_RE.source})`, "i");
-
-export function cleanAccountName(raw: string): string {
-  let name = raw.trim().replace(TRAILING_ARROW_RE, "");
-  // Icon-tag strip: split "360 360 Account" / "GSA Global Savings Account".
-  // Strip the first token only when it's clearly icon apparatus, NOT the
-  // account's own identifying name:
-  // - The first token repeats the next token exactly ("360 360 Account").
-  // - OR the rest is a MULTI-WORD full name and the first token is a short
-  //   (<=3) icon label ("GSA Global Savings Account", "STS Statement ...",
-  //   a leading "<" nav arrow). This can over-strip a real ≤3-char bank
-  //   prefix ("DBS Multiplier Account") when no leading icon precedes it;
-  //   the deeper fix is layout-based icon detection, kept as a known
-  //   limitation for now.
-  // A single-word rest ("360 Account" → rest "Account") is NOT stripped, so
-  // "360" is kept as the identifier — otherwise every "<X> Account" name
-  // would lose its distinguishing X.
-  const firstSpace = name.indexOf(" ");
-  if (firstSpace > 0) {
-    const first = name.slice(0, firstSpace);
-    const rest = name.slice(firstSpace + 1).trim();
-    if (!NAME_REST_WORD_RE.test(rest)) {
-      return name;
-    }
-    const restIsMultiWord = rest.includes(" ");
-    const firstRepeatsRest =
-      first.toLowerCase() === rest.split(" ")[0].toLowerCase();
-    if ((restIsMultiWord && first.length <= 3) || firstRepeatsRest) {
-      name = rest;
+//   remaining tokens after the first already form a complete account name
+//   (contain an account keyword), the first token is icon noise.
+// Conservative: only strips a single leading token when the rest is clearly
+// still a full account name — real single-token account names ("Savings",
+// "Cash") are never split.
+//
+// `iconTags` and `keywordRegex` are bank-specific: the icon tags are the
+// detected bank's (e.g. OCBC's "360"/"GSA"/"STS"), and the keyword regex is
+// the shared defaults plus the bank's product keywords. Both come from the
+// `BankConfig` passed to `groupIntoAccounts`.
+export function cleanAccountName(
+  nameTokens: TokenWithRole[],
+  keywordRegex: RegExp,
+  iconTags: string[],
+): string {
+  const texts = nameTokens.map((t) => t.text);
+  if (texts.length === 0) {
+    return "";
+  }
+  // Icon-tag strip: drop the first token when it's clearly icon apparatus, NOT
+  // the account's own identifying name:
+  // - The first token is one of the bank's icon tags ("360"/"GSA"/"STS") AND
+  //   the rest already forms a full account name (has a keyword).
+  // - OR the first token repeats the next token exactly ("360 360 Account").
+  // A single-token rest is NOT stripped, so "360" is kept as the identifier —
+  // otherwise every "<X> Account" name would lose its distinguishing X.
+  if (texts.length > 1) {
+    const first = texts[0];
+    const rest = texts.slice(1);
+    const firstIsIconTag = iconTags.some(
+      (tag) => first.toLowerCase() === tag.toLowerCase(),
+    );
+    const restHasKeyword = rest.some((t) => keywordRegex.test(t));
+    // `rest.length > 1` keeps a 2-token name like ["360", "Account"] intact:
+    // a single-token rest is the account's own identifier (the "360" of "360
+    // Account"), not an icon-prefix+duplicate. Only strip when the rest is a
+    // full multi-token name ("360 360 Account" → icon + name; "GSA Global
+    // Savings Account" → icon + name).
+    const firstRepeatsRest = first.toLowerCase() === rest[0].toLowerCase();
+    if (
+      (firstIsIconTag && restHasKeyword && rest.length > 1) ||
+      firstRepeatsRest
+    ) {
+      return rest.join(" ").trim();
     }
   }
-  return name.trim();
+  return texts.join(" ").trim();
 }
 
 function finish(group: OpenGroup): OcrAccountGroup {
@@ -459,7 +528,7 @@ function finish(group: OpenGroup): OcrAccountGroup {
     }
   }
   return {
-    name: cleanAccountName(group.name),
+    name: group.name.trim(),
     lastFour: group.lastFour,
     balances: [...balances.entries()].map(([currency, amount]) => ({
       currency,

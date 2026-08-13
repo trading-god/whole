@@ -1,0 +1,26 @@
+[
+  {
+    "accountName": "360 Account",
+    "balances": [
+      {
+        "currency": "SGD",
+        "balance": 6674.51
+      }
+    ],
+    "kind": "cash"
+  },
+  {
+    "accountName": "Global Savings Account",
+    "balances": [
+      {
+        "currency": "CNY",
+        "balance": 10716.02
+      },
+      {
+        "currency": "USD",
+        "balance": 0.0
+      }
+    ],
+    "kind": "cash"
+  }
+]

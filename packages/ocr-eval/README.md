@@ -18,9 +18,15 @@ Anything else falls through to the existing "unrecognized → manual entry" path
 packages/ocr-eval/
   src/
     run-eval.ts          # Orchestrator: runs all samples, per-sample/per-field output
-    annotate.ts          # LLM annotator: model generates expected.json from blocks.json (+ screenshot)
     compare.ts           # Field-level gold comparison (accountName / lastFour / balances / kind)
     render.ts            # ASCII table output
+    annotate.ts          # LLM annotator: model generates expected.json from blocks.json (+ screenshot)
+    diagnose.ts          # Decision-level diagnosis data for the rule engine (feeds teach.ts)
+    dump.ts              # Trace dumper: parser intermediates → samples/<slug>/trace.json
+    llm.ts               # Shared OpenAI-compatible LLM plumbing (env + chat request)
+    teach.ts             # LLM "teacher": turns trace.json into a rule-level fix report
+    import-samples.ts    # Import a device-exported zip of fixtures into samples/ (pnpm eval:ocr:import)
+    detect.ts            # Bank-detection verifier: prints the detected bank per sample (pnpm eval:ocr:detect)
     paths.ts             # Package root / samples path resolution (based on import.meta)
   samples/<slug>/
     blocks.json          # Real on-device OCR output (normalized 0..1 boxes) — committed regression fixture
@@ -35,6 +41,7 @@ packages/ocr-eval/
 pnpm eval:ocr                                          # run all samples (repo root)
 pnpm --filter @whole/ocr-eval run eval -- --sample <slug>   # run one sample (within package)
 pnpm eval:ocr:label -- --sample <slug>                 # LLM generate/overwrite expected.json (see below)
+pnpm eval:ocr:detect                                   # print the detected bank per sample (verifier)
 ```
 
 When running all samples, the process exits non-zero if any sample fails
@@ -151,8 +158,6 @@ account is required to recognize":
 - Fields are optional: not writing `accountLastFourDigits` in the gold means
   the field is "not required" of the parser.
 - `kind` defaults to `cash`. Empty `balances` means balances are not required.
-- Every parser rule change += each real regression sample; the pass rate only
-  goes up, never down.
 
 ## Comparison rules (see src/compare.ts)
 

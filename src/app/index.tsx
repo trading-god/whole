@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AccountRow } from "@/components/AccountRow";
+import { AccountGroupRow } from "@/components/AccountGroupRow";
 import { Button } from "@/components/Button";
 import { CurrencyPicker } from "@/components/CurrencyPicker";
 import { Icon } from "@/components/Icon";
@@ -30,7 +31,10 @@ import {
   maskAssetAmount,
   saveAssetPrivacyMode,
 } from "@/features/assets/asset-privacy-store";
-import { sumBalancesByKindInCurrency } from "@/features/assets/asset-repository";
+import {
+  type AssetAccount,
+  sumBalancesByKindInCurrency,
+} from "@/features/assets/asset-repository";
 import {
   amountsConvertible,
   defaultDisplayCurrencyForLanguageTag,
@@ -73,6 +77,18 @@ import {
 // Icon size for the trend change pill. Shared by the <Icon> and its loading
 // placeholder so the pill's footprint doesn't re-flow when the icon swaps in.
 const PILL_ICON_SIZE = 14;
+
+// Width of the trend pill's loading placeholder — matches the real pill's
+// footprint (icon + label) so the total-balance layout doesn't re-flow when
+// the pill swaps in. A layout-specific constant, not a touch target.
+const PILL_PLACEHOLDER_WIDTH = 48;
+
+// Asset-distribution bar geometry. The segment radius is half the bar height
+// so each segment reads as a capsule.
+const DISTRIBUTION_BAR_HEIGHT = 10;
+
+// Legend dot size — the radius is half the size for a circle.
+const LEGEND_DOT_SIZE = 8;
 
 // Largest-remainder rounding so the legend percentages always sum to 100 —
 // naive per-kind Math.round can sum to 99 or 101 (e.g. 33/33/33). Returns all
@@ -177,6 +193,7 @@ function HomeScreen() {
   const { isCompact } = useResponsiveLayout();
   const {
     accounts,
+    groups,
     snapshots,
     rates,
     ratesReady,
@@ -339,7 +356,48 @@ function HomeScreen() {
   })();
 
   const [activeRowId, setActiveRowId] = useState<string | null>(null);
+  // Collapsed group ids — empty by default means every group starts expanded.
+  // Component state only (not persisted) for v1; the home screen resets to
+  // expanded on each launch.
+  const [collapsedGroupIds, setCollapsedGroupIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set<string>());
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Partitions accounts into ungrouped (rendered as plain rows, unchanged
+  // from the pre-group layout) and grouped (rendered under a collapsible
+  // AccountGroupRow header). Memoized so a cache-hot refocus — which hands
+  // back the same accounts reference — doesn't re-partition and churn the
+  // group list identity on every render.
+  const { ungroupedAccounts, groupedAccounts } = useMemo(() => {
+    const ungrouped: AssetAccount[] = [];
+    const grouped = new Map<string, AssetAccount[]>();
+    for (const account of accounts) {
+      if (account.groupId) {
+        const list = grouped.get(account.groupId);
+        if (list) {
+          list.push(account);
+        } else {
+          grouped.set(account.groupId, [account]);
+        }
+      } else {
+        ungrouped.push(account);
+      }
+    }
+    return { ungroupedAccounts: ungrouped, groupedAccounts: grouped };
+  }, [accounts]);
+
+  const toggleGroup = useCallback((groupId: string) => {
+    setCollapsedGroupIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupId)) {
+        next.delete(groupId);
+      } else {
+        next.add(groupId);
+      }
+      return next;
+    });
+  }, []);
 
   // `refresh` never rejects (it absorbs its own failures), so the spinner is
   // dropped on settle without a failure branch — a pull that couldn't reach the
@@ -373,7 +431,7 @@ function HomeScreen() {
   return (
     <SafeAreaView style={screenStyles.safeArea} edges={["top"]}>
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={screenStyles.contentScrollEnd}
         refreshControl={
           <RefreshControl
             colors={[COLORS.brand]}
@@ -627,7 +685,10 @@ function HomeScreen() {
             <Link href="/accounts/new" asChild>
               <Pressable
                 accessibilityLabel={t("common.addAccount")}
-                style={actionLinkButton}
+                style={({ pressed }) => [
+                  actionLinkButton,
+                  pressed && screenStyles.pressed,
+                ]}
               >
                 <Text style={actionLink}>{t("home.add")}</Text>
               </Pressable>
@@ -645,20 +706,67 @@ function HomeScreen() {
               </Text>
             </View>
           ) : (
-            accounts.map((account, index) => (
-              <AccountRow
-                key={account.id}
-                account={account}
-                displayCurrency={displayCurrency}
-                rates={rates}
-                isBalanceHidden={isAssetPrivacyModeEnabled}
-                isFirst={index === 0}
-                isActive={activeRowId === account.id}
-                onActivate={setActiveRowId}
-                onOpenAccount={handleOpenAccount}
-                onRemove={handleRemove}
-              />
-            ))
+            <>
+              {ungroupedAccounts.map((account, index) => (
+                <AccountRow
+                  key={account.id}
+                  account={account}
+                  displayCurrency={displayCurrency}
+                  rates={rates}
+                  isBalanceHidden={isAssetPrivacyModeEnabled}
+                  isFirst={index === 0}
+                  isActive={activeRowId === account.id}
+                  onActivate={setActiveRowId}
+                  onOpenAccount={handleOpenAccount}
+                  onRemove={handleRemove}
+                />
+              ))}
+              {groups.map((group, groupIndex) => {
+                const groupAccounts = groupedAccounts.get(group.id);
+                // An empty group is kept in storage (the user may populate it
+                // later) but hidden on the home screen.
+                if (!groupAccounts || groupAccounts.length === 0) {
+                  return null;
+                }
+                // The group header draws a separator unless it's the very
+                // first row in the card (no ungrouped accounts ahead of it).
+                const isFirst =
+                  ungroupedAccounts.length === 0 && groupIndex === 0;
+                const isExpanded = !collapsedGroupIds.has(group.id);
+                return (
+                  <View key={group.id}>
+                    <AccountGroupRow
+                      group={group}
+                      accounts={groupAccounts}
+                      displayCurrency={displayCurrency}
+                      rates={rates}
+                      isBalanceHidden={isAssetPrivacyModeEnabled}
+                      isExpanded={isExpanded}
+                      onToggle={() => toggleGroup(group.id)}
+                      isFirst={isFirst}
+                    />
+                    {isExpanded
+                      ? groupAccounts.map((account) => (
+                          <AccountRow
+                            key={account.id}
+                            account={account}
+                            displayCurrency={displayCurrency}
+                            rates={rates}
+                            isBalanceHidden={isAssetPrivacyModeEnabled}
+                            // Child rows are never the first row — the group
+                            // header sits above them and provides separation.
+                            isFirst={false}
+                            isActive={activeRowId === account.id}
+                            onActivate={setActiveRowId}
+                            onOpenAccount={handleOpenAccount}
+                            onRemove={handleRemove}
+                          />
+                        ))
+                      : null}
+                  </View>
+                );
+              })}
+            </>
           )}
         </View>
 
@@ -669,10 +777,6 @@ function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  content: {
-    paddingHorizontal: SPACING.xl,
-    paddingBottom: SPACING.xxxl,
-  },
   header: {
     alignItems: "center",
     flexDirection: "row",
@@ -781,7 +885,7 @@ const styles = StyleSheet.create({
   pillPlaceholder: {
     backgroundColor: "transparent",
     height: PILL_ICON_SIZE,
-    width: 48,
+    width: PILL_PLACEHOLDER_WIDTH,
   },
   changeText: {
     color: COLORS.accentOnDark,
@@ -798,6 +902,8 @@ const styles = StyleSheet.create({
   chartFooter: {
     alignItems: "center",
     borderTopColor: COLORS.dividerOnDark,
+    // 1px, not StyleSheet.hairlineWidth: the divider sits on the dark
+    // brandDark card where a hairline (0.5px) is too faint to read.
     borderTopWidth: 1,
     flexDirection: "row",
     gap: SPACING.sm,
@@ -833,11 +939,11 @@ const styles = StyleSheet.create({
   distributionBar: {
     flexDirection: "row",
     gap: SPACING.xs,
-    height: 10,
+    height: DISTRIBUTION_BAR_HEIGHT,
     overflow: "hidden",
   },
   distributionSegment: {
-    borderRadius: 5,
+    borderRadius: DISTRIBUTION_BAR_HEIGHT / 2,
   },
   legend: {
     flexDirection: "row",
@@ -856,10 +962,10 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   legendDot: {
-    borderRadius: 4,
-    height: 8,
+    borderRadius: LEGEND_DOT_SIZE / 2,
+    height: LEGEND_DOT_SIZE,
     marginRight: SPACING.sm,
-    width: 8,
+    width: LEGEND_DOT_SIZE,
   },
   legendLabel: {
     color: COLORS.muted,

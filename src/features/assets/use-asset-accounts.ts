@@ -3,8 +3,11 @@ import { useCallback, useMemo, useRef, useState } from "react";
 
 import {
   type AssetAccount,
+  type AssetAccountGroup,
   listAssetAccounts,
+  listAssetAccountGroups,
   removeAssetAccount,
+  removeAssetAccountGroup,
   sumBalancesInEveryCurrency,
 } from "@/features/assets/asset-repository";
 import { createAsyncSerializer } from "@/features/assets/async-serializer";
@@ -32,6 +35,7 @@ import { useAppLocale } from "@/i18n";
 // `refresh` needs to refetch without re-reading storage.
 type AssetAccountsState = {
   accounts: readonly AssetAccount[];
+  groups: readonly AssetAccountGroup[];
   snapshots: readonly NetWorthSnapshot[];
   rates: ExchangeRates;
   // False until the focus effect adopts rates for the current cycle. Gates the
@@ -45,6 +49,7 @@ type AssetAccountsState = {
 
 const initialAssetAccountsState: AssetAccountsState = {
   accounts: [],
+  groups: [],
   snapshots: [],
   rates: {} as ExchangeRates,
   ratesReady: false,
@@ -186,9 +191,10 @@ export function useAssetAccounts() {
           // cache is stale) — accounts shouldn't wait on it. Cross-rate math is
           // base-invariant (rates[from] / rates[to], base cancels), so adopting
           // base here and rates in stage 2 yields correct conversions throughout.
-          const [base, accounts] = await Promise.all([
+          const [base, accounts, groups] = await Promise.all([
             loadBaseCurrency(defaultDisplayCurrency),
             listAssetAccounts(),
+            listAssetAccountGroups(),
           ]);
           if (!isActive) {
             return;
@@ -203,7 +209,9 @@ export function useAssetAccounts() {
           setState((currentState) => {
             // Bail out on a cache-hot refocus: accounts already current and
             // not loading. Don't touch ratesReady — stage 2 owns it, and
-            // leaving it untouched preserves a prior true on refocus.
+            // leaving it untouched preserves a prior true on refocus. Groups
+            // share the accounts' envelope, so a cache-hot accounts read means
+            // the groups are current too.
             if (
               currentState.accounts === accountsRef.current &&
               !currentState.error &&
@@ -214,6 +222,7 @@ export function useAssetAccounts() {
             return {
               ...currentState,
               accounts: accountsRef.current,
+              groups,
               error: false,
               isLoading: false,
             };
@@ -298,6 +307,27 @@ export function useAssetAccounts() {
     [commitSnapshots, removeSerializer],
   );
 
+  // Removes a group: its child accounts are kept but become ungrouped. Group
+  // membership never moves a balance, so — unlike removeAccount — there is no
+  // net-worth snapshot to re-record; the total, chart, and trend are
+  // unchanged. Serialized through the same `removeSerializer` as account
+  // removal so a concurrent remove can't race on storage.
+  const removeGroup = useCallback(
+    (id: string): Promise<void> => {
+      const run = async () => {
+        const { accounts, groups } = await removeAssetAccountGroup(id);
+        accountsRef.current = accounts;
+        setState((currentState) => ({
+          ...currentState,
+          accounts,
+          groups,
+        }));
+      };
+      return removeSerializer(run);
+    },
+    [removeSerializer],
+  );
+
   // Pull-to-refresh. Exchange rates are the only figure on the home screen that
   // comes from off-device, so refreshing means refetching them past their cache
   // TTL and then re-recording today's snapshot at the new rates — the total,
@@ -363,5 +393,5 @@ export function useAssetAccounts() {
     }
   }, [commitSnapshots, defaultDisplayCurrency]);
 
-  return { ...state, removeAccount, refresh };
+  return { ...state, removeAccount, removeGroup, refresh };
 }

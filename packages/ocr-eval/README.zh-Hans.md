@@ -16,9 +16,15 @@ fine-tune。这个目录的作用是驱动并验证 `src/features/assets/ocr-par
 packages/ocr-eval/
   src/
     run-eval.ts          # 编排器：跑全部样本，输出逐样本/逐字段结果
-    annotate.ts          # LLM 标注器：大模型给 blocks.json（+ 截图）生成 expected.json
     compare.ts           # 字段级 gold 对比（accountName / lastFour / balances / kind）
     render.ts            # ASCII 表格输出
+    annotate.ts          # LLM 标注器：大模型给 blocks.json（+ 截图）生成 expected.json
+    diagnose.ts          # 规则引擎的决策级诊断数据（供 teach.ts 使用）
+    dump.ts              # 痕迹导出：解析中间态 → samples/<slug>/trace.json
+    llm.ts               # 共用 OpenAI 兼容 LLM 基建（env + chat 请求）
+    teach.ts             # LLM「教师」：把 trace.json 变成规则级修复报告
+    import-samples.ts    # 把设备导出的 zip fixtures 导入 samples/（pnpm eval:ocr:import）
+    detect.ts            # 银行识别验证器：逐样本打印识别出的银行（pnpm eval:ocr:detect）
     paths.ts             # 包根/samples 等路径定位（基于 import.meta）
   samples/<slug>/
     blocks.json          # 设备端真实 OCR 输出（归一化 0..1 框）——入库，回归 fixture
@@ -33,6 +39,7 @@ packages/ocr-eval/
 pnpm eval:ocr                                          # 跑全部样本（根目录）
 pnpm --filter @whole/ocr-eval run eval -- --sample <slug>   # 只跑一个（本包内）
 pnpm eval:ocr:label -- --sample <slug>                 # 用 LLM 生成/覆盖 expected.json（见下节）
+pnpm eval:ocr:detect                                   # 逐样本打印识别出的银行（验证器）
 ```
 
 全跑时若有失败样本，进程以非零退出（便于接入 CI 之类），只跑单个总是零退出。
@@ -129,7 +136,6 @@ pnpm eval:ocr:label -- --sample <slug>
 
 - 字段可选：gold 里不写 `accountLastFourDigits` 则该字段对解析器“不要求”。
 - `kind` 缺省 `cash`。`balances` 若为空则对余额不要求。
-- 每次修 parser 规则 += 每个真实回归样本，通过率只升不降。
 
 ## 对比规则（见 src/compare.ts）
 

@@ -66,6 +66,12 @@ export const actionLink: TextStyle = {
   fontWeight: FONT_WEIGHT.bold,
 };
 
+// Horizontal inset shared by `content` and `contentScrollEnd` so the
+// screen-edge padding has one owner instead of being redeclared per variant.
+const contentPadding: ViewStyle = {
+  paddingHorizontal: SPACING.xl,
+};
+
 // Shared layout primitives for the secondary form screens (add-account, edit
 // account, settings) and the home screen: safe area, scroll content padding,
 // wordmark, form card, field divider, hint/error copy, pressed feedback, and
@@ -82,8 +88,15 @@ export const screenStyles = StyleSheet.create({
     flex: 1,
   },
   content: {
+    ...contentPadding,
     paddingBottom: SPACING.xxl,
-    paddingHorizontal: SPACING.xl,
+  },
+  // Content inset for scroll screens with no fixed bottom bar — one step more
+  // bottom breathing room than `content` so the last card clears the screen
+  // edge instead of sitting flush against it (home, dev tools).
+  contentScrollEnd: {
+    ...contentPadding,
+    paddingBottom: SPACING.xxxl,
   },
   // Brand wordmark shown in the home and onboarding headers. Centralized so a
   // change to the wordmark treatment lands in one place instead of per screen.

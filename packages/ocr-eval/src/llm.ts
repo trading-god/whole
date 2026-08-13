@@ -92,14 +92,18 @@ export function resolveLlmConfig(): LlmConfig {
 // Calls the chat-completions endpoint and returns the model's text reply.
 // `jsonMode` requests `response_format: { type: "json_object" }` for callers
 // that want a strict JSON reply (`annotate.ts`); callers that want free-form
-// text like a markdown report (`teach.ts`) omit it. Some OpenAI-compatible
-// endpoints don't support `response_format`, so even when requested this
-// doesn't hard-fail — `annotate.ts`'s `extractJson` still recovers the JSON
-// from a fenced/raw reply.
-export async function callModel(
+// text like a markdown report (`teach.ts`) omit it.
+//
+// The structured-`response_format` field is advisory, not required to get
+// usable JSON out: `annotate.ts`'s `extractJson` recovers the array from a
+// fenced/raw reply. Some OpenAI-compatible endpoints (e.g. llama.cpp / LM
+// Studio) reject `json_object` outright with a 400, so when that happens we
+// retry once without `response_format` rather than hard-fail — the caller's
+// `extractJson` still handles the plain reply.
+async function requestChatCompletion(
   input: { role: "user"; content: ChatMessageContent },
   config: LlmConfig,
-  jsonMode = false,
+  withResponseFormat: boolean,
 ): Promise<string> {
   const res = await fetch(
     `${config.baseUrl.replace(/\/+$/, "")}/chat/completions`,
@@ -113,7 +117,9 @@ export async function callModel(
         model: config.model,
         messages: [input],
         temperature: 0,
-        ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
+        ...(withResponseFormat
+          ? { response_format: { type: "json_object" } }
+          : {}),
       }),
     },
   );
@@ -129,4 +135,27 @@ export async function callModel(
     throw new Error("LLM returned no content");
   }
   return content;
+}
+
+export async function callModel(
+  input: { role: "user"; content: ChatMessageContent },
+  config: LlmConfig,
+  jsonMode = false,
+): Promise<string> {
+  if (!jsonMode) {
+    return requestChatCompletion(input, config, false);
+  }
+  try {
+    return await requestChatCompletion(input, config, true);
+  } catch (error) {
+    // Only fall back when the endpoint rejected the structured-format field;
+    // any other failure (auth, network, model) should surface as-is.
+    if (
+      !(error instanceof Error) ||
+      !error.message.includes("response_format")
+    ) {
+      throw error;
+    }
+    return requestChatCompletion(input, config, false);
+  }
 }

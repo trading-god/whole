@@ -1,0 +1,33 @@
+[
+  {
+    "accountName": "汇丰One",
+    "accountLastFourDigits": "0833",
+    "balances": [
+      {
+        "currency": "HKD",
+        "balance": 0
+      },
+      {
+        "currency": "HKD",
+        "balance": 62612.59
+      },
+      {
+        "currency": "CNY",
+        "balance": 10640.4
+      },
+      {
+        "currency": "SGD",
+        "balance": 0
+      },
+      {
+        "currency": "USD",
+        "balance": 0.01
+      },
+      {
+        "currency": "HKD",
+        "balance": 0
+      }
+    ],
+    "kind": "cash"
+  }
+]

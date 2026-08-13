@@ -74,7 +74,8 @@
         {
           "iosEngine": "auto"
         }
-      ]
+      ],
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true,

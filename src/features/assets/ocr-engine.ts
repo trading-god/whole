@@ -8,17 +8,16 @@ import type { OcrBlock, OcrNativeResult, OcrTextBlock } from "./ocr-types";
 // engine — to another Expo module or a hand-written Vision/ML-Kit bridge —
 // changes nothing but this file.
 //
-// Known limitation (unfixed): `expo-mlkit-ocr` on iOS (the project sets
+// iOS OCR languages: `expo-mlkit-ocr` on iOS (the project sets
 // `EXPO_MLKIT_OCR_DISABLE_MLKIT=1` in the Podfile for arm64-simulator
-// friendliness) runs Apple Vision's Latin-only fallback, so Chinese labels on
-// bank screens (可用余额, 等值新币) are dropped from OCR output. The planned
-// fix is to `pnpm patch` `expo-mlkit-ocr` and add one line to its Vision
-// fallback Swift (the `request.recognitionLanguages` assignment in the
-// non-ML-Kit branch of `recognizeText`, inside the package's
-// `ios/ExpoMlkitOcrModule.swift`) — not yet applied. A standalone
-// `expo-vision-ocr` module was tried and abandoned (Expo 57 + pnpm's workspace
-// symlink isn't visible to `pod install`'s resolve); patching the existing
-// module is the simpler path.
+// friendliness) runs Apple Vision's fallback. The package is patched (see
+// `patches/expo-mlkit-ocr@0.2.7.patch`) to set
+// `request.recognitionLanguages = ["zh-Hans", "en-US"]` in the non-ML-Kit
+// branch of `recognizeText`, so Chinese labels on bank screens (可用余额,
+// 等值新币) are recognized alongside English. A standalone `expo-vision-ocr`
+// module was tried and abandoned (Expo 57 + pnpm's workspace symlink isn't
+// visible to `pod install`'s resolve); patching the existing module is the
+// simpler path.
 
 // Runs OCR on a local image URI and returns the flattened text blocks with raw
 // pixel-space bounding boxes (x/y = top-left corner, top-left origin). The

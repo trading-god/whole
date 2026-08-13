@@ -1,5 +1,5 @@
 import { useLocalSearchParams } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
@@ -32,7 +32,10 @@ import {
 } from "@/features/assets/account-draft";
 import {
   type AssetAccount,
+  type AssetAccountGroup,
+  findOrCreateGroupByName,
   listAssetAccounts,
+  listAssetAccountGroups,
   updateAssetAccount,
   type UpdateAssetAccountResult,
 } from "@/features/assets/asset-repository";
@@ -62,6 +65,11 @@ export default function AccountDetailScreen() {
     kind: "cash",
   }));
   const [isSaving, setIsSaving] = useState(false);
+  // The available groups (for the "所属分组" picker) and the account's current
+  // group membership as a plain string ("" = ungrouped), so OptionPicker's
+  // string-typed value can express "none" without a separate nullable.
+  const [groups, setGroups] = useState<AssetAccountGroup[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState("");
   const [selectedSourceImage, setSelectedSourceImage] =
     useState<SelectedSourceImage | null>(null);
   const { finishSave, cleanupProps } = useSourceImageCleanup(
@@ -78,7 +86,10 @@ export default function AccountDetailScreen() {
     let active = true;
     void (async () => {
       try {
-        const accounts = await listAssetAccounts();
+        const [accounts, groups] = await Promise.all([
+          listAssetAccounts(),
+          listAssetAccountGroups(),
+        ]);
         if (!active) {
           return;
         }
@@ -89,6 +100,8 @@ export default function AccountDetailScreen() {
         }
         setAccount(found);
         setDraft(accountToDraft(found));
+        setGroups(groups);
+        setSelectedGroupId(found.groupId ?? "");
       } catch {
         // Corrupt or unreadable account store — `listAssetAccounts` threw
         // (JSON.parse or the schema cascade in parseStoredAssetAccounts). The
@@ -122,12 +135,32 @@ export default function AccountDetailScreen() {
     if (!recognized) {
       return false;
     }
-    setDraft((prev) => ({
-      ...mergeRecognizedIntoDraft(prev, recognized),
-      lastFour: prev.lastFour,
-    }));
+    setDraft((prev) => {
+      const merged = mergeRecognizedIntoDraft(prev, recognized);
+      return {
+        ...merged,
+        // Fill-once: an existing last four is the account's immutable identity
+        // and is locked (a different account's screenshot can't hijack it);
+        // but when the account doesn't have one yet and OCR produced one, fill
+        // it in so it shows in the form. mergeRecognizedIntoDraft already
+        // prefers the recognized value, so re-pin an existing last four here.
+        lastFour: prev.lastFour || merged.lastFour,
+      };
+    });
     return true;
   };
+
+  // Creates a new institution from the picker's "create institution…" entry.
+  // Returns the new id so the picker can switch to it, and adopts the updated
+  // groups list so the picker offers it immediately.
+  const handleCreateInstitution = useCallback(
+    async (name: string): Promise<string | undefined> => {
+      const group = await findOrCreateGroupByName(name);
+      setGroups(await listAssetAccountGroups());
+      return group.id;
+    },
+    [],
+  );
 
   // The saveable form of the current draft via the shared
   // `draftToValidAccount` rule — the same one gating the add form and wizard
@@ -162,6 +195,13 @@ export default function AccountDetailScreen() {
         accountLastFourDigits: valid.accountLastFourDigits,
         balances: valid.balances,
         kind: draft.kind,
+        // Three-state: undefined when unchanged (the picker still shows the
+        // original group), null to remove from a group ("无"), a string to
+        // move into one.
+        groupId:
+          selectedGroupId === (account.groupId ?? "")
+            ? undefined
+            : selectedGroupId || null,
       });
     } catch {
       result = null;
@@ -238,6 +278,10 @@ export default function AccountDetailScreen() {
                   ? t("accountDetail.lastFourDigitsLocked")
                   : t("accountDetail.lastFourDigitsOptional")
               }
+              institutions={groups}
+              selectedInstitutionId={selectedGroupId}
+              onInstitutionChange={setSelectedGroupId}
+              onCreateInstitution={handleCreateInstitution}
             />
           </ScrollView>
         )}

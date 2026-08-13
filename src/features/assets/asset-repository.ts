@@ -64,10 +64,33 @@ const accountIdentitySchema = z.object({
 // on `kind`), so the shape is flat rather than a per-kind discriminated
 // union — add the union when a kind actually diverges (e.g. `holdings` on
 // investment), at which point TypeScript narrowing earns its keep.
+//
+// `groupId` (v4) optionally ties an account to an `AssetAccountGroup` — a
+// pure naming container (no `kind`, no `balances`) so accounts that belong
+// together (e.g. one bank's savings/current/term sub-accounts) render as a
+// collapsible group on the home screen. Optional so v2/v3 accounts (which
+// predate groups) parse unchanged and stay ungrouped. Group membership is
+// invisible to the net-worth/snapshot/flows chain, which reads only
+// `account.id` + `account.balances`.
 const assetAccountSchema = accountIdentitySchema.extend({
   kind: assetKindSchema,
   balances: z.array(accountBalanceSchema),
+  groupId: z.string().optional(),
 });
+
+// A group container: a named bucket sub-accounts hang off. Deliberately
+// carries no `kind` and no `balances` — it is not an account, so the
+// per-kind distribution chart and the balance aggregation skip it (they
+// only read leaf accounts). `bankId` is intentionally NOT stored here: it
+// is an OCR-pipeline concept, and coupling stored data to it would mean a
+// manually-created group named "Bank of China" could not be reused when the
+// same bank is re-recognized. Reuse matches by normalized name instead (see
+// `findGroupByName`).
+const assetAccountGroupSchema = z.object({
+  id: z.string(),
+  name: z.string().trim().min(1),
+});
+export type AssetAccountGroup = z.infer<typeof assetAccountGroupSchema>;
 
 // Legacy v1 shape (one balance + currency per account). Kept only for the
 // one-time v1 → v3 migration below; new code never writes this shape.
@@ -77,13 +100,16 @@ const v1AssetAccountSchema = accountIdentitySchema.extend({
   currency: currencySchema,
 });
 
-// Stored accounts envelope. `version` accepts both v2 (required last four) and
-// v3 (optional last four): making `accountLastFourDigits` optional was
-// backward-compatible, so v2 data parses unchanged under the current schema. A
-// v2 record is marked `migrated` so `listAssetAccounts` rewrites it as v3 on
-// the next save; v3 is the only version ever written.
+// Stored accounts envelope. `version` accepts v2 (required last four), v3
+// (optional last four), and v4 (adds the `groups` array + per-account
+// `groupId`): both upgrades were backward-compatible, so v2/v3 data parse
+// unchanged under the current schema (v2/v3 records carry no `groups`, which
+// is `.optional()`). A record whose version is below 4 is marked `migrated`
+// so `listAssetAccounts` rewrites it as v4 on the next save; v4 is the only
+// version ever written.
 const storedAssetAccountsSchema = z.object({
-  version: z.union([z.literal(2), z.literal(3)]),
+  version: z.union([z.literal(2), z.literal(3), z.literal(4)]),
+  groups: z.array(assetAccountGroupSchema).optional(),
   accounts: z.array(assetAccountSchema),
 });
 
@@ -102,6 +128,10 @@ export type NewAssetAccount = {
   accountLastFourDigits?: string;
   balances: AccountBalance[];
   kind?: AssetKind;
+  // When set, the new/merged account joins this group. Absent on re-uploads
+  // that don't carry grouping intent, in which case an existing account keeps
+  // its current group (see applyAccountUpsert).
+  groupId?: string;
 };
 
 // Schema for a form-entered balance string: strips grouping separators
@@ -122,22 +152,29 @@ function normalizeAccountName(name: string): string {
   return name.trim().replace(/\|/g, " ").replace(/\s+/g, " ").toLowerCase();
 }
 
-// Business dedup key for an account: normalized product name + last four
-// digits when present, else the name alone. Used by upsert/update to match
-// "the same account" across re-uploads (same screenshot twice → one account
-// with merged balances; same product with different last-four digits →
-// distinct accounts). Accounts without a last four (brokerage, stock, some
-// wallets) dedupe by name alone. This is NOT the stored primary key —
+// Business dedup key for an account: group id + normalized product name +
+// last four digits when present, else group id + the name alone. Used by
+// upsert/update to match "the same account" across re-uploads (same screenshot
+// twice → one account with merged balances; same product with different
+// last-four digits → distinct accounts). Accounts without a last four
+// (brokerage, stock, some wallets) dedupe by name alone. Including `groupId`
+// lets two accounts with the same name + last four coexist in DIFFERENT groups
+// (e.g. two banks' "Savings ****1234"), while accounts in the SAME group still
+// merge on re-upload. The group prefix is the empty string when an account is
+// ungrouped, so legacy v3 data (no groupId) keeps its prior key shape and
+// re-uploads still merge. This is NOT the stored primary key —
 // `AssetAccount.id` is a stable random id (see createAccountId) so editing
 // the name in the detail page never moves the account's identity.
 function accountMatchKey(account: {
   name: string;
   accountLastFourDigits?: string;
+  groupId?: string;
 }): string {
+  const group = account.groupId ?? "";
   const lastFour = account.accountLastFourDigits?.trim();
   return lastFour
-    ? `${normalizeAccountName(account.name)}|${lastFour}`
-    : normalizeAccountName(account.name);
+    ? `${group}|${normalizeAccountName(account.name)}|${lastFour}`
+    : `${group}|${normalizeAccountName(account.name)}`;
 }
 
 // Mints a stable random primary key for a newly created account. Decoupled
@@ -199,8 +236,9 @@ function migrateV1Accounts(v1Accounts: V1AssetAccount[]): AssetAccount[] {
 
 type ParsedStoredAccounts = {
   accounts: AssetAccount[];
-  // True when the stored data was an older version (v1 or v2) and has been
-  // upgraded in memory; the caller persists the v3 form so the migration never
+  groups: AssetAccountGroup[];
+  // True when the stored data was an older version (v1/v2/v3) and has been
+  // upgraded in memory; the caller persists the v4 form so the migration never
   // runs twice.
   migrated: boolean;
 };
@@ -212,75 +250,150 @@ function parseStoredAssetAccounts(
 
   const parsed = storedAssetAccountsSchema.safeParse(stored);
   if (parsed.success) {
-    // v2 records are rewritten as v3 on the next save (migrated: true); v3 is
-    // already current. Making lastFour optional was backward-compatible, so v2
-    // data parses unchanged under the current union.
+    // v2/v3 records are rewritten as v4 on the next save (migrated: true);
+    // v4 is already current. `groups` is `.optional()` so v2/v3 data (which
+    // predates groups) parses with it absent — default to empty.
     return {
       accounts: parsed.data.accounts,
-      migrated: parsed.data.version === 2,
+      groups: parsed.data.groups ?? [],
+      migrated: parsed.data.version < 4,
     };
   }
 
   const v1 = storedV1AssetAccountsSchema.safeParse(stored);
   if (v1.success) {
-    return { accounts: migrateV1Accounts(v1.data.accounts), migrated: true };
+    return {
+      accounts: migrateV1Accounts(v1.data.accounts),
+      groups: [],
+      migrated: true,
+    };
   }
 
   throw new Error("Invalid local asset account data");
 }
 
-export async function saveAssetAccounts(accounts: readonly AssetAccount[]) {
-  // Validate at the write boundary so a malformed account can never reach disk.
-  // A single bad record (e.g. a 2-digit lastFour) would make the whole list
-  // unparseable on read — parseStoredAssetAccounts rejects the entire array and
-  // throws, so every account would become inaccessible. Constructing callers
-  // (upsert/update/migrate) build from validated inputs, but this is the last
-  // line of defense if a caller ever bypasses the form-level canSave gate.
+export async function saveAssetAccounts(
+  accounts: readonly AssetAccount[],
+  groups: readonly AssetAccountGroup[] = [],
+) {
+  // Validate at the write boundary so a malformed record can never reach disk.
+  // A single bad account (e.g. a 2-digit lastFour) or group (e.g. an empty
+  // name) would make the whole envelope unparseable on read —
+  // parseStoredAssetAccounts rejects the entire blob and throws, so every
+  // account would become inaccessible. Constructing callers (upsert/update/
+  // migrate/group CRUD) build from validated inputs, but this is the last line
+  // of defense if a caller ever bypasses the form-level canSave gate.
   // Parsed for the throw only — zod deep-clones what it returns, and caching
   // that clone would hand every account a new identity on every write,
   // breaking the reference stability the cache below exists to provide.
   z.array(assetAccountSchema).parse(accounts);
+  z.array(assetAccountGroupSchema).parse(groups);
 
-  const next = [...accounts];
-  const storedAccounts: StoredAssetAccounts = { version: 3, accounts: next };
+  const nextAccounts = [...accounts];
+  const nextGroups = [...groups];
+  const storedAccounts: StoredAssetAccounts = {
+    version: 4,
+    accounts: nextAccounts,
+    groups: nextGroups,
+  };
 
   await setItem(ASSET_ACCOUNTS_STORAGE_KEY, JSON.stringify(storedAccounts));
-  // Update the cache only after persistence succeeds, so a failed write (disk
-  // full, SQLite error) leaves the cache matching storage instead of holding
+  // Update the caches only after persistence succeeds, so a failed write (disk
+  // full, SQLite error) leaves the caches matching storage instead of holding
   // a value that was never persisted. Mirrors net-worth-history's
-  // cachedSnapshots update order.
-  cachedAccounts = next;
+  // cachedSnapshots update order. Both caches share one envelope write, so they
+  // stay in lockstep.
+  cachedAccounts = nextAccounts;
+  cachedGroups = nextGroups;
 }
 
-// Cache of the last loaded/written accounts so repeated reads (e.g. every home
-// focus) return a stable reference instead of a freshly parsed array — which
-// would invalidate the home composition memo and break AccountRow's memo (each
-// account would be a new reference) so every row re-renders on refocus. Safe
-// because this module is the sole writer of ASSET_ACCOUNTS_STORAGE_KEY, and
-// saveAssetAccounts keeps the cache in lockstep with storage.
+// Caches of the last loaded/written accounts and groups so repeated reads
+// (e.g. every home focus) return a stable reference instead of a freshly
+// parsed array — which would invalidate the home composition memo and break
+// AccountRow's memo (each account would be a new reference) so every row
+// re-renders on refocus. Safe because this module is the sole writer of
+// ASSET_ACCOUNTS_STORAGE_KEY, and saveAssetAccounts keeps both caches in
+// lockstep with storage. Accounts and groups share one envelope (one JSON
+// blob, one storage key), so the two caches are always written together and
+// never drift apart.
 let cachedAccounts: AssetAccount[] | null = null;
+let cachedGroups: AssetAccountGroup[] | null = null;
+// An in-flight cold load shared by concurrent callers. Without this, the two
+// branches of `Promise.all([listAssetAccounts(), listAssetAccountGroups()])`
+// would each pass the cache guard on a cold start and read + fully decode the
+// envelope twice. Cleared once the load settles so the next cold read is fresh.
+let loadPromise: Promise<{
+  accounts: AssetAccount[];
+  groups: AssetAccountGroup[];
+}> | null = null;
+
+// Loads accounts + groups from storage, caching both. Shared by
+// `listAssetAccounts` and `listAssetAccountGroups` so the single envelope read
+// populates both caches. Persists the upgraded v4 form when the stored record
+// was an older version, so the migration is one-shot and idempotent.
+function loadFromStorage(): Promise<{
+  accounts: AssetAccount[];
+  groups: AssetAccountGroup[];
+}> {
+  if (cachedAccounts !== null && cachedGroups !== null) {
+    return Promise.resolve({ accounts: cachedAccounts, groups: cachedGroups });
+  }
+  if (!loadPromise) {
+    loadPromise = (async () => {
+      const serializedAccounts = await getItem(ASSET_ACCOUNTS_STORAGE_KEY);
+
+      if (!serializedAccounts) {
+        cachedAccounts = [];
+        cachedGroups = [];
+        return { accounts: cachedAccounts, groups: cachedGroups };
+      }
+
+      const { accounts, groups, migrated } =
+        parseStoredAssetAccounts(serializedAccounts);
+
+      // Persist the upgraded v4 form so the migration is one-shot and
+      // idempotent.
+      if (migrated) {
+        await saveAssetAccounts(accounts, groups);
+      }
+
+      cachedAccounts = accounts;
+      cachedGroups = groups;
+      return { accounts, groups };
+    })().finally(() => {
+      loadPromise = null;
+    });
+  }
+  return loadPromise;
+}
 
 export async function listAssetAccounts(): Promise<AssetAccount[]> {
-  if (cachedAccounts) {
-    return cachedAccounts;
-  }
+  const { accounts } = await loadFromStorage();
+  return accounts;
+}
 
-  const serializedAccounts = await getItem(ASSET_ACCOUNTS_STORAGE_KEY);
+// The groups currently in storage. Groups are pure naming containers (no
+// balances), so the home screen reads this list to partition accounts into
+// collapsible group headers. Empty groups (no child accounts) are kept in
+// storage so the user can populate them later, but the home screen hides them.
+export async function listAssetAccountGroups(): Promise<AssetAccountGroup[]> {
+  const { groups } = await loadFromStorage();
+  return groups;
+}
 
-  if (!serializedAccounts) {
-    cachedAccounts = [];
-    return cachedAccounts;
-  }
-
-  const { accounts, migrated } = parseStoredAssetAccounts(serializedAccounts);
-
-  // Persist the upgraded v3 form so the migration is one-shot and idempotent.
-  if (migrated) {
-    await saveAssetAccounts(accounts);
-  }
-
-  cachedAccounts = accounts;
-  return cachedAccounts;
+// Reads both accounts and groups in one shared envelope load. The
+// read-modify-write mutators (`upsertAssetAccounts`, `updateAssetAccount`,
+// `removeAssetAccount`, group CRUD) always carry both lists through the save,
+// so they share one read instead of repeating the paired lookup five times.
+async function readAccountsAndGroups(): Promise<{
+  accounts: AssetAccount[];
+  groups: AssetAccountGroup[];
+}> {
+  const [accounts, groups] = await Promise.all([
+    listAssetAccounts(),
+    listAssetAccountGroups(),
+  ]);
+  return { accounts, groups };
 }
 
 // Aggregates converted balances by asset kind for the home composition chart.
@@ -376,6 +489,11 @@ function applyAccountUpsert(next: AssetAccount[], input: NewAssetAccount) {
         input.accountLastFourDigits ?? existing.accountLastFourDigits,
       balances: input.balances.reduce(mergeBalance, existing.balances),
       kind: input.kind ?? existing.kind,
+      // Preserve the existing group on a merge when the input doesn't carry
+      // grouping intent — a re-upload that omits groupId must not strip an
+      // account out of its group. When the input does carry groupId it wins,
+      // matching the wizard's explicit grouping decision.
+      groupId: input.groupId ?? existing.groupId,
     };
     return;
   }
@@ -386,6 +504,7 @@ function applyAccountUpsert(next: AssetAccount[], input: NewAssetAccount) {
     accountLastFourDigits: input.accountLastFourDigits,
     balances: input.balances,
     kind: input.kind ?? "cash",
+    groupId: input.groupId,
   });
 }
 
@@ -422,11 +541,19 @@ export async function upsertAssetAccounts(
   inputs: readonly NewAssetAccount[],
 ): Promise<void> {
   await mutate(async () => {
-    const next = [...(await listAssetAccounts())];
+    // Read accounts and groups together (one envelope). Groups are not
+    // modified by an upsert — if the wizard created a new group for this
+    // batch it did so via `upsertAssetAccountGroup` before calling here, so
+    // the cached groups already include it; we just carry it through the save
+    // so it isn't dropped. `accounts` is copied before `applyAccountUpsert`
+    // mutates it: the read returns the live cached array, and mutating that in
+    // place would leak unpersisted changes into the cache on a failed write.
+    const { accounts, groups } = await readAccountsAndGroups();
+    const next = [...accounts];
     for (const input of inputs) {
       applyAccountUpsert(next, input);
     }
-    await saveAssetAccounts(next);
+    await saveAssetAccounts(next, groups);
   });
 }
 
@@ -439,6 +566,11 @@ export type AssetAccountPatch = {
   // updateAssetAccount always keeps an existing value, so a patch can never
   // rewrite this identity field.
   accountLastFourDigits?: string;
+  // Group membership, three-state: `undefined` leaves it unchanged, a string
+  // moves the account into that group, `null` removes it from its group
+  // (turning it back into an ungrouped account). Distinct from `accountLast
+  // FourDigits` because group membership IS editable after creation.
+  groupId?: string | null;
 };
 
 export type UpdateAssetAccountError =
@@ -466,7 +598,7 @@ export function updateAssetAccount(
   patch: AssetAccountPatch,
 ): Promise<UpdateAssetAccountResult> {
   const run = async (): Promise<UpdateAssetAccountResult> => {
-    const accounts = await listAssetAccounts();
+    const { accounts, groups } = await readAccountsAndGroups();
     const index = accounts.findIndex((account) => account.id === id);
 
     if (index < 0) {
@@ -483,10 +615,21 @@ export function updateAssetAccount(
         existing.accountLastFourDigits ?? patch.accountLastFourDigits,
       balances: patch.balances,
       kind: patch.kind,
+      // Three-state group membership (see AssetAccountPatch). `undefined` is
+      // "leave unchanged", `null` is "remove from group", a string is "move
+      // into this group".
+      groupId:
+        patch.groupId === undefined
+          ? existing.groupId
+          : patch.groupId === null
+            ? undefined
+            : patch.groupId,
     };
 
     // Reject if another account (different id) already owns this business key
     // — otherwise a later upsert would non-deterministically merge the two.
+    // The key now includes groupId, so moving an account into a group that
+    // already holds the same name + last four is flagged as a conflict.
     const newBusinessKey = accountMatchKey(updated);
     const conflictIndex = accounts.findIndex(
       (account) =>
@@ -504,7 +647,7 @@ export function updateAssetAccount(
 
     const nextAccounts = [...accounts];
     nextAccounts[index] = updated;
-    await saveAssetAccounts(nextAccounts);
+    await saveAssetAccounts(nextAccounts, groups);
     return { ok: true, account: updated };
   };
 
@@ -520,10 +663,126 @@ export function updateAssetAccount(
 // save (which would drop the just-saved account from the written list).
 export async function removeAssetAccount(id: string): Promise<AssetAccount[]> {
   return mutate(async () => {
-    const next = (await listAssetAccounts()).filter(
-      (account) => account.id !== id,
-    );
-    await saveAssetAccounts(next);
+    const { accounts, groups } = await readAccountsAndGroups();
+    const next = accounts.filter((account) => account.id !== id);
+    await saveAssetAccounts(next, groups);
     return next;
+  });
+}
+
+// Finds a group whose name matches `name` after normalization (trim, collapse
+// whitespace, lower-case — the same rule `accountMatchKey` uses). Used by the
+// OCR auto-grouping path to REUSE an existing group when the same bank is
+// re-recognized, instead of creating a duplicate: a manually-created
+// "Bank of China" group is reused by an OCR-suggested "Bank of China", because
+// they match by name, not by an OCR-only `bankId` that a manual group would
+// lack. Returns `undefined` when no group matches.
+export async function findGroupByName(
+  name: string,
+): Promise<AssetAccountGroup | undefined> {
+  const groups = await listAssetAccountGroups();
+  const target = normalizeAccountName(name);
+  return groups.find((group) => normalizeAccountName(group.name) === target);
+}
+
+// Finds a group by normalized name, creating it if absent, and returns it.
+// Centralizes the "resolve a display name to a group" idiom both account
+// screens use — the add screen's suggested-group step and the detail screen's
+// create-institution picker — so the create-then-relookup dance and the
+// name-match rule live in one place instead of drifting (one site used to match
+// by normalized name, the other by exact string). The existence pre-check is a
+// fast path (it avoids a write when the group already exists); the create goes
+// through `upsertAssetAccountGroup`, which dedupes by normalized name under the
+// `mutate` lock, so a concurrent same-name create can't mint two groups.
+export async function findOrCreateGroupByName(
+  name: string,
+): Promise<AssetAccountGroup> {
+  const existing = await findGroupByName(name);
+  if (existing) {
+    return existing;
+  }
+  const { groups } = await upsertAssetAccountGroup({ name });
+  // The group (created or reused on a race) is guaranteed in `groups` —
+  // `upsertAssetAccountGroup` always returns it by normalized name.
+  return groups.find(
+    (group) => normalizeAccountName(group.name) === normalizeAccountName(name),
+  )!;
+}
+
+// Result of a group mutation — the caller (use-asset-accounts) adopts both
+// lists into its state so the home screen re-renders the grouped layout from a
+// single consistent snapshot.
+export type GroupMutationResult = {
+  accounts: AssetAccount[];
+  groups: AssetAccountGroup[];
+};
+
+// Creates a new group, or renames an existing one when `input.id` is provided.
+// Creating without an id reuses a same-named group (matched by normalized name)
+// instead of minting a duplicate. Mints a stable random id for new groups (same
+// scheme as `createAccountId`), so renaming a group never moves its identity.
+// Serialized through `mutate` so a concurrent account save can't read a
+// half-updated groups list; `groups` is copied before mutation so a failed
+// write can't leak unpersisted changes into the cache. Empty groups (no child
+// accounts) are kept in storage so the user can populate them later; the home
+// screen hides them.
+export async function upsertAssetAccountGroup(input: {
+  id?: string;
+  name: string;
+}): Promise<GroupMutationResult> {
+  return mutate(async () => {
+    const { accounts, groups } = await readAccountsAndGroups();
+    const nextGroups = [...groups];
+    const trimmedName = input.name.trim();
+    if (input.id) {
+      const index = nextGroups.findIndex((group) => group.id === input.id);
+      if (index < 0) {
+        // A rename targeting a vanished group degrades to a create, so a
+        // concurrent delete elsewhere can't strand the caller.
+        nextGroups.push({ id: createAccountId(), name: trimmedName });
+      } else {
+        nextGroups[index] = { ...nextGroups[index], name: trimmedName };
+      }
+    } else {
+      // Dedupe by normalized name (case/spacing-insensitive): creating a group
+      // whose name already exists reuses it instead of adding a duplicate row.
+      // This is the serialized backstop for `findOrCreateGroupByName`'s
+      // existence pre-check — a concurrent same-name create can't mint two
+      // identical group headers.
+      const target = normalizeAccountName(trimmedName);
+      const existingIndex = nextGroups.findIndex(
+        (group) => normalizeAccountName(group.name) === target,
+      );
+      if (existingIndex >= 0) {
+        nextGroups[existingIndex] = {
+          ...nextGroups[existingIndex],
+          name: trimmedName,
+        };
+      } else {
+        nextGroups.push({ id: createAccountId(), name: trimmedName });
+      }
+    }
+    await saveAssetAccounts(accounts, nextGroups);
+    return { accounts, groups: nextGroups };
+  });
+}
+
+// Removes a group and clears `groupId` on every account that belonged to it —
+// the accounts themselves are kept (they become ungrouped). One
+// `saveAssetAccounts` write holds both the group removal and the child
+// `groupId` clears, so the operation is atomic: a failed write leaves the
+// group and its children intact, matching storage. Net worth is unaffected
+// (account ids and balances are untouched).
+export async function removeAssetAccountGroup(
+  id: string,
+): Promise<GroupMutationResult> {
+  return mutate(async () => {
+    const { accounts, groups } = await readAccountsAndGroups();
+    const nextGroups = groups.filter((group) => group.id !== id);
+    const nextAccounts = accounts.map((account) =>
+      account.groupId === id ? { ...account, groupId: undefined } : account,
+    );
+    await saveAssetAccounts(nextAccounts, nextGroups);
+    return { accounts: nextAccounts, groups: nextGroups };
   });
 }

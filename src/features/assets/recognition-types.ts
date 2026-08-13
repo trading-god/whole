@@ -8,14 +8,20 @@
 // module drags in.
 import type { AssetKind } from "./account-appearance";
 import type { AccountBalance } from "./account-balance-schema";
+import type { BankId } from "./ocr-bank-config";
 
 // Fields the recognizer may return. All optional so callers can merge only
 // what was recognized and leave the rest for the user to fill in. `balances`
 // carries one entry per currency shown, so a multi-currency account (e.g. a
 // DBS Multiplier holding SGD, HKD and USD) is recognized in a single pass.
+// `bankId` carries the detected bank (from ocr-bank-detect) so the add-account
+// wizard can auto-group accounts that share a bank — it is undefined when
+// detection couldn't place the bank ("unknown" is still carried explicitly so
+// the wizard can distinguish "detected as unknown" from "not yet detected").
 export type RecognizedAccount = {
   accountName?: string;
   accountLastFourDigits?: string;
   balances?: AccountBalance[];
   kind?: AssetKind;
+  bankId?: BankId;
 };

@@ -6,8 +6,10 @@ import { BalanceRowsField } from "@/components/BalanceRowsField";
 import { ChoiceChipGroup } from "@/components/ChoiceChipGroup";
 import { FieldShell } from "@/components/FieldShell";
 import { FormField } from "@/components/FormField";
+import { InstitutionPicker } from "@/components/InstitutionPicker";
 import { assetKindPickerOptions } from "@/features/assets/account-appearance";
 import { type AccountDraft } from "@/features/assets/account-draft";
+import { type AssetAccountGroup } from "@/features/assets/asset-repository";
 import {
   addBalanceRow,
   type BalanceRow,
@@ -38,6 +40,24 @@ type AccountEditorFieldsProps = {
   // account's identity); the hint below the field explains the lock.
   lastFourEditable?: boolean;
   lastFourHint?: string;
+  // Optional institution picker, rendered as the first field so the account's
+  // institution is chosen inside the form rather than in a separate section
+  // below. Passed by the edit screen and the single-account add flow; omitted
+  // by the multi-account wizard, where the institution is a page-level
+  // suggestion shared by the whole batch.
+  institutions?: readonly AssetAccountGroup[];
+  selectedInstitutionId?: string;
+  onInstitutionChange?: (id: string) => void;
+  // When provided, the institution picker offers a "create institution…"
+  // entry that reveals an inline name field; the parent creates the group and
+  // returns its new id.
+  onCreateInstitution?: (name: string) => Promise<string | undefined>;
+  // Optional institution name rendered as a free-text field at the top of the
+  // card (the add-account wizard), pre-filled with the detected bank's display
+  // name so the user can correct a misrecognition. Mutually exclusive with the
+  // InstitutionPicker props above (the edit screen uses the picker).
+  institutionName?: string;
+  onInstitutionNameChange?: (name: string) => void;
 };
 
 // The account form fields shared by the add-account screen's single form, its
@@ -52,6 +72,12 @@ export const AccountEditorFields = memo(function AccountEditorFields({
   onChange,
   lastFourEditable,
   lastFourHint,
+  institutions,
+  selectedInstitutionId,
+  onInstitutionChange,
+  onCreateInstitution,
+  institutionName,
+  onInstitutionNameChange,
 }: AccountEditorFieldsProps) {
   const { t } = useTranslation();
   const accountKindOptions = useMemo(() => assetKindPickerOptions(t), [t]);
@@ -66,6 +92,30 @@ export const AccountEditorFields = memo(function AccountEditorFields({
 
   return (
     <View style={screenStyles.formCard}>
+      {institutions && onInstitutionChange ? (
+        <>
+          <InstitutionPicker
+            institutions={institutions}
+            selectedInstitutionId={selectedInstitutionId ?? ""}
+            onChange={onInstitutionChange}
+            onCreate={onCreateInstitution}
+          />
+          <View style={screenStyles.fieldDivider} />
+        </>
+      ) : null}
+
+      {institutionName !== undefined && onInstitutionNameChange ? (
+        <>
+          <FormField
+            label={t("accountForm.group")}
+            onChangeText={onInstitutionNameChange}
+            placeholder={t("accountForm.newGroupPlaceholder")}
+            value={institutionName}
+          />
+          <View style={screenStyles.fieldDivider} />
+        </>
+      ) : null}
+
       <FormField
         label={t("accountForm.accountName")}
         onChangeText={(name) => patch({ name })}
@@ -73,12 +123,14 @@ export const AccountEditorFields = memo(function AccountEditorFields({
         value={draft.name}
       />
 
+      {/* The last-four field is always shown so any account — one added by
+          hand, or one whose OCR never caught a number — can have its tail four
+          entered manually. Hiding it when empty would make the multi-account
+          wizard's "give one a different last four" dedup hint impossible to
+          act on. The 4-digit cap is enforced in JS (strip first, then slice) so
+          pasting "•••• 1234" keeps the digits instead of being truncated by a
+          native maxLength. */}
       <View style={screenStyles.fieldDivider} />
-
-      {/* The 4-digit cap is enforced in JS, not via maxLength: the native
-          maxLength truncates BEFORE onChangeText runs, so pasting formatted
-          text like "•••• 1234" would be cut to its first four characters and
-          stripped to nothing. Stripping first, then slicing, keeps the digits. */}
       <FormField
         editable={lastFourEditable}
         keyboardType="number-pad"

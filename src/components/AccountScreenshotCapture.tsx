@@ -1,8 +1,11 @@
 import * as Clipboard from "expo-clipboard";
+import { Directory, File, Paths } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
+import * as Sharing from "expo-sharing";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
+import { zip } from "react-native-zip-archive";
 
 import { Button } from "@/components/Button";
 import { ScreenshotMediaViewer } from "@/components/ScreenshotMediaViewer";
@@ -25,15 +28,30 @@ import { CARD_RADIUS } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
 import { FONT_SIZE, FONT_WEIGHT } from "@/theme/typography";
 
+// One captured screenshot's OCR result, staged for the batch zip.
+type CapturedSample = {
+  slug: string;
+  blocks: OcrTextBlock[];
+  imageUri: string;
+};
+
+// Runs the on-device OCR pipeline on one picked image, returning the normalized
+// blocks. Shared by the single-pick and batch paths so a change to the capture
+// pipeline (engine call, normalization, dimensions) is one edit, not two.
+async function runOcrOnAsset(
+  asset: ImagePicker.ImagePickerAsset,
+): Promise<OcrTextBlock[]> {
+  const native = await recognizeTextOnDevice(asset.uri);
+  return normalizeOcrResult(native, asset.width, asset.height);
+}
+
 // Dev-only capture screen for generating OCR regression fixtures (`packages/ocr-eval`).
-// Picks a screenshot, runs the real on-device pipeline (native OCR → normalize →
-// parse), and hands the user the two fixture files via the clipboard:
-//   - blocks.json  — the normalized 0..1 OCR output the eval harness replays
-//   - expected.json — the recognized accounts, as an editable template
-// The screen deliberately calls the pipeline steps directly rather than
-// `recognizeAccountFromScreenshot`, which only returns the final accounts: the
-// fixtures need the intermediate blocks too. Follows the same capability gate
-// and image-picker choices as the account uploader's production path.
+// Two modes:
+//   - Single: pick one screenshot, run OCR, copy blocks.json / expected.json via clipboard.
+//   - Batch: pick multiple screenshots, run OCR on each, pack into a zip (one folder per
+//     image: samples/<slug>/blocks.json + samples/<slug>/screenshot.png), share the zip.
+//     The zip's folder structure matches what `pnpm eval:ocr:import <folder>` expects,
+//     so after sharing + unzipping on a Mac, the import script places everything.
 export function AccountScreenshotCapture() {
   const { t } = useTranslation();
   const [uri, setUri] = useState<string | null>(null);
@@ -41,6 +59,9 @@ export function AccountScreenshotCapture() {
   const [status, setStatus] = useState<string | null>(null);
   const [blocks, setBlocks] = useState<OcrTextBlock[] | null>(null);
   const [accounts, setAccounts] = useState<RecognizedAccount[] | null>(null);
+
+  // Batch state.
+  const [batch, setBatch] = useState<CapturedSample[]>([]);
 
   const pickAndRecognize = async () => {
     let picked: ImagePicker.ImagePickerAsset | null = null;
@@ -73,16 +94,7 @@ export function AccountScreenshotCapture() {
     setAccounts(null);
     let failed = false;
     try {
-      // Same three steps as `recognizeAccountFromScreenshot` (screenshot-
-      // recognition.ts), but keeping the intermediate normalized blocks that
-      // the fixtures need. The picker already decoded the image, so hand its
-      // pixel dimensions straight in like the production uploader does.
-      const native = await recognizeTextOnDevice(picked.uri);
-      const normalized = normalizeOcrResult(
-        native,
-        picked.width,
-        picked.height,
-      );
+      const normalized = await runOcrOnAsset(picked);
       setBlocks(normalized);
       setAccounts(parseOcrBlocks(normalized));
     } catch {
@@ -93,6 +105,57 @@ export function AccountScreenshotCapture() {
     } else {
       setStatus(t("devOcr.recognitionFailed"));
     }
+    setIsRunning(false);
+  };
+
+  // Batch: pick multiple screenshots, OCR each, stage them for zip export.
+  const pickAndRecognizeBatch = async () => {
+    if (!isOcrSupported()) {
+      setStatus(t("devOcr.ocrUnsupported"));
+      return;
+    }
+    let assets: ImagePicker.ImagePickerAsset[] = [];
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsMultipleSelection: true,
+        allowsEditing: false,
+        quality: 1,
+      });
+      if (result.canceled) {
+        return;
+      }
+      assets = result.assets;
+    } catch {
+      setStatus(t("devOcr.pickerFailed"));
+      return;
+    }
+    if (assets.length === 0) {
+      return;
+    }
+
+    setIsRunning(true);
+    const captured: CapturedSample[] = [];
+    for (let i = 0; i < assets.length; i++) {
+      const asset = assets[i];
+      setStatus(
+        t("devOcr.batchProgress", { current: i + 1, total: assets.length }),
+      );
+      try {
+        const normalized = await runOcrOnAsset(asset);
+        captured.push({
+          slug: slugFromAsset(asset, i),
+          blocks: normalized,
+          imageUri: asset.uri,
+        });
+      } catch {
+        setStatus(t("devOcr.batchFailed", { current: i + 1 }));
+        setIsRunning(false);
+        return;
+      }
+    }
+    setBatch(captured);
+    setStatus(t("devOcr.batchDone", { count: captured.length }));
     setIsRunning(false);
   };
 
@@ -122,6 +185,62 @@ export function AccountScreenshotCapture() {
     } catch {
       Alert.alert(t("devOcr.copyTitle"), t("devOcr.copyFailed"));
     }
+  };
+
+  // Packs the staged batch into a zip whose structure mirrors the eval
+  // samples directory:
+  //   samples/<slug>/blocks.json
+  //   samples/<slug>/screenshot.png
+  // Then shares it via the system share sheet. The recipient unzips and runs
+  // `pnpm eval:ocr:import <folder>` to place the samples.
+  const shareBatchZip = async () => {
+    if (batch.length === 0) {
+      return;
+    }
+    setIsRunning(true);
+    setStatus(t("devOcr.recognizing"));
+    try {
+      // Stage under the app's document directory. `Paths.document` is the
+      // app-private folder that survives across launches; we clean and
+      // recreate the staging tree each share so a re-share doesn't accumulate
+      // old samples.
+      const stagingDir = new Directory(Paths.document, "ocr-batch");
+      const samplesDir = new Directory(stagingDir, "samples");
+      if (stagingDir.exists) {
+        stagingDir.delete();
+      }
+      samplesDir.create({ intermediates: true });
+
+      for (const sample of batch) {
+        const sampleDir = new Directory(samplesDir, sample.slug);
+        sampleDir.create();
+        const blocksFile = new File(sampleDir, "blocks.json");
+        blocksFile.write(
+          JSON.stringify(blocksJsonFromNormalized(sample.blocks), null, 2),
+        );
+        const screenshotFile = new File(sampleDir, "screenshot.png");
+        await new File(sample.imageUri).copy(screenshotFile, {
+          overwrite: true,
+        });
+      }
+
+      // `zip` takes a source folder URI and a destination URI (both file paths).
+      // The staging tree was recreated above, so the zip file is always fresh.
+      const zipFile = new File(stagingDir, "ocr-fixtures.zip");
+      await zip(samplesDir.uri, zipFile.uri);
+
+      await Sharing.shareAsync(zipFile.uri, {
+        mimeType: "application/zip",
+        dialogTitle: t("devOcr.batchShareTitle"),
+      });
+
+      // Clean the staging tree so the next batch starts fresh.
+      stagingDir.delete();
+      setStatus(null);
+    } catch {
+      setStatus(t("devOcr.shareFailed"));
+    }
+    setIsRunning(false);
   };
 
   const renderBlocksPreview = () => {
@@ -185,12 +304,6 @@ export function AccountScreenshotCapture() {
           {isRunning ? t("devOcr.recognizing") : t("devOcr.pickScreenshot")}
         </Button>
 
-        {status ? (
-          <Text accessibilityLiveRegion="polite" style={screenStyles.errorHint}>
-            {status}
-          </Text>
-        ) : null}
-
         {uri ? (
           <View style={styles.previewCard}>
             <ScreenshotMediaViewer uri={uri} />
@@ -232,9 +345,65 @@ export function AccountScreenshotCapture() {
             </Button>
           </>
         ) : null}
+
+        <SectionHeader title={t("devOcr.batchTitle")} />
+        <Text style={screenStyles.formHint}>{t("devOcr.batchHint")}</Text>
+        <Button
+          variant="secondary"
+          onPress={() => void pickAndRecognizeBatch()}
+          disabled={isRunning}
+          style={styles.copyButton}
+        >
+          {t("devOcr.pickBatch")}
+        </Button>
+
+        {batch.length > 0 ? (
+          <>
+            <Text style={styles.sectionLabel}>
+              {t("devOcr.batchDone", { count: batch.length })}
+            </Text>
+            <View style={styles.previewList}>
+              {batch.map((sample, index) => (
+                <Text key={index} numberOfLines={1} style={styles.previewLine}>
+                  {sample.slug} —{" "}
+                  {t("devOcr.blocksLabel", { count: sample.blocks.length })}
+                </Text>
+              ))}
+            </View>
+            <Button
+              variant="primary"
+              onPress={() => void shareBatchZip()}
+              disabled={isRunning}
+              style={styles.copyButton}
+            >
+              {t("devOcr.batchShareTitle")}
+            </Button>
+          </>
+        ) : null}
+
+        {status ? (
+          <Text accessibilityLiveRegion="polite" style={screenStyles.errorHint}>
+            {status}
+          </Text>
+        ) : null}
       </ScrollView>
     </View>
   );
+}
+
+// Derives a sample slug from the picked asset. Uses the asset's filename when
+// available (sans extension, lowercased, spaces→dashes); falls back to a
+// 1-based index so every sample has a stable, filesystem-safe slug.
+function slugFromAsset(
+  asset: ImagePicker.ImagePickerAsset,
+  index: number,
+): string {
+  const fromName = asset.fileName
+    ?.replace(/\.[^.]+$/, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  return fromName && fromName.length > 0 ? fromName : `sample-${index + 1}`;
 }
 
 const styles = StyleSheet.create({

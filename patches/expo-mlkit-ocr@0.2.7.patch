@@ -1,0 +1,15 @@
+diff --git a/ios/ExpoMlkitOcrModule.swift b/ios/ExpoMlkitOcrModule.swift
+index b8efaa280f961b66395c9ad7b5a32598b103ce8a..334ae846d555c4325c5f567d9e89fd3bfc7b52ce 100644
+--- a/ios/ExpoMlkitOcrModule.swift
++++ b/ios/ExpoMlkitOcrModule.swift
+@@ -227,6 +227,10 @@ public class ExpoMlkitOcrModule: Module {
+ 
+       request.recognitionLevel = .accurate
+       request.usesLanguageCorrection = true
++      // Recognize Simplified Chinese alongside English so Chinese labels on bank
++      // screens (可用余额, 等值新币) survive OCR. Without this, Apple Vision's
++      // VNRecognizeTextRequest defaults to Latin scripts only.
++      request.recognitionLanguages = ["zh-Hans", "en-US"]
+ 
+       let handler = VNImageRequestHandler(
+         cgImage: cgImage,

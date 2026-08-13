@@ -8,9 +8,9 @@ import {
 } from "react-native";
 
 import { Icon } from "@/components/Icon";
+import { optionSheetStyles } from "@/components/option-sheet-styles";
 import { ScrimModal } from "@/components/ScrimModal";
 import { COLORS } from "@/theme/colors";
-import { PRESSED_OPACITY_SURFACE } from "@/theme/interaction";
 import { MIN_INTERACTIVE_SIZE } from "@/theme/layout";
 import { scrimCardBase } from "@/theme/screen-styles";
 import { CHIP_RADIUS } from "@/theme/sizes";
@@ -93,15 +93,15 @@ export function OptionPicker<Value extends string>({
               accessibilityState={{ selected: isSelected }}
               onPress={() => handleSelect(option.value)}
               style={({ pressed }) => [
-                styles.option,
-                isSelected && styles.optionSelected,
-                pressed && styles.optionPressed,
+                optionSheetStyles.option,
+                isSelected && optionSheetStyles.optionSelected,
+                pressed && optionSheetStyles.optionPressed,
               ]}
             >
               <Text
                 style={[
-                  styles.optionText,
-                  isSelected && styles.optionTextSelected,
+                  optionSheetStyles.optionText,
+                  isSelected && optionSheetStyles.optionTextSelected,
                 ]}
               >
                 {option.label}
@@ -188,28 +188,6 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.sm,
     paddingHorizontal: SPACING.md,
     paddingTop: 4,
-  },
-  option: {
-    alignItems: "center",
-    borderRadius: CHIP_RADIUS,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.md,
-  },
-  optionSelected: {
-    backgroundColor: COLORS.brandSoft,
-  },
-  optionPressed: {
-    opacity: PRESSED_OPACITY_SURFACE,
-  },
-  optionText: {
-    color: COLORS.ink,
-    fontSize: FONT_SIZE.bodyLg,
-    fontWeight: FONT_WEIGHT.semibold,
-  },
-  optionTextSelected: {
-    color: COLORS.brand,
   },
 });
 

@@ -22,3 +22,5 @@ minimumReleaseAgeExclude:
   - expo-image-picker@57.0.9
   - expo-router@57.0.12
   - expo-splash-screen@57.0.6
+patchedDependencies:
+  expo-mlkit-ocr@0.2.7: patches/expo-mlkit-ocr@0.2.7.patch

@@ -34,9 +34,11 @@ import {
   recognizedToDraft,
 } from "@/features/assets/account-draft";
 import {
+  findOrCreateGroupByName,
   hasDuplicateAccountKeys,
   upsertAssetAccounts,
 } from "@/features/assets/asset-repository";
+import { type BankId } from "@/features/assets/ocr-bank-config";
 import { defaultDisplayCurrencyForLanguageTag } from "@/features/assets/currencies";
 import { type RecognizedAccount } from "@/features/assets/screenshot-recognition";
 import { useAppLocale } from "@/i18n";
@@ -46,6 +48,54 @@ import { MIN_INTERACTIVE_SIZE } from "@/theme/layout";
 import { screenStyles } from "@/theme/screen-styles";
 import { SPACING } from "@/theme/spacing";
 import { FONT_SIZE, FONT_WEIGHT } from "@/theme/typography";
+
+// Maps a detected BankId to its localized display-name i18n key, so the
+// wizard can offer a suggested group name ("OCBC", "DBS", …) without coupling
+// the pure OCR modules to display strings. `as const satisfies Record<BankId,
+// string>` keeps the values as literal key unions (so the strictly-typed `t`
+// accepts them) and forces every BankId to provide a key — adding a bank to
+// DETECT_BANKS without a matching key is a compile error here.
+const BANK_NAME_KEYS = {
+  ocbc: "bankNames.ocbc",
+  dbs: "bankNames.dbs",
+  unknown: "bankNames.unknown",
+} as const satisfies Record<BankId, string>;
+
+// When a screenshot's accounts all share a bank, the wizard suggests grouping
+// them under that bank's display name — regardless of how many accounts were
+// recognized. A single DBS Multiplier screenshot still creates a "DBS" parent
+// with one sub-account; the parent is the institution, not a count threshold.
+// "unknown" is still suggested (the user names the institution manually in the
+// form), so an unrecognized bank still groups its accounts under a parent.
+// Returns null only when no bank was detected or the accounts span different
+// banks (ambiguous). Reuse by name happens at save time — see `save`.
+function computeSuggestedGroup(
+  accounts: readonly RecognizedAccount[],
+): { bankId: BankId } | null {
+  if (accounts.length === 0) {
+    return null;
+  }
+  const bankIds = accounts.map((account) => account.bankId);
+  const first = bankIds[0];
+  if (!first) {
+    return null;
+  }
+  return bankIds.every((bankId) => bankId === first) ? { bankId: first } : null;
+}
+
+// Whether a recognized account has at least one non-zero balance. Accounts
+// whose every recognized balance is 0 are empty holdings the user didn't mean
+// to track, so the form drops them. This is the FORM-layer filter —
+// `parseOcrBlocks` still returns zero-balance accounts (the recognition result
+// keeps them, decoupled from this display decision). An account with no
+// recognized balances at all is kept (the user may fill them in).
+function hasNonZeroBalance(account: RecognizedAccount): boolean {
+  const balances = account.balances;
+  if (!balances || balances.length === 0) {
+    return true;
+  }
+  return balances.some((balance) => balance.balance !== 0);
+}
 
 export default function NewAccountScreen() {
   const { t } = useTranslation();
@@ -69,6 +119,17 @@ export default function NewAccountScreen() {
   ]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [session, setSession] = useState(0);
+  // When non-null, the recognized accounts came from one bank's screenshot and
+  // should be saved into a single group named after that bank. Resolved to a
+  // real group id at save time (reusing an existing same-named group, else
+  // creating one). Cleared on a re-upload that doesn't share a known bank.
+  const [suggestedGroup, setSuggestedGroup] = useState<{
+    bankId: BankId;
+  } | null>(null);
+  // User-entered institution name when the detected bank is "unknown" (no
+  // display name to use). Reset on each re-recognize; save skips grouping when
+  // this is empty and the bank is unknown.
+  const [suggestedGroupName, setSuggestedGroupName] = useState("");
   const pagerRef = useRef<SwipePagerHandle>(null);
 
   const isMultiAccount = drafts.length >= 2;
@@ -124,13 +185,31 @@ export default function NewAccountScreen() {
     if (accounts.length === 0) {
       return Promise.resolve(false);
     }
+    // Drop zero-balance accounts at the form layer (recognition keeps them —
+    // see hasNonZeroBalance). If every recognized account is zero, there's
+    // nothing to fill.
+    const fillableAccounts = accounts.filter(hasNonZeroBalance);
+    if (fillableAccounts.length === 0) {
+      return Promise.resolve(false);
+    }
     // The fold reads `prev` inside the updater, not this render's `drafts`:
     // recognition resolves seconds after it started, and the fields the user
     // typed in the meantime live only in the latest state.
-    const apply = () =>
-      reseedDrafts((prev) =>
-        applyRecognizedToDrafts(prev, accounts, defaultCurrency),
+    const apply = () => {
+      const suggestion = computeSuggestedGroup(fillableAccounts);
+      setSuggestedGroup(suggestion);
+      // Pre-fill the institution field with the detected bank's display name
+      // (which the user may correct — recognition isn't guaranteed accurate);
+      // "unknown" leaves it blank for the user to name by hand.
+      setSuggestedGroupName(
+        suggestion && suggestion.bankId !== "unknown"
+          ? t(BANK_NAME_KEYS[suggestion.bankId])
+          : "",
       );
+      reseedDrafts((prev) =>
+        applyRecognizedToDrafts(prev, fillableAccounts, defaultCurrency),
+      );
+    };
 
     if (!drafts.some(draftHasContent)) {
       apply();
@@ -251,7 +330,25 @@ export default function NewAccountScreen() {
     // all. Same reason the branches below sit outside the try.
     let failed = false;
     try {
-      await upsertAssetAccounts(validAccounts);
+      // Resolve the suggested group to a real id: reuse an existing
+      // same-named group (so re-uploading the same bank's screenshot doesn't
+      // spawn duplicates), else create one. Both reads go through the
+      // repository cache, and group creation is serialized through `mutate`,
+      // so this stays consistent with a concurrent upsert.
+      let groupId: string | undefined;
+      if (suggestedGroup) {
+        // The institution name is always user-editable: a known bank pre-fills
+        // its display name (which the user may correct), and "unknown" starts
+        // blank. An empty name skips grouping entirely.
+        const groupName = suggestedGroupName.trim();
+        if (groupName) {
+          groupId = (await findOrCreateGroupByName(groupName)).id;
+        }
+      }
+      const accountsToSave = groupId
+        ? validAccounts.map((account) => ({ ...account, groupId }))
+        : validAccounts;
+      await upsertAssetAccounts(accountsToSave);
     } catch {
       failed = true;
     }
@@ -341,6 +438,12 @@ export default function NewAccountScreen() {
                     draft={drafts[pageIndex]}
                     index={pageIndex}
                     onChange={handleDraftChange}
+                    institutionName={
+                      suggestedGroup ? suggestedGroupName : undefined
+                    }
+                    onInstitutionNameChange={
+                      suggestedGroup ? setSuggestedGroupName : undefined
+                    }
                   />
                   {/* Per-page escape hatch. Lives inside the page, next to the
                       account it removes, so which account it applies to is
@@ -366,6 +469,10 @@ export default function NewAccountScreen() {
               draft={drafts[0]}
               index={0}
               onChange={handleDraftChange}
+              institutionName={suggestedGroup ? suggestedGroupName : undefined}
+              onInstitutionNameChange={
+                suggestedGroup ? setSuggestedGroupName : undefined
+              }
             />
           )}
         </ScrollView>

@@ -10,9 +10,11 @@
     "annotate": "tsx src/annotate.ts",
     "dump": "tsx src/dump.ts",
     "teach": "tsx src/teach.ts",
+    "import": "tsx src/import-samples.ts",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "detect": "tsx src/detect.ts"
   },
   "dependencies": {
     "zod": "^4.4.3"

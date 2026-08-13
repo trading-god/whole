@@ -1,0 +1,46 @@
+[
+  {
+    "accountName": "港元储蓄",
+    "accountLastFourDigits": "3676",
+    "balances": [
+      {
+        "currency": "HKD",
+        "balance": 1212.52
+      }
+    ],
+    "kind": "cash"
+  },
+  {
+    "accountName": "美元",
+    "accountLastFourDigits": "3677",
+    "balances": [
+      {
+        "currency": "USD",
+        "balance": 5673.53
+      }
+    ],
+    "kind": "cash"
+  },
+  {
+    "accountName": "新加坡元",
+    "accountLastFourDigits": "3677",
+    "balances": [
+      {
+        "currency": "SGD",
+        "balance": 1500
+      }
+    ],
+    "kind": "cash"
+  },
+  {
+    "accountName": "智能账户",
+    "accountLastFourDigits": "4240",
+    "balances": [
+      {
+        "currency": "HKD",
+        "balance": 0
+      }
+    ],
+    "kind": "cash"
+  }
+]

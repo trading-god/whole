@@ -75,7 +75,12 @@ function buildUserContent(slug: string): {
     "Respond with ONLY the JSON array, no prose.";
 
   const imagePath = path.join(samplesDir, slug, "screenshot.png");
-  if (!fs.existsSync(imagePath)) {
+  // Some OpenAI-compatible endpoints (e.g. an LM Studio server running a
+  // text-only model) hang indefinitely on image_url inputs. `OCR_EVAL_NO_IMAGE`
+  // opts out of sending the screenshot — the harness still recovers the JSON
+  // from the normalized blocks via `extractJson`, at a small accuracy cost.
+  const noImage = !!process.env.OCR_EVAL_NO_IMAGE;
+  if (!fs.existsSync(imagePath) || noImage) {
     return { role: "user", content: prompt };
   }
   const base64 = fs.readFileSync(imagePath).toString("base64");

@@ -69,6 +69,12 @@ export function accountToDraft(account: AssetAccount): AccountDraft {
 // the user already typed untouched. The single-account form and the edit
 // screen apply recognition through this; the wizard seeds fresh drafts via
 // `recognizedToDraft` instead.
+//
+// Zero-balance rows are filtered OUT of the draft here (a DBS Multiplier
+// holding SGD 100 + HKD 0 + USD 0 drops the HKD/USD rows), so the form doesn't
+// show empty currency rows the user didn't mean to track. The recognition
+// result itself (`RecognizedAccount.balances`) keeps the zeros — this filter
+// is the display/draft layer, decoupled from recognition.
 export function mergeRecognizedIntoDraft(
   draft: AccountDraft,
   recognized: RecognizedAccount,
@@ -78,7 +84,9 @@ export function mergeRecognizedIntoDraft(
     lastFour: recognized.accountLastFourDigits ?? draft.lastFour,
     balances:
       recognized.balances && recognized.balances.length > 0
-        ? toBalanceRows(recognized.balances)
+        ? toBalanceRows(
+            recognized.balances.filter((balance) => balance.balance !== 0),
+          )
         : draft.balances,
     kind: recognized.kind ?? draft.kind,
   };

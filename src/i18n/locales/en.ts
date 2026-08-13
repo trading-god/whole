@@ -10,6 +10,15 @@ export const enMessages = {
     required: "Required",
     stepIndicator: "Step {{current}} of {{total}}",
   },
+  // Display names for banks: when OCR detects a bank, this is the suggested
+  // group name offered for auto-grouping. Keys align 1:1 with the BankId enum
+  // in ocr-bank-config; adding a bank to DETECT_BANKS requires a matching key
+  // here, and the en/zh i18n type system enforces the two stay in sync.
+  bankNames: {
+    ocbc: "OCBC",
+    dbs: "DBS",
+    unknown: "Unknown bank",
+  },
   home: {
     greeting: "Hello, {{name}}",
     greetingFallback: "Hello",
@@ -50,6 +59,14 @@ export const enMessages = {
     showAssetAmountsHint: "Show amounts and percentages on the asset overview",
     hideAssetAmountsHint:
       "Replace amounts and percentages on the asset overview with bullets",
+    accountCountInGroup_one: "{{count}} account",
+    accountCountInGroup_other: "{{count}} accounts",
+    collapseGroup: "Collapse institution",
+    expandGroup: "Expand institution",
+    deleteGroup: "Delete institution",
+    confirmDeleteGroup:
+      "Delete this institution? Accounts will be kept but no longer belong to it.",
+    deleteGroupError: "Couldn't delete the institution. Try again later.",
     // Dev-mode entry in the home header. Registered only under __DEV__ (see
     // _layout.tsx), so this key has no surface in release builds.
     devToolsLabel: "Dev",
@@ -72,6 +89,16 @@ export const enMessages = {
     addCurrency: "Add currency",
     allCurrenciesAdded: "All currencies added",
     removeCurrencyRow: "Remove this currency",
+    // Institution copy. An institution is the named container an account
+    // belongs to — a bank, crypto exchange, or broker. Accounts hang off it
+    // (specific currency savings, coin positions, or stock positions). It
+    // carries only a name and a total of its accounts' balances, no card number
+    // or type of its own. See src/i18n/README.md terminology.
+    group: "Institution",
+    noGroup: "No institution",
+    createGroup: "Create institution",
+    groupName: "Institution name",
+    newGroupPlaceholder: "Enter an institution name",
   },
   newAccount: {
     screenTitle: "Add account",
@@ -197,10 +224,13 @@ export const enMessages = {
   devOcr: {
     screenTitle: "OCR capture",
     pickScreenshot: "Choose account screenshot",
+    pickBatch: "Batch capture screenshots",
     recognizing: "Recognizing…",
+    batchProgress: "Capturing {{current}}/{{total}}…",
     pickerFailed:
       "Couldn't open the photo library. Try again later or check Whole's permission to access your photos.",
     recognitionFailed: "Couldn't read the screenshot.",
+    batchFailed: "Batch capture failed on image {{current}}.",
     ocrUnsupported:
       "This device can't run on-device OCR. Use a supported device or simulator.",
     resultsTitle: "Recognition results",
@@ -224,5 +254,12 @@ export const enMessages = {
     lastFour: "Last four:",
     kindLabel: "Type:",
     unknownKind: "Unknown type",
+    batchTitle: "Batch capture",
+    batchHint:
+      "Pick multiple screenshots. Each is OCR'd on device and packed into a zip (one folder per image: blocks.json + screenshot.png). Share the zip to your computer, then run pnpm eval:ocr:import <folder>.",
+    batchShareTitle: "Share OCR fixtures",
+    batchDone:
+      "Captured {{count}} screenshot(s). Share the zip, then run pnpm eval:ocr:import on the unpacked folder.",
+    shareFailed: "Couldn't share the zip. Try again.",
   },
 } satisfies MessageShape<typeof zhHansMessages>;

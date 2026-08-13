@@ -30,7 +30,7 @@ export default function NotFoundScreen() {
           <Button
             accessibilityLabel={t("common.backToAssetOverview")}
             onPress={returnToOverview}
-            style={{ marginTop: SPACING.xxl }}
+            style={styles.button}
           >
             {t("common.backToAssetOverview")}
           </Button>
@@ -53,6 +53,9 @@ const styles = StyleSheet.create({
     // cards (which keep cardSurface's subtle cardBorder).
     borderColor: COLORS.border,
     alignItems: "center",
+    // Layout-specific cap so the centered card doesn't stretch too wide on
+    // tablets — a named constant, not a token, since RADIUS/SPACING don't
+    // model a max content width.
     maxWidth: 420,
     padding: SPACING.xxl,
     width: "100%",
@@ -75,5 +78,8 @@ const styles = StyleSheet.create({
     lineHeight: LINE_HEIGHT.body,
     marginTop: SPACING.md,
     textAlign: "center",
+  },
+  button: {
+    marginTop: SPACING.xxl,
   },
 });

@@ -24,10 +24,10 @@ import {
 } from "./compare";
 import { renderHeader, renderSample, renderSummary } from "./render";
 import {
-  listSampleSlugs,
   loadOcrBlocks,
   parseSampleFlag,
   recognizedAccountSchema,
+  resolveSampleTargets,
   samplesDir,
 } from "./paths";
 
@@ -58,17 +58,11 @@ function compare(
 
 function main() {
   const args = process.argv.slice(2);
+  // `onlySlug` controls the exit code (exit 0 for a single-sample run, exit 2
+  // on failure when running all samples); `resolveSampleTargets` handles the
+  // slug expansion and the "no samples" guard.
   const onlySlug = parseSampleFlag(args);
-
-  const slugs = onlySlug ? [onlySlug] : listSampleSlugs();
-  if (slugs.length === 0) {
-    console.error(
-      onlySlug
-        ? `No sample '${onlySlug}' with blocks.json under ${samplesDir}`
-        : `No samples found under ${samplesDir} (create samples/<slug>/{blocks.json, expected.json})`,
-    );
-    process.exit(1);
-  }
+  const slugs = resolveSampleTargets(args);
 
   console.log(renderHeader());
   const results: SampleComparison[] = [];

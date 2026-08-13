@@ -5,6 +5,13 @@
 // the *first-order* semantics right, since the grouping step disambiguates
 // further.
 import { isMaskedCard, matchAmount } from "./ocr-amount";
+import {
+  DEFAULT_ACCOUNT_KEYWORD_RE,
+  accountNumberPatterns,
+  defaultNoiseTokens,
+  labelMarkers,
+  summaryMarkers,
+} from "./ocr-bank-config";
 
 export type RowRole =
   "accountName" | "cardNumber" | "amountRow" | "summaryRow" | "noise";
@@ -16,42 +23,34 @@ const MIN_CARD_DIGITS = 12;
 const MAX_CARD_DIGITS = 19;
 const MAX_AMOUNT_DIGITS = 10;
 
-// Bank account-number morphology: a digit run broken by hyphens
-// ("275-023637-2", "517-345377-201"). These are NOT cards (they may be as
-// short as 10 digits, below MIN_CARD_DIGITS) and NOT amounts (no currency,
-// no comma grouping). A standalone hyphen-joined digit string directly under
-// an account name is that account's number — it must be absorbed into the
-// open account (as a cardNumber row yields a last-four) rather than opening a
-// spurious account like "275-023637-2".
-const ACCOUNT_NUMBER_RE = /^\d{1,4}-\d{4,7}-\d{1,4}$/;
-
 // Whether `text` is a hyphen-joined bank account number (a thin digit run
-// broken by `-`, without currency/amount formatting).
+// broken by `-`, without currency/amount formatting). Checks against the
+// configured regional account-number patterns (see `ocr-bank-config.ts`);
+// adding a new format is a config change, not a code change here.
 export function isAccountNumber(text: string): boolean {
-  return ACCOUNT_NUMBER_RE.test(text);
+  return accountNumberPatterns.some((p) => p.regex.test(text));
 }
-
-// Suffixes/labels that mark a row as a field label with an attached value
-// ("Available Balance", "可用余额", "Balance"). The label is not the number —
-// a label row (with or without an amount) is an amount row, never an account
-// name; "Balance 1,234.56" is a row to attach, "Available Balance" without a
-// number is attached and ignored by the parser.
-const LABEL_MARKERS = [
-  "available",
-  "balance",
-  "余额",
-  "可用余额",
-  "金额",
-  "净值",
-  "持仓市值",
-];
 
 // Whether `text` (lowercased) contains a label marker — a field label with an
 // attached value ("Available Balance"). Shared with the grouping step so a
 // name+amount row whose prefix is just a label ("Available $5,000.00") never
 // promotes the label to an account name.
 export function hasLabelMarker(text: string): boolean {
-  return LABEL_MARKERS.some((m) => text.includes(m));
+  return (
+    labelMarkers.en.some((m) => text.includes(m)) ||
+    labelMarkers.zh.some((m) => text.includes(m))
+  );
+}
+
+// Whether `text` (lowercased) contains a summary marker ("Total", "总资产") —
+// a row that aggregates the whole account and must never be treated as an
+// account. Shared with the token classifier so "what is a summary row" is
+// defined once.
+export function hasSummaryMarker(text: string): boolean {
+  return (
+    summaryMarkers.en.some((m) => text.includes(m)) ||
+    summaryMarkers.zh.some((m) => text.includes(m))
+  );
 }
 
 // Currency-name labels a bank overview prints for a sub-account row
@@ -84,42 +83,6 @@ export function isCurrencyNameLabel(text: string): boolean {
   return CURRENCY_NAME_MARKERS.some((m) => text.includes(m));
 }
 
-// Row-level markers that mean "this row aggregates the whole account, don't
-// treat it as an account." Matched as substrings, so short tokens are kept
-// specific to avoid false positives — "sum" was removed because it matched
-// "consumption"/"consumer". The Chinese totals cover zh-Hans bank UIs.
-const SUMMARY_MARKERS = [
-  "total",
-  "totals",
-  "net worth",
-  "总资产",
-  "资产总额",
-  "净资产",
-  "总余额",
-  "全部余额",
-  "合计",
-  "总计",
-  "小计",
-];
-
-// English nav/footer tokens — matched only when the WHOLE row is the token
-// (after stripping nav punctuation), so standalone "Home"/"Back"/"Settings"
-// are noise but "Home Loan"/"Banner Bank"/"FPS Account" (account names that
-// contain that word) are not.
-const NOISE_TOKENS_EN = [
-  "fps",
-  "nets",
-  "banner",
-  "back",
-  "home",
-  "profile",
-  "settings",
-];
-// Chinese nav/footer tokens. `\b` only fires between `\w` chars and CJK is not
-// in `\w`, so these must NOT be wrapped in `\b` — otherwise a standalone
-// "返回"/"首页"/"设置" row never matches and falls through to accountName.
-const NOISE_RE_ZH = /地址|账户管理|返回|首页|设置/;
-
 // Morphological noise: OCR gibberish from a phone's status bar or app icons,
 // which is not an account name and carries no semantic account content.
 // Account names are real words; these are fragments that never form one:
@@ -131,21 +94,12 @@ const NOISE_RE_ZH = /地址|账户管理|返回|首页|设置/;
 //   matched here: it is the CNY currency symbol this app recognizes (see
 //   `OCR_ONLY_SYMBOLS` in ocr-currency.ts), so a row like "¥ 1,234.56" must
 //   reach the amount path, not be dropped as noise. The protection against
-//   real account names is `ACCOUNT_KEYWORD_RE` below.
+//   real account names is `DEFAULT_ACCOUNT_KEYWORD_RE` below.
 // - A status-bar time+signal fragment ("22:28 A 5G E") — a leading time
 //   paired with single-letter tokens is status-bar noise.
-const CYRILLIC_RE = /[А-Яа-яЁё]/;
-const NON_ASCII_SYMBOL_RE = /[₩₺€£]/;
-const TIME_FRAGMENT_RE = /^\d{1,2}:\d{2}/;
-
-// Words that mark a real account name, even when the row also carries a stray
-// symbol or time prefix. "Account"/"Savings"/"Statement"/"Global" etc. When any
-// of these is present the row is treated as an account name, not noise — so
-// `360 Account >` or `GSA Global Savings Account` survive. Shared with the
-// grouping step (region boundary + name cleaning) so "what counts as a real
-// account name" is defined once, not re-declared as three drifting regexes.
-export const ACCOUNT_KEYWORD_RE =
-  /(account|savings|statement|card|deposit|current|checking|wallet|fund|portfolio|broker|balance|loan|yield|global|money)/i;
+export const CYRILLIC_RE = /[А-Яа-яЁё]/;
+export const NON_ASCII_SYMBOL_RE = /[₩₺€£]/;
+export const TIME_FRAGMENT_RE = /^\d{1,2}:\d{2}/;
 
 // Whether the row is morphological noise: it either contains a Cyrillic run,
 // or it carries a non-ASCII currency symbol / status-bar time prefix AND has
@@ -155,7 +109,7 @@ function isMorphologicalNoise(text: string): boolean {
   if (CYRILLIC_RE.test(text)) {
     return true;
   }
-  if (ACCOUNT_KEYWORD_RE.test(text)) {
+  if (DEFAULT_ACCOUNT_KEYWORD_RE.test(text)) {
     return false;
   }
   return NON_ASCII_SYMBOL_RE.test(text) || TIME_FRAGMENT_RE.test(text);
@@ -167,7 +121,7 @@ export function classifyRow(text: string): RowRole {
   const lower = text.toLowerCase();
 
   // Summary rows first — "Total" alone must never look like an account name.
-  if (SUMMARY_MARKERS.some((m) => lower.includes(m))) {
+  if (hasSummaryMarker(lower)) {
     return "summaryRow";
   }
 
@@ -176,8 +130,8 @@ export function classifyRow(text: string): RowRole {
   // lowercased once) so we don't lowercase the row twice.
   const noiseNormalized = lower.trim().replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "");
   if (
-    NOISE_TOKENS_EN.includes(noiseNormalized) ||
-    NOISE_RE_ZH.test(text) ||
+    defaultNoiseTokens.en.includes(noiseNormalized) ||
+    defaultNoiseTokens.zh.some((m) => text.includes(m)) ||
     isMorphologicalNoise(text)
   ) {
     return "noise";
@@ -240,7 +194,7 @@ export function classifyRow(text: string): RowRole {
   // one. Guarded against real account names that happen to contain a currency
   // word — "Dollar Savings Account", "US Dollar Account" — which contain an
   // account keyword and must fall through to `accountName`, not be absorbed.
-  if (isCurrencyNameLabel(lower) && !ACCOUNT_KEYWORD_RE.test(text)) {
+  if (isCurrencyNameLabel(lower) && !DEFAULT_ACCOUNT_KEYWORD_RE.test(text)) {
     return "amountRow";
   }
   return "accountName";

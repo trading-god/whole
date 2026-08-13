@@ -7,6 +7,14 @@ export const zhHansMessages = {
     required: "必填",
     stepIndicator: "第 {{current}} 步，共 {{total}} 步",
   },
+  // 银行显示名：OCR 检测到某银行时，用作自动归组的建议分组名。key 与
+  // ocr-bank-config 的 BankId 枚举一一对应；新增 DETECT_BANKS 银行时须同步
+  // 补充对应 key，en/zh 的 i18n 类型系统会强制两者对齐。
+  bankNames: {
+    ocbc: "OCBC",
+    dbs: "DBS",
+    unknown: "未知银行",
+  },
   home: {
     greeting: "你好，{{name}}",
     greetingFallback: "你好",
@@ -44,6 +52,13 @@ export const zhHansMessages = {
     hideAssetAmounts: "隐藏资产数字",
     showAssetAmountsHint: "显示首页中的资产金额与比例",
     hideAssetAmountsHint: "将首页中的资产金额与比例替换为圆点",
+    accountCountInGroup_one: "{{count}} 个账户",
+    accountCountInGroup_other: "{{count}} 个账户",
+    collapseGroup: "收起机构",
+    expandGroup: "展开机构",
+    deleteGroup: "删除机构",
+    confirmDeleteGroup: "删除此机构？账户将保留，但不再归属该机构。",
+    deleteGroupError: "无法删除机构，请稍后重试。",
     // 首页右上角开发者模式入口，仅在 __DEV__ 下注册（见 _layout.tsx），发布版
     // 本中没有这个入口。
     devToolsLabel: "开发者模式",
@@ -64,6 +79,15 @@ export const zhHansMessages = {
     addCurrency: "添加币种",
     allCurrenciesAdded: "已添加全部币种",
     removeCurrencyRow: "删除该币种",
+    // 机构（institution）相关文案。机构是账户归属的命名容器——银行、
+    // 加密货币交易所或券商——账户挂在其下（具体币种储蓄、币种仓位或股
+    // 票仓位）。它只存名字与下属账户汇总，不持有卡号或类型。见
+    // src/i18n/README.md 术语库。
+    group: "机构",
+    noGroup: "无机构",
+    createGroup: "新建机构",
+    groupName: "机构名称",
+    newGroupPlaceholder: "输入机构名称",
   },
   newAccount: {
     screenTitle: "添加账户",
@@ -175,9 +199,12 @@ export const zhHansMessages = {
   devOcr: {
     screenTitle: "OCR 采集",
     pickScreenshot: "选择账户截图",
+    pickBatch: "批量采集截图",
     recognizing: "正在识别…",
+    batchProgress: "正在采集 {{current}}/{{total}}…",
     pickerFailed: "无法打开相册，请稍后重试，或检查 Whole 的照片访问权限。",
     recognitionFailed: "无法识别这张截图。",
+    batchFailed: "第 {{current}} 张图片采集失败。",
     ocrUnsupported: "当前设备不支持端上 OCR，请使用受支持的设备或模拟器。",
     resultsTitle: "识别结果",
     blocksLabel_one: "{{count}} 个 OCR 文本块",
@@ -200,5 +227,12 @@ export const zhHansMessages = {
     lastFour: "后四位：",
     kindLabel: "类型：",
     unknownKind: "未知类型",
+    batchTitle: "批量采集",
+    batchHint:
+      "选择多张截图，每张在设备上跑 OCR 后打包成 zip（每张一个文件夹：blocks.json + screenshot.png）。分享 zip 到电脑后，运行 pnpm eval:ocr:import <文件夹>。",
+    batchShareTitle: "分享 OCR fixtures",
+    batchDone:
+      "已采集 {{count}} 张截图。分享 zip 后，解压运行 pnpm eval:ocr:import。",
+    shareFailed: "分享 zip 失败，请重试。",
   },
 } as const;
