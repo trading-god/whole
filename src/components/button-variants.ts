@@ -30,7 +30,7 @@ export type ButtonVariantStyle = {
  * - `outline`：透明底 + 描边，按压时浮出浅底提供明确触感。
  * - `ghost`：纯文字态，按压时浮出品牌色柔光底，呼应品牌。
  * - `onDark`：深色面的 ghost——icon tint 用 `accentOnDark`（`brand` 在
- *   `brandDark` 上只有 2.7:1），按压时浮出同色系柔光底。仅图标按钮使用。
+ *   `brandDark` 上只有 2.7:1），按压时浮出同色系柔光底。
  */
 export const BUTTON_VARIANTS: Record<ButtonVariant, ButtonVariantStyle> = {
   primary: {

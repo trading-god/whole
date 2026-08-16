@@ -15,7 +15,12 @@ import {
   buttonContainerStyle,
   type ButtonVariant,
 } from "@/components/button-variants";
-import { BUTTON_SIZES, RADIUS, type Size } from "@/theme/sizes";
+import {
+  BUTTON_HORIZONTAL_PADDING,
+  BUTTON_SIZES,
+  RADIUS,
+  type Size,
+} from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
 import { FONT_SIZE, FONT_WEIGHT } from "@/theme/typography";
 
@@ -98,7 +103,7 @@ export function Button({
     gap: SPACING.sm,
     justifyContent: "center",
     minHeight: BUTTON_SIZES[size],
-    paddingHorizontal: SPACING.lg,
+    paddingHorizontal: BUTTON_HORIZONTAL_PADDING,
     paddingVertical: SPACING.sm,
   };
 

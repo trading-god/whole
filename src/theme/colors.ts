@@ -65,4 +65,9 @@ export const COLORS = {
   // Hairline zero axis behind the growth curve. Growth crosses zero, so the
   // axis has to be visible for "above" and "below" to mean anything.
   chartZeroLine: "rgba(255, 255, 255, 0.16)",
+  // Reference line across a chart that has nothing to plot yet — the "a curve
+  // belongs here" anchor a bare line of placeholder text cannot give. One step
+  // fainter than `chartZeroLine`, which marks a real axis on a chart that has
+  // data: this one carries no reading, so it must not compete with one.
+  chartEmptyBaseline: "rgba(255, 255, 255, 0.12)",
 };

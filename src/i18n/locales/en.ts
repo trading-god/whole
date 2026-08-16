@@ -44,6 +44,13 @@ export const enMessages = {
     pastYears_other: "Past {{count}} years",
     allTime: "All time",
     chartAccumulating: "Building chart history…",
+    // One sample stored. Says when the curve appears rather than leaving the
+    // card on an open-ended "building…" — snapshots are daily, so the second
+    // point is tomorrow's.
+    chartFirstPoint: "First reading recorded. Your curve starts tomorrow.",
+    // Shown in the chart's place while no account exists, where a curve is not
+    // pending but impossible.
+    chartEmptyPrompt: "Add your first account and your trend starts here.",
     chartRatesUnavailable:
       "Chart history needs exchange rates. Connect to the internet and reopen Whole.",
     assetComposition: "Asset composition",
@@ -69,7 +76,6 @@ export const enMessages = {
     deleteAccount: "Delete account",
     confirmDeleteAccount: "Confirm delete account",
     deleteAccountError: "Couldn't delete the account. Try again later.",
-    emptyBalanceHint: "Add an account to start tracking",
     openAccountHint: "View account details",
     showAssetAmounts: "Show asset amounts",
     hideAssetAmounts: "Hide asset amounts",

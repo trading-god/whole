@@ -55,6 +55,8 @@ export type FontWeightToken = keyof typeof FONT_WEIGHT;
 export const LINE_HEIGHT = {
   // 11pt privacy note (1.45×).
   tight: 16,
+  // 12pt eyebrow copy that wraps (1.42×).
+  eyebrow: 17,
   // 14pt body copy (1.5×).
   body: 21,
   // 34pt hero figure (1.06× — intentionally tight for a large numeral).

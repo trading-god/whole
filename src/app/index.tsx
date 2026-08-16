@@ -66,7 +66,11 @@ import {
   cardSurface,
   screenStyles,
 } from "@/theme/screen-styles";
-import { ACCOUNT_ROW_HEIGHT, CHIP_RADIUS } from "@/theme/sizes";
+import {
+  ACCOUNT_ROW_HEIGHT,
+  BUTTON_HORIZONTAL_PADDING,
+  CHIP_RADIUS,
+} from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
 import {
   FONT_SIZE,
@@ -286,11 +290,17 @@ function HomeScreen() {
   // beside them went on reading "Cash 100%".
   const hasDistribution = distribution.some((slice) => slice.percent > 0);
   // While accounts or rates are still loading (or a load failed) show "—".
-  // Once settled: no accounts → 0.00 plus a hint to add an account (the total
-  // is genuinely 0); accounts present but the total didn't convert (rates
-  // unavailable for every balance) → "—"; otherwise the formatted total.
+  // Once settled: no accounts → 0.00 (the total is genuinely 0); accounts
+  // present but the total didn't convert (rates unavailable for every balance)
+  // → "—"; otherwise the formatted total.
   const isWaiting = accountsAreLoading || accountLoadingFailed || !ratesReady;
-  const showEmptyBalanceHint = !isWaiting && accounts.length === 0;
+  // Settled, and there is genuinely nothing tracked yet — the loading half of
+  // the test is why this is not simply `accounts.length === 0`. It is also a
+  // different state from "history is still too short", and the card says so
+  // differently: no curve can appear here until an account exists, so the chart
+  // area becomes the invitation to add one rather than a progress message that
+  // would never resolve.
+  const isSettledEmpty = !isWaiting && accounts.length === 0;
   // Privacy mode masks asset figures with a fixed string, but an unavailable
   // figure ("—") is a state the user must still be able to read — a mask
   // would masquerade missing data as hidden assets. So the mask replaces only
@@ -305,7 +315,7 @@ function HomeScreen() {
       return UNAVAILABLE_VALUE;
     }
     if (displayTotal === null) {
-      return showEmptyBalanceHint
+      return isSettledEmpty
         ? maskAssetAmount(
             formatCurrency(0, displayCurrency),
             isAssetPrivacyModeEnabled,
@@ -320,8 +330,8 @@ function HomeScreen() {
 
   const chartDeltaText = (() => {
     // A window too short to have a delta is one the chart is already covering
-    // with its "building history" placeholder, so the footer stays a dash
-    // rather than repeating that sentence a few points away from it.
+    // with its own placeholder, so the footer stays a dash rather than
+    // repeating that sentence a few points away from it.
     if (trend.delta === null) {
       return UNAVAILABLE_VALUE;
     }
@@ -508,11 +518,6 @@ function HomeScreen() {
               >
                 {totalDisplayValue}
               </Text>
-              {showEmptyBalanceHint ? (
-                <Text style={styles.totalBalanceHint}>
-                  {t("home.emptyBalanceHint")}
-                </Text>
-              ) : null}
             </View>
             {accountsAreLoading || !ratesReady ? (
               <View
@@ -553,43 +558,69 @@ function HomeScreen() {
             ) : null}
           </View>
 
-          <View style={styles.chartWrap}>
-            <NetWorthChart
-              snapshots={rangedSnapshots}
-              currency={displayCurrency}
-              isNegative={isDeclining}
-              placeholderText={
-                // A snapshot needs a rate for every currency, because it
-                // records one figure per currency — so a device that has never
-                // reached the rate service records nothing at all, and the
-                // usual "building history" copy would promise progress that
-                // will never come. Name the real reason instead.
-                ratesReady && !amountsConvertible(rates)
-                  ? t("home.chartRatesUnavailable")
-                  : t("home.chartAccumulating")
-              }
-            />
-          </View>
+          {/* With no accounts there is no curve to wait for, so the chart and
+              its footer give way to the one thing that would start it. The
+              range picker goes with them: every range renders the same nothing
+              until an account exists, and a delta of "—" beside a total of 0
+              is a third way of saying "empty" on a card that has already said
+              it twice. */}
+          {isSettledEmpty ? (
+            <View style={styles.chartEmptyState}>
+              <Text style={styles.chartEmptyCopy}>
+                {t("home.chartEmptyPrompt")}
+              </Text>
+              <Button
+                size="sm"
+                variant="onDark"
+                icon="plus"
+                fullWidth={false}
+                // Pulled left by its own horizontal padding so the "+" lines up
+                // with the copy above it. The padding is sized for a filled
+                // button, where the background makes it read as the edge; on a
+                // transparent one it is just an indent nothing accounts for.
+                style={styles.chartEmptyAction}
+                onPress={() => router.push("/accounts/new")}
+              >
+                {t("common.addAccount")}
+              </Button>
+            </View>
+          ) : (
+            <>
+              <View style={styles.chartWrap}>
+                <NetWorthChart
+                  snapshots={rangedSnapshots}
+                  currency={displayCurrency}
+                  isNegative={isDeclining}
+                  // The chart counts its own samples; the only thing it cannot
+                  // see is that no sample will ever be recorded without rates.
+                  ratesUnavailable={ratesReady && !amountsConvertible(rates)}
+                />
+              </View>
 
-          <View
-            style={[styles.chartFooter, isCompact && styles.chartFooterCompact]}
-          >
-            <OptionPicker
-              dialogTitle={t("home.chartRange")}
-              onChange={handleChartRangeChange}
-              options={chartRangeOptions}
-              value={chartRange}
-              variant="onDarkMuted"
-            />
-            <Text
-              style={[
-                styles.chartDelta,
-                isDeclining && styles.chartDeltaNegative,
-              ]}
-            >
-              {chartDeltaText}
-            </Text>
-          </View>
+              <View
+                style={[
+                  styles.chartFooter,
+                  isCompact && styles.chartFooterCompact,
+                ]}
+              >
+                <OptionPicker
+                  dialogTitle={t("home.chartRange")}
+                  onChange={handleChartRangeChange}
+                  options={chartRangeOptions}
+                  value={chartRange}
+                  variant="onDarkMuted"
+                />
+                <Text
+                  style={[
+                    styles.chartDelta,
+                    isDeclining && styles.chartDeltaNegative,
+                  ]}
+                >
+                  {chartDeltaText}
+                </Text>
+              </View>
+            </>
+          )}
         </View>
 
         <SectionHeader
@@ -856,11 +887,24 @@ const styles = StyleSheet.create({
     lineHeight: LINE_HEIGHT.display,
     marginTop: 2,
   },
-  totalBalanceHint: {
+  // Replaces the chart and its footer while no account exists. Left-aligned
+  // under the total rather than centred in the chart's footprint: it is the
+  // next line of the card's sentence ("0.00 — here is how to change that"),
+  // not a notice about a missing chart. The button's `fullWidth={false}` is
+  // what keeps it from stretching — an `alignItems` here would only shadow it.
+  chartEmptyState: {
+    gap: SPACING.md,
+    paddingBottom: SPACING.xl,
+    paddingTop: SPACING.md,
+  },
+  chartEmptyCopy: {
     color: COLORS.mutedOnDark,
     fontSize: FONT_SIZE.bodySm,
     fontWeight: FONT_WEIGHT.medium,
-    marginTop: SPACING.sm,
+    lineHeight: LINE_HEIGHT.body,
+  },
+  chartEmptyAction: {
+    marginLeft: -BUTTON_HORIZONTAL_PADDING,
   },
   changePill: {
     alignItems: "center",

@@ -1,4 +1,5 @@
 import { memo, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { StyleSheet, Text, View } from "react-native";
 import {
   Circle,
@@ -17,18 +18,26 @@ import {
   parseSnapshotDate,
 } from "@/features/assets/net-worth-history";
 import { COLORS } from "@/theme/colors";
-import { FONT_SIZE } from "@/theme/typography";
+import { SPACING } from "@/theme/spacing";
+import { FONT_SIZE, LINE_HEIGHT } from "@/theme/typography";
 
 const VIEW_WIDTH = 330;
 const VIEW_HEIGHT = 112;
 const PADDING_Y = 12;
 const ENDPOINT_RADIUS = 5;
+const ENDPOINT_DOT_RADIUS = 3;
 // The canvas runs one marker-radius wider than the plot so the endpoint dot,
 // which sits on the last sample, stays whole. The balance card clips its
 // overflow to keep its rounded corners, so a dot centred on the plot's right
 // edge would lose its outer half. The left edge needs no such room — it carries
 // only the stroke's round cap.
 const CANVAS_WIDTH = VIEW_WIDTH + ENDPOINT_RADIUS;
+// Where a window with no vertical range is drawn: a flat curve, a zero axis
+// with nothing above or below it, and the empty state's baseline all sit here.
+// One constant rather than three copies of the expression, because the first
+// sample must not jump when a second one turns the placeholder into a real
+// (and initially flat) curve — that only holds while they agree.
+const FLAT_WINDOW_Y = VIEW_HEIGHT / 2;
 
 type NetWorthChartProps = {
   // Snapshots for the selected range, oldest first.
@@ -41,7 +50,12 @@ type NetWorthChartProps = {
   // from the endpoints so the curve is colored by exactly the number the footer
   // prints beside it.
   isNegative: boolean;
-  placeholderText: string;
+  // The one thing about its own empty state the chart cannot read off
+  // `snapshots`: a sample needs a rate for every currency, so a device that
+  // never reached the rate service accumulates nothing at all. Everything else
+  // an empty window has to say — and whether it draws its lone point — follows
+  // from counting the samples, which is the chart's own job.
+  ratesUnavailable: boolean;
 };
 
 type ChartGeometry = {
@@ -71,6 +85,49 @@ const TREND_PALETTE = {
   },
 } as const;
 
+type TrendPalette = (typeof TREND_PALETTE)[keyof typeof TREND_PALETTE];
+
+// A hairline rule across the plot. The zero axis and the empty state's baseline
+// are the same object at two tones — sharing the element is what keeps them
+// looking like it when the dash rhythm or weight is retuned.
+function DashedRule({ stroke, y }: { stroke: string; y: number }) {
+  return (
+    <Line
+      stroke={stroke}
+      strokeDasharray="4 5"
+      strokeWidth="1"
+      x1="0"
+      x2={CANVAS_WIDTH}
+      y1={y}
+      y2={y}
+    />
+  );
+}
+
+// The marker on the latest sample: a ring under a solid dot, so the point stays
+// legible wherever the curve leaves it.
+function Endpoint({
+  cx,
+  cy,
+  palette,
+}: {
+  cx: number;
+  cy: number;
+  palette: TrendPalette;
+}) {
+  return (
+    <>
+      <Circle cx={cx} cy={cy} fill={palette.endpointRing} r={ENDPOINT_RADIUS} />
+      <Circle
+        cx={cx}
+        cy={cy}
+        fill={palette.endpointDot}
+        r={ENDPOINT_DOT_RADIUS}
+      />
+    </>
+  );
+}
+
 // Plots growth — assets minus the capital put into them (see net-worth-flows) —
 // rather than the raw total, so opening a new account doesn't step the curve up
 // by its whole balance. Only balances moving after they were first recorded
@@ -79,13 +136,24 @@ export const NetWorthChart = memo(function NetWorthChart({
   snapshots,
   currency,
   isNegative,
-  placeholderText,
+  ratesUnavailable,
 }: NetWorthChartProps) {
-  const hasEnoughData = snapshots.length >= 2;
+  const { t } = useTranslation();
   const palette = TREND_PALETTE[isNegative ? "negative" : "positive"];
+  // One stored sample is not a stalled chart — it is a chart whose second point
+  // arrives tomorrow. The empty state both says so and plots the point, from
+  // this one count.
+  const isFirstReading = snapshots.length === 1;
+  // Rates first: without them history can never accumulate, so the "building
+  // history" copy would promise progress that cannot come.
+  const placeholderCopy = ratesUnavailable
+    ? t("home.chartRatesUnavailable")
+    : isFirstReading
+      ? t("home.chartFirstPoint")
+      : t("home.chartAccumulating");
 
   const geometry = useMemo<ChartGeometry | null>(() => {
-    if (!hasEnoughData) {
+    if (snapshots.length < 2) {
       return null;
     }
 
@@ -101,7 +169,7 @@ export const NetWorthChart = memo(function NetWorthChart({
     // instead of pinned to the floor of the plot.
     const yFor = (value: number) =>
       valueSpan === 0
-        ? VIEW_HEIGHT / 2
+        ? FLAT_WINDOW_Y
         : VIEW_HEIGHT - PADDING_Y - ((value - min) / valueSpan) * innerHeight;
 
     // x is elapsed time, not sample index: two samples a day apart and two
@@ -134,7 +202,7 @@ export const NetWorthChart = memo(function NetWorthChart({
           ? VIEW_HEIGHT
           : min < 0
             ? 0
-            : VIEW_HEIGHT / 2
+            : FLAT_WINDOW_Y
         : yFor(0);
 
     const stroke = points
@@ -156,7 +224,7 @@ export const NetWorthChart = memo(function NetWorthChart({
       // dashed line under a solid one is just noise.
       zeroY: valueSpan > 0 && min <= 0 && max >= 0 ? yFor(0) : null,
     };
-  }, [snapshots, currency, hasEnoughData]);
+  }, [snapshots, currency]);
 
   return (
     <View style={styles.container}>
@@ -181,18 +249,23 @@ export const NetWorthChart = memo(function NetWorthChart({
             <Stop offset="1" stopColor={palette.fill} stopOpacity="0" />
           </LinearGradient>
         </Defs>
-        {geometry ? (
+        {geometry === null ? (
+          // Nothing to plot yet. A bare caption over an empty box reads as a
+          // chart that failed to load, so the card keeps a faint baseline: it
+          // says "a curve belongs here" without drawing one that isn't there.
+          // A single stored sample gets its dot on that baseline — the honest
+          // picture of one reading, and visibly a chart with a point in it
+          // rather than a chart with nothing in it.
+          <>
+            <DashedRule stroke={COLORS.chartEmptyBaseline} y={FLAT_WINDOW_Y} />
+            {isFirstReading ? (
+              <Endpoint cx={VIEW_WIDTH} cy={FLAT_WINDOW_Y} palette={palette} />
+            ) : null}
+          </>
+        ) : (
           <>
             {geometry.zeroY === null ? null : (
-              <Line
-                stroke={COLORS.chartZeroLine}
-                strokeDasharray="4 5"
-                strokeWidth="1"
-                x1="0"
-                x2={CANVAS_WIDTH}
-                y1={geometry.zeroY}
-                y2={geometry.zeroY}
-              />
+              <DashedRule stroke={COLORS.chartZeroLine} y={geometry.zeroY} />
             )}
             <Path d={geometry.fillPath} fill="url(#netWorthFill)" />
             <Path
@@ -203,26 +276,15 @@ export const NetWorthChart = memo(function NetWorthChart({
               strokeLinejoin="round"
               strokeWidth="3"
             />
-            <Circle
-              cx={geometry.endX}
-              cy={geometry.endY}
-              fill={palette.endpointRing}
-              r={ENDPOINT_RADIUS}
-            />
-            <Circle
-              cx={geometry.endX}
-              cy={geometry.endY}
-              fill={palette.endpointDot}
-              r="3"
-            />
+            <Endpoint cx={geometry.endX} cy={geometry.endY} palette={palette} />
           </>
-        ) : null}
+        )}
       </Svg>
-      {geometry ? null : (
+      {geometry === null ? (
         <View style={styles.placeholder}>
-          <Text style={styles.placeholderText}>{placeholderText}</Text>
+          <Text style={styles.placeholderText}>{placeholderCopy}</Text>
         </View>
-      )}
+      ) : null}
     </View>
   );
 });
@@ -237,12 +299,23 @@ const styles = StyleSheet.create({
     bottom: 0,
     justifyContent: "center",
     left: 0,
+    // The chart bleeds to the card's edges (its wrapper cancels the card
+    // padding), which is right for a curve and wrong for a sentence: without
+    // this the longer placeholder copy runs to the screen edge.
+    paddingHorizontal: SPACING.xl,
     position: "absolute",
     right: 0,
-    top: 0,
+    // Confined to the half below the baseline — centred on the plot, the dashes
+    // would run straight through the caption. Stated as a fraction of this
+    // container rather than as `FLAT_WINDOW_Y`: that constant is an SVG
+    // user-space coordinate, and it only doubles as a dp offset while the
+    // canvas happens to render at exactly `VIEW_HEIGHT`.
+    top: "50%",
   },
   placeholderText: {
     color: COLORS.mutedOnDark,
     fontSize: FONT_SIZE.eyebrow,
+    lineHeight: LINE_HEIGHT.eyebrow,
+    textAlign: "center",
   },
 });

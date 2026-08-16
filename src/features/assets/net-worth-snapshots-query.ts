@@ -56,6 +56,20 @@ async function recordSnapshot(
     throw new Error("Net-worth history is not readable yet");
   }
 
+  // Nothing is tracked yet, and nothing ever was. `sumBalancesInEveryCurrency`
+  // would return zeros for every currency, so each day the app is opened would
+  // store one all-zero sample — and on the second of those the chart stops
+  // showing its empty state and draws a flat line straight down the middle of
+  // the card. That line is not a reading of anything; it is the absence of one,
+  // rendered as a curve.
+  //
+  // The guard is on an empty HISTORY, not on empty accounts alone: a user who
+  // deletes their last account really has gone to zero, and that drop belongs
+  // in the record they already have.
+  if (accounts.length === 0 && upgraded.length === 0) {
+    return upgraded;
+  }
+
   // Book the capital that moved in or out since the last sample, so an account
   // added since then lands in `totals` and `baselines` together and leaves the
   // growth curve flat instead of stepping up by its whole balance (and a deleted

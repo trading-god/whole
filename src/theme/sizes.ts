@@ -1,3 +1,5 @@
+import { SPACING } from "@/theme/spacing";
+
 export type Size = "sm" | "md" | "lg";
 
 export const BUTTON_SIZES: Record<Size, number> = {
@@ -5,6 +7,12 @@ export const BUTTON_SIZES: Record<Size, number> = {
   md: 48,
   lg: 54,
 };
+
+// Horizontal half of the button box model, beside `BUTTON_SIZES`' vertical
+// one. Exported rather than inlined into `Button` because a caller that has to
+// cancel this padding — a transparent button aligned into a column of text —
+// must cancel exactly it; two hand-written `SPACING.lg`s drift apart silently.
+export const BUTTON_HORIZONTAL_PADDING = SPACING.lg;
 
 export const ICON_BUTTON_SIZES: Record<Size, number> = {
   sm: 48,
