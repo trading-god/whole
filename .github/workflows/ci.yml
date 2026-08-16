@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel a superseded run on the same ref. Single-developer repo, so consecutive
+# pushes are common and the older run's result is never the one being read.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    name: Lint · Format · Types · OCR
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # No `version:` — action-setup reads `packageManager` from package.json,
+      # so the pinned pnpm version has one source of truth instead of drifting
+      # between the manifest and this file.
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # --frozen-lockfile is already the CI default; stated explicitly so the
+      # "lockfile and manifest must agree" rule is visible. pnpm 11 also
+      # enforces the minimumReleaseAge supply-chain policy here.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The gates AGENTS.md requires, one step each: a failure names itself in
+      # the GitHub UI instead of hiding in a combined log. Every one of these is
+      # pure JS — no simulator, no native toolchain, no screenshots (the OCR
+      # fixtures are the committed blocks.json/expected.json, never the private
+      # images) — which is why this runs on ubuntu rather than a macOS runner.
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm typecheck
+      - run: pnpm test:app
+      - run: pnpm test:ocr
+      - run: pnpm test:ocr:golden
+      - run: pnpm eval:ocr

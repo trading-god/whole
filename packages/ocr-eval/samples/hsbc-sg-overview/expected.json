@@ -1,0 +1,26 @@
+[
+  {
+    "accountName": "Everyday Global Account",
+    "accountLastFourDigits": "2221",
+    "balances": [
+      {
+        "currency": "SGD",
+        "balance": 5624
+      }
+    ],
+    "kind": "cash",
+    "institutionId": "hsbcsg"
+  },
+  {
+    "accountName": "HSBC Live+ Credit Card",
+    "accountLastFourDigits": "0371",
+    "balances": [
+      {
+        "currency": "SGD",
+        "balance": -1745.52
+      }
+    ],
+    "kind": "cash",
+    "institutionId": "hsbcsg"
+  }
+]

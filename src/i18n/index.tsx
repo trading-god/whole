@@ -9,7 +9,12 @@ import {
 import { I18nextProvider, initReactI18next } from "react-i18next";
 
 import { CURRENCY_SYMBOLS, type Currency } from "@/features/assets/currencies";
-import { type AppLocale, defaultNamespace, resources } from "@/i18n/resources";
+import {
+  type AppLocale,
+  defaultNamespace,
+  pickAppLocale,
+  resources,
+} from "@/i18n/resources";
 
 type LocaleContextValue = {
   formatCurrency: (value: number, currency: Currency) => string;
@@ -32,19 +37,12 @@ function formatCurrencyAmount(amount: number, currency: Currency): string {
       minimumFractionDigits: 2,
     });
   }
-  return `${CURRENCY_SYMBOLS[currency]}${decimalFormatter.format(amount)}`;
-}
-
-function resolveLocale(languageCode: string | null): AppLocale | null {
-  if (languageCode === "zh") {
-    return "zh-Hans";
-  }
-
-  if (languageCode === "en") {
-    return "en";
-  }
-
-  return null;
+  // The sign goes OUTSIDE the symbol: a credit card's balance reads
+  // "-S$4,766.92", not "S$-4,766.92". Formatting the absolute value and
+  // prepending the sign keeps that ordering in every locale.
+  const formatted = decimalFormatter.format(Math.abs(amount));
+  const sign = amount < 0 ? "-" : "";
+  return `${sign}${CURRENCY_SYMBOLS[currency]}${formatted}`;
 }
 
 function createI18n(locale: AppLocale) {
@@ -71,11 +69,7 @@ function createI18n(locale: AppLocale) {
 
 export function I18nProvider({ children }: PropsWithChildren) {
   const preferredLocales = useLocales();
-  const supportedLocale = preferredLocales.find((candidate) =>
-    resolveLocale(candidate.languageCode),
-  );
-  const locale = resolveLocale(supportedLocale?.languageCode ?? null) ?? "en";
-  const languageTag = supportedLocale?.languageTag ?? "en-SG";
+  const { locale, languageTag } = pickAppLocale(preferredLocales);
   const i18n = useMemo(() => createI18n(locale), [locale]);
 
   const value = useMemo<LocaleContextValue>(

@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // No ambient type packages: the engine is pure TypeScript with no Node,
+    // DOM, or React Native globals. If a rule ever needs `process` or `window`,
+    // that's the signal it belongs in the app or the harness, not in here.
+    "types": []
+  },
+  "include": ["./src/**/*.ts", "./vitest.config.ts"],
+  "exclude": ["node_modules"]
+}

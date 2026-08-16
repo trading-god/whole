@@ -1,6 +1,7 @@
 [
   {
     "accountName": "DBS Multiplier Account",
+    "accountLastFourDigits": "6372",
     "balances": [
       {
         "currency": "SGD",
@@ -15,6 +16,7 @@
         "balance": 0.0
       }
     ],
-    "kind": "cash"
+    "kind": "cash",
+    "institutionId": "dbs"
   }
 ]

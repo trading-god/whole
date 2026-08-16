@@ -6,6 +6,7 @@
         "balance": 76007.05
       }
     ],
-    "kind": "cash"
+    "kind": "cash",
+    "institutionId": "cmb"
   }
 ]

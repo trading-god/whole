@@ -1,0 +1,14 @@
+[
+  {
+    "accountName": "OCBC 365 Credit Card",
+    "accountLastFourDigits": "4269",
+    "balances": [
+      {
+        "currency": "SGD",
+        "balance": -4766.92
+      }
+    ],
+    "kind": "cash",
+    "institutionId": "ocbc"
+  }
+]

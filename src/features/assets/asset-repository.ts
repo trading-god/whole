@@ -4,8 +4,8 @@ import { z } from "zod";
 import { getItem, setItem } from "@/storage/kv-store";
 
 import { createAsyncSerializer } from "./async-serializer";
-import { accountBalanceSchema } from "./account-balance-schema";
-import type { AccountBalance } from "./account-balance-schema";
+import { accountBalanceSchema } from "@whole/ocr";
+import type { AccountBalance } from "@whole/ocr";
 import {
   type AssetKind,
   assetKindSchema,
@@ -25,13 +25,6 @@ import {
 
 const ASSET_ACCOUNTS_STORAGE_KEY = "whole.assetAccounts";
 
-// Form-input variant: the last four is optional (brokerage/stock accounts may
-// not have a card number), so an empty string is also valid. Shared by every
-// account form's save gate so "empty or exactly 4 digits" is defined once.
-export const optionalLastFourDigitsSchema = lastFourDigitsSchema.or(
-  z.literal(""),
-);
-
 // Schemas for the persisted account data, replacing the hand-written
 // `isAccountBalance`/`isAccountBase`/`isAssetAccount`/`isAssetAccountV1` shape
 // guards. zod v4's `z.number()` rejects NaN/Infinity by default (matching the
@@ -42,11 +35,11 @@ export const optionalLastFourDigitsSchema = lastFourDigitsSchema.or(
 // a valid stored account" is defined once alongside the validation, not
 // maintained as a parallel interface. Mirrors `storedRatesSchema` in
 // currency-conversion.ts.
-// `accountBalanceSchema`/`AccountBalance` live in their own pure-zod module
-// (`account-balance-schema.ts`) — they're shared with the OCR recognition
-// contract and the Node eval harness, which must not pull in this storage
-// module's React Native / Expo dependency chain.
-export { accountBalanceSchema } from "./account-balance-schema";
+// `accountBalanceSchema`/`AccountBalance` live in `@whole/ocr`'s pure-zod
+// `contract/balance.ts` — they're shared with the OCR recognition contract and
+// the Node eval harness, which must not pull in this storage module's React
+// Native / Expo dependency chain. Consumers import them from `@whole/ocr`
+// directly; this module is a peer consumer, not a gateway.
 
 // Shared identity fields across every account kind — the stable per-account
 // attributes that don't depend on what the account holds. `lastFourDigits` is
@@ -67,8 +60,8 @@ const accountIdentitySchema = z.object({
 //
 // `groupId` (v4) optionally ties an account to an `AssetAccountGroup` — a
 // pure naming container (no `kind`, no `balances`) so accounts that belong
-// together (e.g. one bank's savings/current/term sub-accounts) render as a
-// collapsible group on the home screen. Optional so v2/v3 accounts (which
+// together (e.g. one institution's savings/current/term sub-accounts) render
+// as a collapsible group on the home screen. Optional so v2/v3 accounts (which
 // predate groups) parse unchanged and stay ungrouped. Group membership is
 // invisible to the net-worth/snapshot/flows chain, which reads only
 // `account.id` + `account.balances`.
@@ -81,11 +74,11 @@ const assetAccountSchema = accountIdentitySchema.extend({
 // A group container: a named bucket sub-accounts hang off. Deliberately
 // carries no `kind` and no `balances` — it is not an account, so the
 // per-kind distribution chart and the balance aggregation skip it (they
-// only read leaf accounts). `bankId` is intentionally NOT stored here: it
+// only read leaf accounts). `institutionId` is intentionally NOT stored here: it
 // is an OCR-pipeline concept, and coupling stored data to it would mean a
 // manually-created group named "Bank of China" could not be reused when the
-// same bank is re-recognized. Reuse matches by normalized name instead (see
-// `findGroupByName`).
+// same institution is re-recognized. Reuse matches by normalized name instead
+// (see `findGroupByName`).
 const assetAccountGroupSchema = z.object({
   id: z.string(),
   name: z.string().trim().min(1),
@@ -118,7 +111,6 @@ const storedV1AssetAccountsSchema = z.object({
   accounts: z.array(v1AssetAccountSchema),
 });
 
-export type { AccountBalance } from "./account-balance-schema";
 export type AssetAccount = z.infer<typeof assetAccountSchema>;
 type V1AssetAccount = z.infer<typeof v1AssetAccountSchema>;
 type StoredAssetAccounts = z.infer<typeof storedAssetAccountsSchema>;
@@ -133,16 +125,6 @@ export type NewAssetAccount = {
   // its current group (see applyAccountUpsert).
   groupId?: string;
 };
-
-// Schema for a form-entered balance string: strips grouping separators
-// (commas/whitespace) and parses to a non-negative number. Used by the account
-// forms' `deriveValidBalances` so "what is a valid balance input" is defined
-// once, alongside the other balance schemas, instead of a hand-written parse.
-// Allows 0 (a real balance).
-export const balanceInputSchema = z
-  .string()
-  .transform((value) => Number(value.replace(/[,\s]/g, "")))
-  .pipe(z.number().nonnegative());
 
 // Normalizes the account name for identity comparison: trims, collapses
 // whitespace, lower-cases, and strips the `|` separator so it can never leak
@@ -159,8 +141,8 @@ function normalizeAccountName(name: string): string {
 // last-four digits → distinct accounts). Accounts without a last four
 // (brokerage, stock, some wallets) dedupe by name alone. Including `groupId`
 // lets two accounts with the same name + last four coexist in DIFFERENT groups
-// (e.g. two banks' "Savings ****1234"), while accounts in the SAME group still
-// merge on re-upload. The group prefix is the empty string when an account is
+// (e.g. two institutions' "Savings ****1234"), while accounts in the SAME group
+// still merge on re-upload. The group prefix is the empty string when an account is
 // ungrouped, so legacy v3 data (no groupId) keeps its prior key shape and
 // re-uploads still merge. This is NOT the stored primary key —
 // `AssetAccount.id` is a stable random id (see createAccountId) so editing
@@ -189,8 +171,9 @@ function createAccountId(): string {
 // Merges an incoming per-currency balance into a list: replaces an existing
 // entry for the same currency, otherwise appends. Shared by the v1→v3 migration
 // and upsert so the merge rule lives once. Deliberately module-private: the
-// screenshot parser sums same-currency rows instead of replacing them (a bank
-// overview can list one account's currency twice), so it owns its own merge.
+// screenshot parser sums same-currency rows instead of replacing them (an
+// institution overview can list one account's currency twice), so it owns its
+// own merge.
 function mergeBalance(
   balances: AccountBalance[],
   incoming: AccountBalance,
@@ -385,7 +368,12 @@ export async function listAssetAccountGroups(): Promise<AssetAccountGroup[]> {
 // read-modify-write mutators (`upsertAssetAccounts`, `updateAssetAccount`,
 // `removeAssetAccount`, group CRUD) always carry both lists through the save,
 // so they share one read instead of repeating the paired lookup five times.
-async function readAccountsAndGroups(): Promise<{
+//
+// Exported for `accounts-query.ts` to use as its `queryFn`: the two lists share
+// one envelope, so fetching them as one query keeps them consistent with each
+// other. Reading them as two queries could interleave a write between them and
+// pair a fresh account list with a stale group list.
+export async function readAccountsAndGroups(): Promise<{
   accounts: AssetAccount[];
   groups: AssetAccountGroup[];
 }> {
@@ -672,11 +660,11 @@ export async function removeAssetAccount(id: string): Promise<AssetAccount[]> {
 
 // Finds a group whose name matches `name` after normalization (trim, collapse
 // whitespace, lower-case — the same rule `accountMatchKey` uses). Used by the
-// OCR auto-grouping path to REUSE an existing group when the same bank is
-// re-recognized, instead of creating a duplicate: a manually-created
+// OCR auto-grouping path to REUSE an existing group when the same institution
+// is re-recognized, instead of creating a duplicate: a manually-created
 // "Bank of China" group is reused by an OCR-suggested "Bank of China", because
-// they match by name, not by an OCR-only `bankId` that a manual group would
-// lack. Returns `undefined` when no group matches.
+// they match by name, not by an OCR-only `institutionId` that a manual group
+// would lack. Returns `undefined` when no group matches.
 export async function findGroupByName(
   name: string,
 ): Promise<AssetAccountGroup | undefined> {
@@ -764,25 +752,5 @@ export async function upsertAssetAccountGroup(input: {
     }
     await saveAssetAccounts(accounts, nextGroups);
     return { accounts, groups: nextGroups };
-  });
-}
-
-// Removes a group and clears `groupId` on every account that belonged to it —
-// the accounts themselves are kept (they become ungrouped). One
-// `saveAssetAccounts` write holds both the group removal and the child
-// `groupId` clears, so the operation is atomic: a failed write leaves the
-// group and its children intact, matching storage. Net worth is unaffected
-// (account ids and balances are untouched).
-export async function removeAssetAccountGroup(
-  id: string,
-): Promise<GroupMutationResult> {
-  return mutate(async () => {
-    const { accounts, groups } = await readAccountsAndGroups();
-    const nextGroups = groups.filter((group) => group.id !== id);
-    const nextAccounts = accounts.map((account) =>
-      account.groupId === id ? { ...account, groupId: undefined } : account,
-    );
-    await saveAssetAccounts(nextAccounts, nextGroups);
-    return { accounts: nextAccounts, groups: nextGroups };
   });
 }

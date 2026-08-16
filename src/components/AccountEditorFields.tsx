@@ -1,4 +1,5 @@
-import { memo, useMemo } from "react";
+import { optionalLastFourDigitsSchema } from "@whole/ocr";
+import { memo, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 
@@ -53,7 +54,7 @@ type AccountEditorFieldsProps = {
   // returns its new id.
   onCreateInstitution?: (name: string) => Promise<string | undefined>;
   // Optional institution name rendered as a free-text field at the top of the
-  // card (the add-account wizard), pre-filled with the detected bank's display
+  // card (the add-account wizard), pre-filled with the detected institution's
   // name so the user can correct a misrecognition. Mutually exclusive with the
   // InstitutionPicker props above (the edit screen uses the picker).
   institutionName?: string;
@@ -81,6 +82,16 @@ export const AccountEditorFields = memo(function AccountEditorFields({
 }: AccountEditorFieldsProps) {
   const { t } = useTranslation();
   const accountKindOptions = useMemo(() => assetKindPickerOptions(t), [t]);
+  // Whether the user is typing in the last-four field, so a half-entered number
+  // is left alone until focus leaves it — the same rule the balance rows apply
+  // to a half-typed figure (see `classifyBalanceRow`).
+  const [lastFourEditing, setLastFourEditing] = useState(false);
+  // The same schema the save gate parses (`account-draft.ts`), so the field's
+  // error message and the Save button can never disagree about what a complete
+  // last four is.
+  const lastFourComplete = optionalLastFourDigitsSchema.safeParse(
+    draft.lastFour,
+  ).success;
 
   const patch = (next: Partial<AccountDraft>) =>
     onChange((previous) => ({ ...previous, ...next }), index);
@@ -133,11 +144,24 @@ export const AccountEditorFields = memo(function AccountEditorFields({
       <View style={screenStyles.fieldDivider} />
       <FormField
         editable={lastFourEditable}
+        // The field caps at four digits but cannot stop the user at ONE.
+        // `optionalLastFourDigitsSchema` takes an empty entry or exactly four,
+        // so a half-typed "12" makes `draftToValidAccount` return null and Save
+        // goes grey — with nothing on screen, which is the same silence the
+        // balance rows' message was added to remove. Said only once focus has
+        // left, for the same reason: mid-typing, "12" is on its way to "1234".
+        error={
+          lastFourEditing || lastFourComplete
+            ? undefined
+            : t("accountForm.incompleteLastFour")
+        }
         keyboardType="number-pad"
         label={t("accountForm.lastFourDigits")}
+        onBlur={() => setLastFourEditing(false)}
         onChangeText={(text) =>
           patch({ lastFour: text.replace(/\D/g, "").slice(0, 4) })
         }
+        onFocus={() => setLastFourEditing(true)}
         placeholder="0000"
         prefix="****"
         value={draft.lastFour}

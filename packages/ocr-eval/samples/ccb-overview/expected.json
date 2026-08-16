@@ -8,6 +8,7 @@
         "balance": 10922.04
       }
     ],
-    "kind": "cash"
+    "kind": "cash",
+    "institutionId": "ccb"
   }
 ]

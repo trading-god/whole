@@ -10,14 +10,27 @@ export const enMessages = {
     required: "Required",
     stepIndicator: "Step {{current}} of {{total}}",
   },
-  // Display names for banks: when OCR detects a bank, this is the suggested
-  // group name offered for auto-grouping. Keys align 1:1 with the BankId enum
-  // in ocr-bank-config; adding a bank to DETECT_BANKS requires a matching key
-  // here, and the en/zh i18n type system enforces the two stay in sync.
-  bankNames: {
+  // Display names for institutions: when OCR detects an institution, this is
+  // the suggested group name offered for auto-grouping. An institution is a
+  // bank, a crypto exchange, or a broker, so this list spans all three — see
+  // src/i18n/README.md terminology. Keys align 1:1 with the InstitutionId enum
+  // in `@whole/ocr`; adding an institution requires a matching key here, and
+  // the en/zh i18n type system enforces the two stay in sync.
+  institutionNames: {
     ocbc: "OCBC",
     dbs: "DBS",
-    unknown: "Unknown bank",
+    alipay: "Alipay",
+    bochk: "BOC Hong Kong",
+    ccb: "China Construction Bank",
+    cmb: "China Merchants Bank",
+    cmbwl: "CMB Wing Lung Bank",
+    hsbchk: "HSBC Hong Kong",
+    hsbcsg: "HSBC Singapore",
+    bitget: "Bitget",
+    okx: "OKX",
+    ibkr: "Interactive Brokers",
+    trust: "Trust Bank",
+    unknown: "Unknown institution",
   },
   home: {
     greeting: "Hello, {{name}}",
@@ -34,6 +47,10 @@ export const enMessages = {
     chartRatesUnavailable:
       "Chart history needs exchange rates. Connect to the internet and reopen Whole.",
     assetComposition: "Asset composition",
+    // A holding too small to round to a whole percent. Shown instead of "0%",
+    // which reads as "you hold none of this".
+    lessThanOnePercent: "<1%",
+    netLiability: "Owed",
     loading: "Loading",
     accountCount_one: "{{count}} account",
     accountCount_other: "{{count}} accounts",
@@ -81,6 +98,9 @@ export const enMessages = {
     accountNameExample: "For example: DBS Multiplier",
     lastFourDigits: "Last four digits",
     accountBalance: "Account balance",
+    invalidBalance: "Enter a number, e.g. 1234.56 or -1234.56",
+    duplicateCurrency: "This currency already has a row",
+    incompleteLastFour: "Enter all four digits, or leave this empty",
     currency: "Currency",
     accountKind: "Account type",
     kindCash: "Cash",
@@ -210,56 +230,24 @@ export const enMessages = {
     title: "This page could not be found",
     description: "The link may have expired or the address may be incorrect.",
   },
-  // Dev-only copy for the OCR regression-fixture capture screen
-  // (AccountScreenshotCapture). Registered only under __DEV__, so this block has
-  // no production surface; it exists so locking down the eval workflow can ship
-  // against the same i18n typing as the rest of the app.
+  // Copy for the app-level crash fallback. AppErrorBoundary reads it straight
+  // from `resources` rather than through the i18next instance: by the time the
+  // fallback renders, I18nProvider is no longer mounted.
+  errorBoundary: {
+    title: "Something went wrong",
+    description:
+      "Whole hit an unexpected problem and stopped here. Your saved accounts are untouched.",
+    detailLabel: "Error details",
+    retry: "Try again",
+  },
+  // Dev-only copy for the Dev Tools screen (/dev). Registered only under
+  // __DEV__, so this block has no production surface; it goes through the same
+  // i18n typing as the rest of the app.
   devTools: {
     title: "Dev Tools",
     subtitle: "Developer-only utilities. Not available in release builds.",
-    ocrCaptureTitle: "OCR capture",
-    ocrCaptureSubtitle:
-      "Generate OCR regression samples for packages/ocr-eval from a real screenshot.",
-  },
-  devOcr: {
-    screenTitle: "OCR capture",
-    pickScreenshot: "Choose account screenshot",
-    pickBatch: "Batch capture screenshots",
-    recognizing: "Recognizing…",
-    batchProgress: "Capturing {{current}}/{{total}}…",
-    pickerFailed:
-      "Couldn't open the photo library. Try again later or check Whole's permission to access your photos.",
-    recognitionFailed: "Couldn't read the screenshot.",
-    batchFailed: "Batch capture failed on image {{current}}.",
-    ocrUnsupported:
-      "This device can't run on-device OCR. Use a supported device or simulator.",
-    resultsTitle: "Recognition results",
-    blocksLabel_one: "{{count}} OCR text block",
-    blocksLabel_other: "{{count}} OCR text blocks",
-    moreBlocks_one: "+{{count}} more block",
-    moreBlocks_other: "+{{count}} more blocks",
-    accountsLabel_one: "{{count}} account",
-    accountsLabel_other: "{{count}} accounts",
-    noAccounts: "No accounts found in this screenshot.",
-    copyBlocks: "Copy blocks.json",
-    copyExpected: "Copy expected.json",
-    copyTitle: "Copied to clipboard",
-    copyBlocksSuccess:
-      "blocks.json is copied. Save it as packages/ocr-eval/samples/<slug>/blocks.json.",
-    copyExpectedSuccess:
-      "expected.json template is copied. Review it, edit the fields, and save it as packages/ocr-eval/samples/<slug>/expected.json.",
-    copyFailed: "Couldn't copy to the clipboard. Try again.",
-    unnamed: "Unnamed account",
-    noBalances: "No balances",
-    lastFour: "Last four:",
-    kindLabel: "Type:",
-    unknownKind: "Unknown type",
-    batchTitle: "Batch capture",
-    batchHint:
-      "Pick multiple screenshots. Each is OCR'd on device and packed into a zip (one folder per image: blocks.json + screenshot.png). Share the zip to your computer, then run pnpm eval:ocr:import <folder>.",
-    batchShareTitle: "Share OCR fixtures",
-    batchDone:
-      "Captured {{count}} screenshot(s). Share the zip, then run pnpm eval:ocr:import on the unpacked folder.",
-    shareFailed: "Couldn't share the zip. Try again.",
+    emptyTitle: "No tools right now",
+    emptyHint:
+      "OCR capture moved to the macOS Vision bridge (pnpm ocr). New developer-only utilities land here.",
   },
 } satisfies MessageShape<typeof zhHansMessages>;

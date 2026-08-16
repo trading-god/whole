@@ -1,0 +1,4 @@
+{
+  "note": "Known OCR parser failures, per sample and field. A failure listed here is a known gap; one that is not is a regression and fails `pnpm eval:ocr`. Regenerate with `pnpm eval:ocr -- --update-baseline`; hand-set a reason to `gold-uncertain` to park a sample whose gold is not human-checked yet.",
+  "knownFailures": {}
+}

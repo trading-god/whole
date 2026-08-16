@@ -7,13 +7,25 @@ export const zhHansMessages = {
     required: "必填",
     stepIndicator: "第 {{current}} 步，共 {{total}} 步",
   },
-  // 银行显示名：OCR 检测到某银行时，用作自动归组的建议分组名。key 与
-  // ocr-bank-config 的 BankId 枚举一一对应；新增 DETECT_BANKS 银行时须同步
-  // 补充对应 key，en/zh 的 i18n 类型系统会强制两者对齐。
-  bankNames: {
+  // 机构显示名：OCR 识别出某机构时，用作自动归组的建议分组名。机构包括银行、
+  // 加密货币交易所与券商，因此这份清单三者都涵盖——见 src/i18n/README.md 术语
+  // 库。key 与 `@whole/ocr` 的 InstitutionId 枚举一一对应；新增机构时须同步补充
+  // 对应 key，en/zh 的 i18n 类型系统会强制两者对齐。
+  institutionNames: {
     ocbc: "OCBC",
     dbs: "DBS",
-    unknown: "未知银行",
+    alipay: "支付宝",
+    bochk: "中银香港",
+    ccb: "中国建设银行",
+    cmb: "招商银行",
+    cmbwl: "招商永隆银行",
+    hsbchk: "汇丰香港",
+    hsbcsg: "汇丰新加坡",
+    bitget: "Bitget",
+    okx: "OKX",
+    ibkr: "盈透证券",
+    trust: "Trust Bank",
+    unknown: "未知机构",
   },
   home: {
     greeting: "你好，{{name}}",
@@ -29,6 +41,8 @@ export const zhHansMessages = {
     chartAccumulating: "正在积累图表数据…",
     chartRatesUnavailable: "图表数据需要汇率。请连接网络后重新打开 Whole。",
     assetComposition: "资产构成",
+    lessThanOnePercent: "<1%",
+    netLiability: "负债",
     loading: "正在加载",
     accountCount_one: "{{count}} 个账户",
     accountCount_other: "{{count}} 个账户",
@@ -71,6 +85,9 @@ export const zhHansMessages = {
     accountNameExample: "例如：DBS Multiplier",
     lastFourDigits: "账号后四位",
     accountBalance: "账户余额",
+    invalidBalance: "请输入数字，例如 1234.56 或 -1234.56",
+    duplicateCurrency: "该币种已有一行",
+    incompleteLastFour: "请输入完整的四位数字，或留空",
     currency: "币种",
     accountKind: "账户类型",
     kindCash: "现金",
@@ -187,52 +204,21 @@ export const zhHansMessages = {
     title: "找不到这个页面",
     description: "这个链接可能已经失效，或者页面地址有误。",
   },
-  // 仅供开发的文案：OCR 回归样本采集屏（AccountScreenshotCapture）。该路由
-  // 仅在 __DEV__ 下注册，无生产入口；仍走同一套 i18n 类型系统，方便与其余
-  // 页面保持一致。
+  // 应用级崩溃兜底的文案。AppErrorBoundary 直接从 resources 读取它，不经过
+  // i18next 实例：兜底界面渲染时 I18nProvider 已经不在树上了。
+  errorBoundary: {
+    title: "出了点问题",
+    description: "Whole 遇到意外错误，已经停在这里。你保存的账户数据不受影响。",
+    detailLabel: "错误详情",
+    retry: "重试",
+  },
+  // 仅供开发的文案：开发者工具页（/dev）。该路由仅在 __DEV__ 下注册，无生产
+  // 入口；仍走同一套 i18n 类型系统，方便与其余页面保持一致。
   devTools: {
     title: "开发者工具",
     subtitle: "仅供开发使用的工具，发布版本中不可用。",
-    ocrCaptureTitle: "OCR 采集",
-    ocrCaptureSubtitle: "用真实截图生成 packages/ocr-eval 的 OCR 回归样本。",
-  },
-  devOcr: {
-    screenTitle: "OCR 采集",
-    pickScreenshot: "选择账户截图",
-    pickBatch: "批量采集截图",
-    recognizing: "正在识别…",
-    batchProgress: "正在采集 {{current}}/{{total}}…",
-    pickerFailed: "无法打开相册，请稍后重试，或检查 Whole 的照片访问权限。",
-    recognitionFailed: "无法识别这张截图。",
-    batchFailed: "第 {{current}} 张图片采集失败。",
-    ocrUnsupported: "当前设备不支持端上 OCR，请使用受支持的设备或模拟器。",
-    resultsTitle: "识别结果",
-    blocksLabel_one: "{{count}} 个 OCR 文本块",
-    blocksLabel_other: "{{count}} 个 OCR 文本块",
-    moreBlocks_one: "+{{count}} 个文本块",
-    moreBlocks_other: "+{{count}} 个文本块",
-    accountsLabel_one: "{{count}} 个账户",
-    accountsLabel_other: "{{count}} 个账户",
-    noAccounts: "这张截图中未识别到账户。",
-    copyBlocks: "复制 blocks.json",
-    copyExpected: "复制 expected.json",
-    copyTitle: "已复制到剪贴板",
-    copyBlocksSuccess:
-      "blocks.json 已复制。请保存为 packages/ocr-eval/samples/<slug>/blocks.json。",
-    copyExpectedSuccess:
-      "expected.json 模板已复制。请核对并编辑字段后，保存为 packages/ocr-eval/samples/<slug>/expected.json。",
-    copyFailed: "复制到剪贴板失败，请重试。",
-    unnamed: "未命名账户",
-    noBalances: "无数额",
-    lastFour: "后四位：",
-    kindLabel: "类型：",
-    unknownKind: "未知类型",
-    batchTitle: "批量采集",
-    batchHint:
-      "选择多张截图，每张在设备上跑 OCR 后打包成 zip（每张一个文件夹：blocks.json + screenshot.png）。分享 zip 到电脑后，运行 pnpm eval:ocr:import <文件夹>。",
-    batchShareTitle: "分享 OCR fixtures",
-    batchDone:
-      "已采集 {{count}} 张截图。分享 zip 后，解压运行 pnpm eval:ocr:import。",
-    shareFailed: "分享 zip 失败，请重试。",
+    emptyTitle: "暂时没有工具",
+    emptyHint:
+      "OCR 采集已迁移到 macOS 的 Vision bridge（pnpm ocr），后续新的开发工具会放在这里。",
   },
 } as const;

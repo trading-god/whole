@@ -1,0 +1,12 @@
+[
+  {
+    "balances": [
+      {
+        "currency": "USD",
+        "balance": 399.87
+      }
+    ],
+    "kind": "crypto",
+    "institutionId": "bitget"
+  }
+]

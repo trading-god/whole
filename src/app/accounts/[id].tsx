@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -30,6 +31,7 @@ import {
   mergeRecognizedIntoDraft,
   selectRecognizedForAccount,
 } from "@/features/assets/account-draft";
+import { invalidateAccounts } from "@/features/assets/accounts-query";
 import {
   type AssetAccount,
   type AssetAccountGroup,
@@ -47,6 +49,7 @@ import { screenStyles } from "@/theme/screen-styles";
 export default function AccountDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const returnToOverview = useReturnToOverview();
 
   // `account` doubles as the load gate: it is set exactly once, in the same
@@ -145,6 +148,14 @@ export default function AccountDetailScreen() {
         // it in so it shows in the form. mergeRecognizedIntoDraft already
         // prefers the recognized value, so re-pin an existing last four here.
         lastFour: prev.lastFour || merged.lastFour,
+        // The kind stays the user's. Recognition ALWAYS supplies one — the
+        // account's name, else the institution's default, else "cash" — so it
+        // is never absent for `?? draft.kind` to fall back from, and a user who
+        // had corrected an OCBC account to "investment" watched a re-upload
+        // (to refresh the balance) silently reset it to "cash". On this screen
+        // the kind picker is right there; on the add screen there is nothing to
+        // preserve, so that path still takes the recognized value.
+        kind: prev.kind,
       };
     });
     return true;
@@ -203,6 +214,9 @@ export default function AccountDetailScreen() {
             ? undefined
             : selectedGroupId || null,
       });
+      // Flag the home screen's list stale as soon as the edit lands, so it does
+      // not render a frame of the pre-edit account before its own re-read.
+      await invalidateAccounts(queryClient);
     } catch {
       result = null;
     }

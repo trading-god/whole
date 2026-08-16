@@ -8,8 +8,9 @@
 //     → RecognizedAccount[]               the app's contract
 //
 // The semantic parser and the NORMALIZED blocks contract live in the pure
-// ocr-* modules so the same parser runs in the Node eval harness
-// (`packages/ocr-eval`), which replays recorded blocks without touching native code.
+// `@whole/ocr` package so the same parser runs in the Node eval harness
+// (`packages/ocr-eval`), which replays recorded blocks without touching native
+// code.
 import { ImageManipulator } from "expo-image-manipulator";
 
 import {
@@ -17,9 +18,9 @@ import {
   normalizeOcrResult,
   recognizeTextOnDevice,
 } from "@/features/assets/ocr-engine";
-import { parseOcrBlocks } from "@/features/assets/ocr-parser";
+import { parseOcrBlocks } from "@whole/ocr";
 
-export type { RecognizedAccount } from "./recognition-types";
+export type { RecognizedAccount } from "@whole/ocr";
 
 // Thrown by `recognizeAccountFromScreenshot` when the device can't run on-device
 // OCR (e.g. very old devices or certain Android builds). Callers surface this

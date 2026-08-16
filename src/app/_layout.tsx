@@ -1,9 +1,14 @@
+import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { Stack, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
+import {
+  queryClient,
+  queryPersistOptions,
+} from "@/features/assets/query-client";
 import { I18nProvider } from "@/i18n";
 import { OnboardingContext } from "@/features/onboarding/onboarding-context";
 import { loadOnboardingCompleted } from "@/features/onboarding/onboarding-store";
@@ -15,10 +20,18 @@ import { loadOnboardingCompleted } from "@/features/onboarding/onboarding-store"
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 // Development-only helpers are gated behind `__DEV__` (Metro-injected, true in
-// dev bundles, false in production builds) so the OCR fixture capture screen
-// never ships in a release with no route to it. Kept as a module constant so
-// consumers don't spread `__DEV__` through render bodies.
+// dev bundles, false in production builds) so the Dev Tools screen never ships
+// in a release with no route to it. Kept as a module constant so consumers
+// don't spread `__DEV__` through render bodies.
 const isDev = __DEV__;
+
+// expo-router reads a route module's named `ErrorBoundary` export and wraps that
+// route — here the root layout, so every screen — in `<Try catch={...}>`. This
+// is the app's only render-error backstop: without it an exception reaches
+// React's root handler and `ExceptionsManager` treats it as fatal, which in a
+// release build is a crash or a white screen. The catch path is not `__DEV__`
+// gated, so this works in production, which is the point.
+export { AppErrorBoundary as ErrorBoundary } from "@/components/AppErrorBoundary";
 
 export default function RootLayout() {
   const router = useRouter();
@@ -91,61 +104,61 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <I18nProvider>
-        <OnboardingContext.Provider value={onboardingValue}>
-          {isOnboarded === null ? null : (
-            <>
-              <StatusBar style="dark" />
-              <Stack screenOptions={{ headerShown: false }}>
-                <Stack.Screen
-                  name="onboarding"
-                  options={{ animation: "none" }}
-                />
-                <Stack.Screen
-                  name="accounts/new"
-                  options={{
-                    animation: "slide_from_right",
-                    gestureEnabled: true,
-                  }}
-                />
-                <Stack.Screen
-                  name="accounts/[id]"
-                  options={{
-                    animation: "slide_from_right",
-                    gestureEnabled: true,
-                  }}
-                />
-                {/* Dev-only OCR fixture capture. Registered only in dev builds:
-                      the route file under `app/dev/` still gets bundled by Metro,
-                      but without this registration it has no in-app surface, and
-                      production builds drop the entry entirely. Each Screen is
-                      its own conditional element — Stack's children mapper does
-                      not understand React Fragments, so wrapping them in one
+      {/* Restores the query cache from sqlite before the tree renders, so a
+          cold start shows the last known exchange rates instead of "—" while
+          the network answers. Children are not blocked on the restore: the
+          screens read rates imperatively and degrade on their own. */}
+      <PersistQueryClientProvider
+        client={queryClient}
+        persistOptions={queryPersistOptions}
+      >
+        <I18nProvider>
+          <OnboardingContext.Provider value={onboardingValue}>
+            {isOnboarded === null ? null : (
+              <>
+                <StatusBar style="dark" />
+                <Stack screenOptions={{ headerShown: false }}>
+                  <Stack.Screen
+                    name="onboarding"
+                    options={{ animation: "none" }}
+                  />
+                  <Stack.Screen
+                    name="accounts/new"
+                    options={{
+                      animation: "slide_from_right",
+                      gestureEnabled: true,
+                    }}
+                  />
+                  <Stack.Screen
+                    name="accounts/[id]"
+                    options={{
+                      animation: "slide_from_right",
+                      gestureEnabled: true,
+                    }}
+                  />
+                  {/* Dev Tools. Registered only in dev builds: the route file
+                      under `app/dev/` still gets bundled by Metro, but without
+                      this registration it has no in-app surface, and production
+                      builds drop the entry entirely. Keep each dev Screen its
+                      own conditional element — Stack's children mapper does not
+                      understand React Fragments, so wrapping several in one
                       would warn "Unknown child element" (and crash in dev via
                       Symbol-to-string coercion). */}
-                {isDev ? (
-                  <Stack.Screen
-                    name="dev/index"
-                    options={{
-                      animation: "slide_from_right",
-                      gestureEnabled: true,
-                    }}
-                  />
-                ) : null}
-                {isDev ? (
-                  <Stack.Screen
-                    name="dev/ocr-capture"
-                    options={{
-                      animation: "slide_from_right",
-                      gestureEnabled: true,
-                    }}
-                  />
-                ) : null}
-              </Stack>
-            </>
-          )}
-        </OnboardingContext.Provider>
-      </I18nProvider>
+                  {isDev ? (
+                    <Stack.Screen
+                      name="dev/index"
+                      options={{
+                        animation: "slide_from_right",
+                        gestureEnabled: true,
+                      }}
+                    />
+                  ) : null}
+                </Stack>
+              </>
+            )}
+          </OnboardingContext.Provider>
+        </I18nProvider>
+      </PersistQueryClientProvider>
     </GestureHandlerRootView>
   );
 }

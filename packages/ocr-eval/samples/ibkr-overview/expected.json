@@ -1,0 +1,12 @@
+[
+  {
+    "balances": [
+      {
+        "currency": "SGD",
+        "balance": 63714
+      }
+    ],
+    "kind": "investment",
+    "institutionId": "ibkr"
+  }
+]

@@ -1,26 +1,20 @@
 packages:
   - 'packages/*'
+# Supply-chain guard: a version must be published for this many minutes before
+# pnpm will resolve it, transitive dependencies included. 1440 is pnpm v11's
+# default — stated explicitly because it is the setting a same-day Expo patch
+# release collides with, and a reader hitting
+# ERR_PNPM_NO_MATURE_MATCHING_VERSION needs to find the cause here rather than
+# infer it from a missing line.
+#
+# Exceptions go in `minimumReleaseAgeExclude` and are TEMPORARY: the only reason
+# to add one is that a package published today fails resolution outright. Delete
+# the entry on the next dependency bump — a stale exclusion never errors, it just
+# pins that package to the version named in it, which is how
+# @expo/metro-runtime got stranded three patch releases behind.
+minimumReleaseAge: 1440
 allowBuilds:
   esbuild: true
   unrs-resolver: true
-minimumReleaseAgeExclude:
-  - '@expo/cli@57.0.14'
-  - '@expo/fingerprint@0.20.7'
-  - '@expo/inline-modules@0.1.5'
-  - '@expo/local-build-cache-provider@57.0.6'
-  - '@expo/metro-config@57.0.8'
-  - '@expo/prebuild-config@57.0.11'
-  - expo-asset@57.0.10
-  - expo-constants@57.0.10
-  - expo-server@57.0.2
-  - expo@57.0.12
-  - '@expo/ui@57.0.10'
-  - expo-dev-client@57.0.11
-  - expo-dev-launcher@57.0.11
-  - expo-dev-menu@57.0.11
-  - expo-image-manipulator@57.0.9
-  - expo-image-picker@57.0.9
-  - expo-router@57.0.12
-  - expo-splash-screen@57.0.6
 patchedDependencies:
   expo-mlkit-ocr@0.2.7: patches/expo-mlkit-ocr@0.2.7.patch

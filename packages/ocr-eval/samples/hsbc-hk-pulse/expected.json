@@ -1,0 +1,26 @@
+[
+  {
+    "accountName": "汇丰Pulse银联双币钻石卡-港币",
+    "accountLastFourDigits": "8468",
+    "balances": [
+      {
+        "currency": "HKD",
+        "balance": 0
+      }
+    ],
+    "kind": "cash",
+    "institutionId": "hsbchk"
+  },
+  {
+    "accountName": "汇丰Pulse银联双币钻石卡-人民币",
+    "accountLastFourDigits": "6362",
+    "balances": [
+      {
+        "currency": "CNY",
+        "balance": -5797.06
+      }
+    ],
+    "kind": "cash",
+    "institutionId": "hsbchk"
+  }
+]

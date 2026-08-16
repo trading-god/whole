@@ -1,19 +1,36 @@
 import { recognizeText, isSupported } from "expo-mlkit-ocr";
 
-import type { OcrBlock, OcrNativeResult, OcrTextBlock } from "./ocr-types";
+import type { OcrTextBlock } from "@whole/ocr";
 
 // The ONLY module that touches the native OCR engine. Everything downstream
 // (the semantic parser, the eval harness, the recognition entry point) works
-// against `OcrNativeResult` / `OcrTextBlock` (see ocr-types), so swapping the
-// engine — to another Expo module or a hand-written Vision/ML-Kit bridge —
-// changes nothing but this file.
+// against `OcrTextBlock` (see `@whole/ocr`), so swapping the engine — to another
+// Expo module or a hand-written Vision/ML-Kit bridge — changes nothing but this
+// file.
+//
+// The pixel-space types are declared HERE rather than in `@whole/ocr`'s
+// `contract/`, because they describe whichever native bridge is installed, not
+// the recognition contract. A bridge with a different box convention (centre
+// origin, normalized, quad corners) is then a change to this file alone, instead
+// of an edit to a pure TypeScript package that never reads them.
+
+/** One flat OCR text region with its pixel-space bounding box. */
+export type OcrBlock = {
+  text: string;
+  box: { x: number; y: number; width: number; height: number };
+};
+
+/** The engine-level result: the flat OCR blocks. */
+export type OcrNativeResult = {
+  blocks: OcrBlock[];
+};
 //
 // iOS OCR languages: `expo-mlkit-ocr` on iOS (the project sets
 // `EXPO_MLKIT_OCR_DISABLE_MLKIT=1` in the Podfile for arm64-simulator
 // friendliness) runs Apple Vision's fallback. The package is patched (see
 // `patches/expo-mlkit-ocr@0.2.7.patch`) to set
 // `request.recognitionLanguages = ["zh-Hans", "en-US"]` in the non-ML-Kit
-// branch of `recognizeText`, so Chinese labels on bank screens (可用余额,
+// branch of `recognizeText`, so Chinese labels on institution screens (可用余额,
 // 等值新币) are recognized alongside English. A standalone `expo-vision-ocr`
 // module was tried and abandoned (Expo 57 + pnpm's workspace symlink isn't
 // visible to `pod install`'s resolve); patching the existing module is the

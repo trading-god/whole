@@ -1,18 +1,30 @@
 // Shared helpers for the eval package: path resolution, sample discovery, and
-// the blocks fixture schema. Kept in one module so the runner (`run-eval.ts`)
-// and the annotator (`annotate.ts`) share the same sample-finding and
-// fixture-loading logic instead of each re-declaring it.
+// fixture loading. Kept in one module so every CLI here (the runner, the
+// Vision bridge, the single-image recognizer, the golden test) finds and loads
+// samples the same way instead of each re-declaring it.
+//
+// The *shapes* are not declared here: `blocksFixtureSchema` and
+// `recognizedAccountSchema` are the recognition contract and belong to
+// `@whole/ocr`, which owns both the writer and the reader of those files. This
+// module only decides where they live on disk.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { z } from "zod";
 
 import {
-  assetKindSchema,
-  lastFourDigitsSchema,
-} from "@/features/assets/account-appearance";
-import { accountBalanceSchema } from "@/features/assets/account-balance-schema";
-import type { OcrTextBlock } from "@/features/assets/ocr-types";
+  blocksFixtureSchema,
+  blocksFromFixture,
+  recognizedAccountSchema,
+  type OcrTextBlock,
+  type RecognizedAccount,
+} from "@whole/ocr";
+
+// The message off a caught `unknown`. Every CLI here reports failures as one
+// line of text, so this was written out nine times before it was a function —
+// nine places to edit the day the harness wants a stack trace or an error code.
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 function currentFileDir(): string {
   return path.dirname(fileURLToPath(import.meta.url));
@@ -28,54 +40,55 @@ export const packageRoot = path.resolve(currentFileDir(), "..");
 // invoked from.
 export const samplesDir = path.join(packageRoot, "samples");
 
-// Recorded blocks.json shape — the normalized OCR output the parser consumes
-// (the same 0..1 contract `normalizeOcrResult` produces). Validated at load so
-// a hand-edited fixture (the eval README invites making them by hand) fails
-// with a clear shape error naming the sample, instead of an opaque crash
-// mid-batch ("expected.map is not a function") that aborts everything.
-export const blocksFixtureSchema = z.object({
-  blocks: z.array(
-    z.object({
-      text: z.string(),
-      box: z.object({
-        x: z.number(),
-        y: z.number(),
-        width: z.number(),
-        height: z.number(),
-      }),
-    }),
-  ),
-});
-
-// The zod schema for a `RecognizedAccount`, assembled from the same pure
-// schemas the app's parser validates against. Used to validate gold
-// `expected.json` files at load so a malformed fixture fails with a clear
-// shape error instead of an opaque crash mid-comparison.
-export const recognizedAccountSchema = z.object({
-  accountName: z.string().optional(),
-  accountLastFourDigits: lastFourDigitsSchema.optional(),
-  balances: z.array(accountBalanceSchema).optional(),
-  kind: assetKindSchema.optional(),
-});
-
-// Lists sample slugs (subdirectories of `samplesDir` that contain a
-// `blocks.json`), sorted. Shared by the runner and the annotator so sample
-// discovery can't drift between them.
-export function listSampleSlugs(): string[] {
+// Lists sample slugs (subdirectories of `samplesDir` containing `marker`),
+// sorted. Shared so sample discovery can't drift between the CLIs — the
+// recorded-blocks consumers list by `blocks.json`, the Vision bridge by
+// `screenshot.png`.
+export function listSampleSlugs(marker = "blocks.json"): string[] {
   return fs
     .readdirSync(samplesDir, { withFileTypes: true })
     .filter((e) => e.isDirectory())
     .map((e) => e.name)
-    .filter((slug) => fs.existsSync(path.join(samplesDir, slug, "blocks.json")))
+    .filter((slug) => fs.existsSync(path.join(samplesDir, slug, marker)))
     .sort();
 }
 
+// The directory the command was typed in, for resolving a user-supplied path.
+// `pnpm --filter` runs a package script with the PACKAGE as cwd, so a relative
+// path the user typed at the repo root would otherwise resolve against
+// `packages/ocr-eval/`. The root scripts forward `OCR_INVOCATION_DIR`;
+// `INIT_CWD` covers a direct `pnpm --filter` invocation.
+export function invocationDir(): string {
+  return (
+    process.env.OCR_INVOCATION_DIR || process.env.INIT_CWD || process.cwd()
+  );
+}
+
 // Parses the `--sample <slug>` CLI flag from args, returning the slug or null
-// when absent. Shared by the runner and the annotator so the flag contract
-// can't drift between them.
+// when absent. Shared by every CLI here so the flag contract can't drift
+// between them.
+//
+// A flag is never a value. Falling through to null expanded a run to EVERY
+// sample — `--sample --update-baseline`, or a `--sample` whose slug was
+// forgotten, rebuilt the whole baseline instead of one entry, with only
+// "baseline.json updated (17 sample(s) rebuilt)" as the tell. The gate must
+// never shrink by accident. Every CLI here takes flags after the slug, so the
+// next argument being one means the slug was omitted.
+//
+// Thrown, not exited: this module is the shared loader — the test suites import
+// it too — so terminating the process here would kill a vitest worker instead
+// of failing an assertion. Each CLI's top-level catch turns it into the exit
+// code.
 export function parseSampleFlag(args: string[]): string | null {
   const idx = args.indexOf("--sample");
-  return idx !== -1 && args[idx + 1] ? args[idx + 1] : null;
+  if (idx === -1) {
+    return null;
+  }
+  const value = args[idx + 1];
+  if (value && !value.startsWith("--")) {
+    return value;
+  }
+  throw new Error("--sample needs a value (e.g. `--sample ocbc-overview`).");
 }
 
 // Resolves the sample slugs a CLI should process: the `--sample <slug>` target
@@ -94,30 +107,81 @@ export function resolveSampleTargets(args: string[]): string[] {
   return slugs;
 }
 
-// Loads a sample's recorded `blocks.json` and returns the validated fixture
-// blocks (the raw `box` shape). The single read+validate site for
-// `blocks.json`; callers that need the parser's `normalizedBox` contract use
-// `loadOcrBlocks` below, and callers that need the raw `box` for an LLM
-// prompt (`annotate.ts`) use this directly.
-export function loadFixtureBlocks(slug: string) {
-  const raw: unknown = JSON.parse(
-    fs.readFileSync(path.join(samplesDir, slug, "blocks.json"), "utf8"),
+// Runs `worker` over `items` with at most `limit` in flight, returning results
+// in input order. The work here is almost entirely spent waiting on a Vision
+// subprocess, so a serial loop sits idle; the cap keeps that from turning into
+// one child process per sample all at once.
+export async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  // At least one runner. `os.cpus()` can return an empty array, and a limit of
+  // 0 produced no runners at all — every result stayed a hole and the caller
+  // crashed reading `.status` off `undefined`.
+  const runners = Array.from(
+    { length: Math.max(1, Math.min(limit, items.length)) },
+    async () => {
+      for (let i = next++; i < items.length; i = next++) {
+        results[i] = await worker(items[i]);
+      }
+    },
   );
-  return blocksFixtureSchema.parse(raw).blocks;
+  await Promise.all(runners);
+  return results;
+}
+
+// Runs `load` and, on failure, re-throws naming the sample and the file. Both
+// fixtures are hand-editable — the README invites it — and a bare zod error
+// reads as `blocks[12].text` with no hint which of seventeen samples produced
+// it. `contract/fixture.ts` promises "a clear shape error naming the sample";
+// this is where that promise is kept.
+function withSampleNamed<T>(slug: string, file: string, load: () => T): T {
+  try {
+    return load();
+  } catch (error) {
+    const message = errorMessage(error);
+    throw new Error(`samples/${slug}/${file} is malformed — ${message}`);
+  }
+}
+
+// Loads a sample's recorded `blocks.json` and returns the validated fixture
+// (the raw `box` shape). The single read+validate site for `blocks.json`;
+// callers that need the parser's `normalizedBox` contract use `loadOcrBlocks`
+// below, and callers that compare fixtures as recorded (`vision.ts --check`,
+// `recognize.ts --sample`) use this directly.
+export function loadFixture(slug: string) {
+  return withSampleNamed(slug, "blocks.json", () => {
+    const raw: unknown = JSON.parse(
+      fs.readFileSync(path.join(samplesDir, slug, "blocks.json"), "utf8"),
+    );
+    return blocksFixtureSchema.parse(raw);
+  });
 }
 
 // Loads a sample's recorded `blocks.json` mapped to the parser's
-// `normalizedBox` contract (recorded boxes are already normalized 0..1, so
-// they pass straight through). Shared by `run-eval.ts` and `dump.ts` so the
-// blocks→parser-input mapping can't drift between them.
+// `normalizedBox` contract.
 export function loadOcrBlocks(slug: string): OcrTextBlock[] {
-  return loadFixtureBlocks(slug).map((b) => ({
-    text: b.text,
-    normalizedBox: {
-      x: b.box.x,
-      y: b.box.y,
-      width: b.box.width,
-      height: b.box.height,
-    },
-  }));
+  return blocksFromFixture(loadFixture(slug));
+}
+
+// Loads a sample's gold `expected.json`, or null when the sample has no gold
+// yet (a screenshot recorded but not annotated). The single read+validate site,
+// so the runner and the golden test reject a malformed gold the same way
+// instead of one of them crashing mid-batch on it.
+export function loadGoldAccounts(slug: string): RecognizedAccount[] | null {
+  const goldPath = path.join(samplesDir, slug, "expected.json");
+  if (!fs.existsSync(goldPath)) {
+    return null;
+  }
+  return withSampleNamed(slug, "expected.json", () => {
+    const raw: unknown = JSON.parse(fs.readFileSync(goldPath, "utf8"));
+    // `.strict()`: a gold is hand-edited, and a misspelled key ("lastFour" for
+    // "accountLastFourDigits") was silently dropped by the non-strict object —
+    // turning a required assertion into "not required" with no diagnostic, in
+    // the very file the hard-assert golden test reads.
+    return recognizedAccountSchema.strict().array().parse(raw);
+  });
 }

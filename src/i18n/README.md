@@ -35,6 +35,13 @@ total of its accounts' balances, no card number or type of its own. The code
 calls this an `AssetAccountGroup` (`group`/`groupId`); user-facing copy always
 says "机构"/"institution".
 
+The `institutionNames` catalog holds the display name of each institution the
+OCR pipeline can detect (`InstitutionId` in
+`packages/ocr/src/contract/institution.ts`). It spans banks (OCBC, DBS,
+招商银行), crypto exchanges (Bitget, OKX), and brokers (Interactive Brokers), so
+neither the key nor its copy may be narrowed to "bank"/"银行" — the fallback
+entry reads "Unknown institution"/"未知机构".
+
 Use product nouns consistently. Actions can be shortened when the surrounding
 context already names the object, but accessibility labels should remain
 explicit.

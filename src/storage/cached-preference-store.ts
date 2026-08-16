@@ -39,6 +39,18 @@ export function createCachedPreferenceStore<Value extends string>(
     }
 
     const raw = await getItem(key);
+    // A save can land while this read is in flight, and the cold-start window is
+    // wide enough to tap a picker in: `kv-store` opens the database and runs the
+    // legacy AsyncStorage migration scan before the first read returns. Re-check
+    // before adopting what storage held, because the read is now stale —
+    // overwriting a just-persisted choice with the value it replaced would break
+    // the "memory matches storage" invariant stated above. The UI is already
+    // shielded by `useStoredPreference`, so today this only corrupts the cache;
+    // it becomes user-visible the moment a second consumer reads the same
+    // preference.
+    if (cached !== null) {
+      return cached;
+    }
     if (raw !== null) {
       const parsed = schema.safeParse(raw);
       if (parsed.success) {
@@ -56,7 +68,16 @@ export function createCachedPreferenceStore<Value extends string>(
       // would re-derive a different base while the migration marker still names
       // the old one — corrupting every snapshot with a wrong-factor conversion.
       await setItem(key, fallback);
-      cached = fallback;
+      // Same stale-read guard as above: a save landing during this write must
+      // not be rolled back in memory. The write ORDER is still unguarded — a
+      // concurrent save could reach sqlite before this one and lose — but no
+      // `persistFallback` preference has a save path today (the base currency
+      // is only ever read; see base-currency-store), so the ordering hole is
+      // unreachable. Route both writes through one serializer before giving
+      // one a setter.
+      if (cached === null) {
+        cached = fallback;
+      }
     }
     return fallback;
   }

@@ -1,0 +1,14 @@
+[
+  {
+    "accountName": "储蓄户口",
+    "accountLastFourDigits": "5038",
+    "balances": [
+      {
+        "currency": "SGD",
+        "balance": 2845.42
+      }
+    ],
+    "kind": "cash",
+    "institutionId": "trust"
+  }
+]

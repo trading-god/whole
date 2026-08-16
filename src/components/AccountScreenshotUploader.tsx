@@ -33,7 +33,7 @@ type AccountScreenshotUploaderProps = {
   sourceImage: SelectedSourceImage | null;
   onSourceImageChange: (image: SelectedSourceImage | null) => void;
   // Fired with every account the recognizer returned — a single-account
-  // screenshot yields a one-element list, a bank-overview screenshot yields
+  // screenshot yields a one-element list, an institution-overview screenshot yields
   // several. The parent decides how to apply them (the add screen routes ≥2
   // accounts to the multi-account wizard and otherwise fills the single-
   // account form; the edit screen applies the entry matching its account) and
@@ -41,7 +41,14 @@ type AccountScreenshotUploaderProps = {
   // when the result actually landed on the form. May answer asynchronously:
   // the add screen confirms before a re-upload replaces drafts the user has
   // edited, and the badge waits on that answer rather than guessing it.
-  onRecognized: (accounts: RecognizedAccount[]) => boolean | Promise<boolean>;
+  // `true` when the parent applied the result, `false` when it could not (no
+  // matching account, nothing fillable), and `"declined"` when the USER turned
+  // it down — a confirmation they cancelled. The third case is not a failure of
+  // the screenshot, so it must not render the "none of these matched" hint that
+  // invites re-uploading the same image.
+  onRecognized: (
+    accounts: RecognizedAccount[],
+  ) => boolean | "declined" | Promise<boolean | "declined">;
 };
 
 // One height for both states of the screenshot slot (empty upload card and
@@ -101,11 +108,13 @@ export function AccountScreenshotUploader({
     };
   }, []);
 
+  // Returns "declined" when the parent turned the result down, so `pickImage`
+  // can put back the screenshot and the badge the user chose to keep.
   const recognizeScreenshot = async (
     uri: string,
     width?: number,
     height?: number,
-  ) => {
+  ): Promise<"declined" | undefined> => {
     setIsRecognizing(true);
     setIssue(null);
     // The outcome leaves the try as a plain variable rather than a `finally`
@@ -117,6 +126,7 @@ export function AccountScreenshotUploader({
     let failure: UploadIssue | null = null;
     let recognizedCount = 0;
     let applied = false;
+    let declined = false;
     try {
       const accounts = await recognizeAccountFromScreenshot(uri, width, height);
       if (!isMountedRef.current) {
@@ -127,7 +137,9 @@ export function AccountScreenshotUploader({
       // response or an ignored result (e.g. no matching account on the edit
       // screen) must not flip the badge to "Recognized" over an unchanged
       // form.
-      applied = await onRecognizedRef.current(accounts);
+      const outcome = await onRecognizedRef.current(accounts);
+      declined = outcome === "declined";
+      applied = outcome === true;
     } catch (error) {
       // The recognizer gates unsupported hardware itself and throws this typed
       // error so we can tell "this device can't do OCR" from "OCR ran but
@@ -141,11 +153,17 @@ export function AccountScreenshotUploader({
       return;
     }
     setIsRecognizing(false);
-    setHasRecognized(applied);
+    // Declining leaves the badge as it was: the user turned down a REPLACEMENT,
+    // so whatever the previous screenshot filled in is still on the form and
+    // still recognized. Clearing it said "nothing was recognized" over fields
+    // that plainly were.
+    if (!declined) {
+      setHasRecognized(applied);
+    }
 
-    if (failure || applied) {
+    if (failure || applied || declined) {
       setIssue(failure);
-      return;
+      return declined ? "declined" : undefined;
     }
     // Nothing threw and nothing landed. Say which of the two it was: the OCR
     // read no account at all, or it read accounts and none of them was the one
@@ -153,6 +171,7 @@ export function AccountScreenshotUploader({
     // field unchanged, and the user cannot tell a failed pass from a screenshot
     // of the wrong account — so they retry the same upload.
     setIssue(recognizedCount === 0 ? "recognitionFailed" : "noMatchingAccount");
+    return undefined;
   };
 
   const pickImage = async () => {
@@ -179,6 +198,12 @@ export function AccountScreenshotUploader({
       return;
     }
 
+    // The previous outcome is held until this pick produces its own. Clearing
+    // it here meant a DECLINED replacement left the badge reading "screenshot
+    // ready" over fields the earlier screenshot had filled in — and the card
+    // showing the new image beside the old form data.
+    const previous = sourceImage;
+    const previouslyRecognized = hasRecognized;
     onSourceImageChange({ assetId: picked.assetId ?? null, uri: picked.uri });
     setHasRecognized(false);
     // On-device OCR may be unavailable on some hardware (e.g. very old devices
@@ -189,7 +214,17 @@ export function AccountScreenshotUploader({
     // Cannot throw — recognizeScreenshot funnels every failure into `issue`.
     // The picker already decoded the image, so hand its pixel dimensions to the
     // recognizer instead of the recognizer re-decoding just to read them.
-    await recognizeScreenshot(picked.uri, picked.width, picked.height);
+    const outcome = await recognizeScreenshot(
+      picked.uri,
+      picked.width,
+      picked.height,
+    );
+    if (outcome === "declined" && isMountedRef.current) {
+      // Put back what the user chose to keep: the screenshot they had, and the
+      // badge that describes the fields still on the form.
+      onSourceImageChange(previous);
+      setHasRecognized(previouslyRecognized);
+    }
   };
 
   const badgeLabel = isRecognizing

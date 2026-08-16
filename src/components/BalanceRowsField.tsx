@@ -1,12 +1,16 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { ButtonBase } from "@/components/ButtonBase";
 import { CurrencyPicker } from "@/components/CurrencyPicker";
-import { FormField } from "@/components/FormField";
+import { FormField, SIGNED_DECIMAL_KEYBOARD } from "@/components/FormField";
 import { Icon } from "@/components/Icon";
 import { knownAssetCurrencies } from "@/features/assets/currencies";
-import { type BalanceRow } from "@/features/assets/balance-rows";
+import {
+  type BalanceRow,
+  markBalanceRows,
+} from "@/features/assets/balance-rows";
 import { COLORS } from "@/theme/colors";
 import { MIN_INTERACTIVE_SIZE } from "@/theme/layout";
 import { actionLink, screenStyles } from "@/theme/screen-styles";
@@ -42,6 +46,19 @@ export function BalanceRowsField({
   const allCurrenciesAdded =
     new Set(balanceRows.map((row) => row.currency)).size >=
     knownAssetCurrencies.length;
+  // Which row the user is typing in, so a half-typed entry is left alone until
+  // focus leaves it. Held by row id, not index: removing a row shifts every
+  // index below it.
+  const [editingRowId, setEditingRowId] = useState<number | null>(null);
+  // Per-row markers — is this a balance, is it unreadable, does it repeat an
+  // earlier currency. Derived in `balance-rows.ts` so the duplicate rule the
+  // field SHOWS and the one `draftToValidAccount` ENFORCES cannot drift, and so
+  // it sits where `pnpm test:app` can reach it.
+  //
+  // The two ways this form used to disable Save without saying anything: a row
+  // whose text isn't a number, and two rows in the same currency. Both parse
+  // fine to the eye, so nothing was on screen to explain the grey button.
+  const classified = markBalanceRows(balanceRows, editingRowId);
   return (
     <>
       {balanceRows.map((row, index) => (
@@ -50,8 +67,28 @@ export function BalanceRowsField({
           <FormField
             label={index === 0 ? accountBalanceLabel : undefined}
             accessibilityLabel={`${accountBalanceLabel} ${row.currency}`}
-            keyboardType="decimal-pad"
+            // A row whose text isn't a number is dropped by
+            // `deriveValidBalances`, which is what disables Save. Said out
+            // loud, because the keyboard can type characters the field cannot
+            // use: iOS has no minus key on `decimal-pad`, so this field asks
+            // for `numbers-and-punctuation`, which also offers `$`, `%` and the
+            // rest — and "S$100" or "1.2.3" then vanished from the total with
+            // nothing on screen to explain why Save stayed grey.
+            error={
+              classified[index].duplicateCurrency
+                ? t("accountForm.duplicateCurrency")
+                : classified[index].unreadable
+                  ? t("accountForm.invalidBalance")
+                  : undefined
+            }
+            keyboardType={SIGNED_DECIMAL_KEYBOARD}
+            onBlur={() =>
+              setEditingRowId((current) =>
+                current === row.id ? null : current,
+              )
+            }
             onChangeText={(value) => onUpdate(index, { balance: value })}
+            onFocus={() => setEditingRowId(row.id)}
             placeholder="0.00"
             value={row.balance}
             trailing={

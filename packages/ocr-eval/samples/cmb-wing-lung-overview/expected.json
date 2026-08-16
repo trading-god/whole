@@ -1,0 +1,38 @@
+[
+  {
+    "accountName": "一卡通",
+    "accountLastFourDigits": "9847",
+    "balances": [
+      {
+        "currency": "HKD",
+        "balance": 10336.81
+      },
+      {
+        "currency": "USD",
+        "balance": 0
+      },
+      {
+        "currency": "CNY",
+        "balance": 0
+      }
+    ],
+    "kind": "cash",
+    "institutionId": "cmbwl"
+  },
+  {
+    "accountName": "保证金证券",
+    "accountLastFourDigits": "5642",
+    "balances": [
+      {
+        "currency": "HKD",
+        "balance": 26.14
+      },
+      {
+        "currency": "USD",
+        "balance": 0
+      }
+    ],
+    "kind": "investment",
+    "institutionId": "cmbwl"
+  }
+]

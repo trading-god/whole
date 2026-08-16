@@ -1,11 +1,32 @@
 import { type ReactNode } from "react";
-import { StyleSheet, Text, TextInput, View } from "react-native";
+import {
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  type TextInputProps,
+  View,
+} from "react-native";
 
 import { FieldShell } from "@/components/FieldShell";
+import { screenStyles } from "@/theme/screen-styles";
 import { COLORS } from "@/theme/colors";
 import { useResponsiveLayout } from "@/theme/layout";
 import { SPACING } from "@/theme/spacing";
 import { FONT_SIZE, FONT_WEIGHT, LETTER_SPACING } from "@/theme/typography";
+
+// A numeric keyboard that can type a minus sign. iOS's `decimal-pad` has no
+// minus key at all, so with it a negative balance is literally untypeable —
+// and a credit card's balance is negative (net worth is assets minus
+// liabilities). Android's `numeric` already offers both the sign and the
+// decimal separator.
+//
+// The platform branch lives here, next to the keyboard-type union it belongs
+// to, so callers just name the intent.
+export const SIGNED_DECIMAL_KEYBOARD = Platform.select({
+  ios: "numbers-and-punctuation",
+  default: "numeric",
+} as const);
 
 type FormFieldProps = {
   label?: string;
@@ -13,7 +34,10 @@ type FormFieldProps = {
   value: string;
   onChangeText: (value: string) => void;
   required?: boolean;
-  keyboardType?: "default" | "url" | "decimal-pad" | "number-pad";
+  // React Native's own union, not a copy of it: the parallel literal list had
+  // to be widened by hand the moment `SIGNED_DECIMAL_KEYBOARD` needed a second
+  // value, and nothing kept it in step with what `TextInput` actually accepts.
+  keyboardType?: TextInputProps["keyboardType"];
   autoCapitalize?: "none" | "sentences" | "words" | "characters";
   maxLength?: number;
   prefix?: string;
@@ -21,6 +45,13 @@ type FormFieldProps = {
   trailingLayout?: "inline" | "responsive";
   accessibilityLabel?: string;
   editable?: boolean;
+  // Shown under the input when what the user typed cannot be used. The form
+  // still decides what "valid" means; this is only how the field says so.
+  error?: string;
+  // Focus is state the FORM needs, not just the input: a half-typed balance is
+  // not wrong until the user has left the field (see `classifyBalanceRow`).
+  onFocus?: () => void;
+  onBlur?: () => void;
 };
 
 // Shared labeled text field used by the add-account and settings screens.
@@ -43,6 +74,9 @@ export function FormField({
   trailingLayout = "inline",
   accessibilityLabel,
   editable,
+  error,
+  onFocus,
+  onBlur,
 }: FormFieldProps) {
   const { isCompact } = useResponsiveLayout();
   const stacksTrailing = trailingLayout === "responsive" && isCompact;
@@ -61,7 +95,9 @@ export function FormField({
             editable={editable}
             keyboardType={keyboardType}
             maxLength={maxLength}
+            onBlur={onBlur}
             onChangeText={onChangeText}
+            onFocus={onFocus}
             placeholder={placeholder}
             placeholderTextColor={COLORS.subtle}
             selectionColor={COLORS.brand}
@@ -80,11 +116,26 @@ export function FormField({
           </View>
         ) : null}
       </View>
+      {error ? (
+        // The shared inline-error style, so a field's blocking message renders
+        // identically to the screen-level ones beside it, and announced like
+        // them.
+        <Text
+          accessibilityLiveRegion="polite"
+          style={[screenStyles.errorHint, styles.error]}
+        >
+          {error}
+        </Text>
+      ) : null}
     </FieldShell>
   );
 }
 
 const styles = StyleSheet.create({
+  // Spacing only — the type and colour come from `screenStyles.errorHint`.
+  error: {
+    marginTop: SPACING.xs,
+  },
   inputShell: {
     alignItems: "center",
     flexDirection: "row",

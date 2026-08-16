@@ -1,21 +1,22 @@
-import { Redirect, useRouter } from "expo-router";
+import { Redirect } from "expo-router";
 import { useTranslation } from "react-i18next";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { cardSurface, screenStyles } from "@/theme/screen-styles";
 import { COLORS } from "@/theme/colors";
 import { SPACING } from "@/theme/spacing";
-import { FONT_SIZE, FONT_WEIGHT } from "@/theme/typography";
+import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT } from "@/theme/typography";
 
 // Dev Tools dashboard (`/dev`). The home screen's "Dev Mode" button lands here
 // in dev builds; production builds don't register the route, so this has no
-// surface in a release. Each row is a dev-only tool — the OCR fixture capture
-// that generates regression samples for `packages/ocr-eval`.
+// surface in a release. It currently hosts no tool — OCR fixture capture moved
+// to the macOS Vision bridge (`pnpm ocr`), which runs the same rule engine off
+// device — so the screen is kept as the landing spot for the next dev-only
+// utility rather than removed along with it.
 export default function DevToolsScreen() {
   const { t } = useTranslation();
-  const router = useRouter();
   // Expo Router auto-discovers `app/dev/` files, so the route exists in
   // production bundles even though _layout.tsx only registers it under __DEV__.
   // Bounce any deep-linked production visit back to the home screen.
@@ -31,25 +32,9 @@ export default function DevToolsScreen() {
         showsVerticalScrollIndicator={false}
       >
         <Text style={screenStyles.formHint}>{t("devTools.subtitle")}</Text>
-        <View style={styles.section}>
-          <Pressable
-            accessibilityRole="button"
-            style={({ pressed }) => [
-              styles.row,
-              pressed && screenStyles.pressed,
-            ]}
-            onPress={() => router.push("/dev/ocr-capture")}
-          >
-            <View style={styles.rowCopy}>
-              <Text style={styles.rowTitle}>
-                {t("devTools.ocrCaptureTitle")}
-              </Text>
-              <Text style={styles.rowSubtitle}>
-                {t("devTools.ocrCaptureSubtitle")}
-              </Text>
-            </View>
-            <Text style={styles.rowChevron}>›</Text>
-          </Pressable>
+        <View style={styles.emptyCard}>
+          <Text style={styles.emptyTitle}>{t("devTools.emptyTitle")}</Text>
+          <Text style={styles.emptyHint}>{t("devTools.emptyHint")}</Text>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -57,33 +42,21 @@ export default function DevToolsScreen() {
 }
 
 const styles = StyleSheet.create({
-  section: {
-    gap: SPACING.sm,
-    marginTop: SPACING.lg,
-  },
-  row: {
+  emptyCard: {
     ...cardSurface,
-    alignItems: "center",
-    flexDirection: "row",
-    gap: SPACING.md,
-    paddingHorizontal: SPACING.lg,
-    paddingVertical: SPACING.md,
-  },
-  rowCopy: {
-    flex: 1,
     gap: SPACING.xs,
+    marginTop: SPACING.lg,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.lg,
   },
-  rowTitle: {
+  emptyTitle: {
     color: COLORS.ink,
     fontSize: FONT_SIZE.bodyLg,
     fontWeight: FONT_WEIGHT.bold,
   },
-  rowSubtitle: {
+  emptyHint: {
     color: COLORS.muted,
     fontSize: FONT_SIZE.bodySm,
-  },
-  rowChevron: {
-    color: COLORS.subtle,
-    fontSize: FONT_SIZE.bodyLg,
+    lineHeight: LINE_HEIGHT.body,
   },
 });

@@ -1,4 +1,16 @@
-import { z } from "zod";
+import { knownAssetKinds, type AssetKind } from "@whole/ocr";
+
+// The asset-kind vocabulary and the last-four pattern live in `@whole/ocr` —
+// the recognizer classifies a kind and extracts a last-four, so it needs the
+// same definitions the app stores against. Re-exported here alongside this
+// module's visual identity (colors, tints, label keys) so app code keeps one
+// import path for "everything about an asset kind".
+export {
+  knownAssetKinds,
+  assetKindSchema,
+  lastFourDigitsSchema,
+  type AssetKind,
+} from "@whole/ocr";
 
 // Account visual identity per asset kind. `color` is the accent used for the
 // avatar glyph; `tint` is the soft background behind it. Kept here so the
@@ -8,23 +20,6 @@ const ASSET_KIND_APPEARANCE = {
   investment: { color: "#215AA8", tint: "#E7EFFB" },
   crypto: { color: "#5A48A8", tint: "#EEEAFB" },
 } as const;
-
-export const knownAssetKinds = ["cash", "investment", "crypto"] as const;
-
-export type AssetKind = (typeof knownAssetKinds)[number];
-
-// Schema for a known asset kind, owned alongside `knownAssetKinds` so
-// `asset-repository.ts` and `ocr-parser.ts` validate against one enum
-// instead of each re-declaring `z.enum(knownAssetKinds)`.
-export const assetKindSchema = z.enum(knownAssetKinds);
-
-const LAST_FOUR_DIGITS_PATTERN = /^\d{4}$/;
-
-// Schema for a 4-digit last-four string. Owned here (alongside the pattern) so
-// `asset-repository.ts`'s account identity schema and the OCR parser share one
-// definition of "what is a valid last four" instead of each re-declaring the
-// regex.
-export const lastFourDigitsSchema = z.string().regex(LAST_FOUR_DIGITS_PATTERN);
 
 export type AccountAppearance = {
   color: string;

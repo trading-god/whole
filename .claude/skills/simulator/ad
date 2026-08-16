@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Thin wrapper around agent-device. Arguments pass through verbatim, so
+# `./ad snapshot -i` is exactly `agent-device snapshot -i`.
+#
+# It exists for two reasons, both of which cost real debugging time otherwise:
+#
+#   1. agent-device keys its session by the current working directory. Running
+#      one command from the repo root and the next from somewhere else loses the
+#      session with SESSION_NOT_FOUND, which reads like a device problem but is
+#      not. The wrapper pins every command to the repo root.
+#   2. This machine's default npm registry is an internal mirror that is not
+#      reachable outside the corporate network, so `pnpm dlx` has to be pointed
+#      at the public registry explicitly.
+#
+# A globally installed agent-device wins if there is one — it saves ~0.3s of
+# resolution per call.
+set -euo pipefail
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
+cd "$repo_root"
+
+if command -v agent-device >/dev/null 2>&1; then
+  exec agent-device "$@"
+fi
+
+exec pnpm dlx --config.registry=https://registry.npmjs.org agent-device@latest "$@"

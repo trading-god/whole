@@ -1,28 +1,22 @@
 import { z } from "zod";
 
-export const knownAssetCurrencies = ["SGD", "USD", "HKD", "CNY"] as const;
+import {
+  knownAssetCurrencies,
+  currencySchema,
+  type Currency,
+} from "@whole/ocr";
 
-export type Currency = (typeof knownAssetCurrencies)[number];
-
-// Standard (ISO 4217) display symbols per currency. Intl's currency-symbol
-// resolution can fall back to the ISO code on Hermes (e.g. "SGD" instead of
-// "S$" when the currency isn't the locale's own), so the app formats the
-// symbol explicitly; CN¥ disambiguates CNY from JPY (also ¥). Single source of
-// truth for the currency↔symbol mapping, shared by `formatCurrency` (i18n) and
-// the OCR currency scanner, so adding a currency updates both in one place.
-export const CURRENCY_SYMBOLS: Record<Currency, string> = {
-  SGD: "S$",
-  USD: "$",
-  HKD: "HK$",
-  CNY: "CN¥",
-};
-
-// Schema for a known currency code. Owned here (alongside
-// `knownAssetCurrencies`) so `asset-repository.ts`, `ocr-parser.ts`,
-// `currency-conversion.ts`, and the currency preference stores validate against one
-// definition instead of each re-declaring `z.enum(knownAssetCurrencies)` or a
-// hand-written guard.
-export const currencySchema = z.enum(knownAssetCurrencies);
+// The currency vocabulary itself lives in `@whole/ocr` — the recognizer has to
+// know which currencies exist without importing app code, and the app must not
+// be able to store a currency the recognizer doesn't know. Re-exported here so
+// app modules keep importing currencies from one place while the definition
+// stays shared with the engine.
+export {
+  knownAssetCurrencies,
+  CURRENCY_SYMBOLS,
+  currencySchema,
+  type Currency,
+} from "@whole/ocr";
 
 // One figure per known currency. Backs the net-worth snapshot's per-currency
 // totals and the capital-flow ledger, both of which have to answer "how much,

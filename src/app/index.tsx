@@ -1,5 +1,5 @@
 import { Link, useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Alert,
@@ -57,6 +57,7 @@ import { useAssetAccounts } from "@/features/assets/use-asset-accounts";
 import { useOnboardingState } from "@/features/onboarding/onboarding-context";
 import { loadUserName } from "@/features/user/user-store";
 import { useAppLocale } from "@/i18n";
+import { useStoredPreference } from "@/storage/use-stored-preference";
 import { COLORS } from "@/theme/colors";
 import { useResponsiveLayout } from "@/theme/layout";
 import {
@@ -90,15 +91,32 @@ const DISTRIBUTION_BAR_HEIGHT = 10;
 // Legend dot size — the radius is half the size for a circle.
 const LEGEND_DOT_SIZE = 8;
 
+// The placeholder this screen already uses for "there is no figure to show
+// here" (the total while rates load). The legend reuses it for a kind that is
+// held but has no share of the composition — a liability.
+const UNAVAILABLE_VALUE = "—";
+
+// Hoisted out of the screen so `useStoredPreference`'s load effect sees one
+// stable identity for the life of the app. It captures nothing.
+const loadStoredAssetPrivacyMode = () => loadAssetPrivacyMode("visible");
+
 // Largest-remainder rounding so the legend percentages always sum to 100 —
 // naive per-kind Math.round can sum to 99 or 101 (e.g. 33/33/33). Returns all
 // zeros when the total is non-positive so the empty/no-rates case stays clean.
+//
+// A kind's total can be NEGATIVE: a credit card's balance is what you owe, and
+// it sits under `cash`. This bar shows what the money is made of, and a
+// negative slice has no meaning there — worse, leaving it in the denominator
+// pushes the other kinds past 100% (cash −1,000 with investments 5,000 would
+// render investments at 125%). Negative kinds are therefore excluded from the
+// composition; they still count in net worth, which is summed elsewhere.
 function roundPercentages(shares: readonly number[]): number[] {
-  const total = shares.reduce((sum, value) => sum + value, 0);
+  const positive = shares.map((share) => (share > 0 ? share : 0));
+  const total = positive.reduce((sum, value) => sum + value, 0);
   if (total <= 0) {
     return shares.map(() => 0);
   }
-  const raw = shares.map((share) => (share / total) * 100);
+  const raw = positive.map((share) => (share / total) * 100);
   const floored = raw.map((value) => Math.floor(value));
   let remainder = 100 - floored.reduce((sum, value) => sum + value, 0);
   const byFraction = raw
@@ -108,62 +126,6 @@ function roundPercentages(shares: readonly number[]): number[] {
     floored[byFraction[i % byFraction.length].index] += 1;
   }
   return floored;
-}
-
-// One persisted view preference: rendered from `fallback` until the stored
-// value loads, then written back through `save` whenever it changes. The stale
-// guard is what makes the load safe to drop on unmount, and both failure modes
-// are swallowed deliberately — a preference that can't be read stays on its
-// fallback, one that can't be written reverts on the next launch, and neither
-// is worth an alert over a view setting. Stated once so the fourth preference
-// can't quietly ship without the guard. `save` is omitted for a preference
-// this screen only reads (the greeting name, written during onboarding).
-function useStoredPreference<T>(
-  load: () => Promise<T>,
-  fallback: T,
-  save?: (value: T) => Promise<void>,
-): [T, (value: T | ((prev: T) => T)) => void] {
-  const [value, setValue] = useState(fallback);
-  // Set the moment the user picks a value, so a read that resolves late can't
-  // revert what they just chose — and already persisted. A cold start opens the
-  // database and runs the legacy AsyncStorage migration scan before the first
-  // read returns, which is a wide enough window to tap a picker in; without
-  // this the screen would disagree with storage until the next launch.
-  const hasUserChoice = useRef(false);
-
-  useEffect(() => {
-    let stale = false;
-    void load()
-      .then((stored) => {
-        if (!stale && !hasUserChoice.current) {
-          setValue(stored);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      stale = true;
-    };
-  }, [load]);
-
-  // Accepts a functional update so a caller can flip the value from inside the
-  // updater without reading a stale closure (the eye toggle double-taps). The
-  // setter resolves `next` against the current value and persists the result —
-  // the save rides the same updater so a double-tap writes the value the UI
-  // actually switched to.
-  const set = useCallback(
-    (next: T | ((prev: T) => T)) => {
-      hasUserChoice.current = true;
-      setValue((current) => {
-        const resolved =
-          typeof next === "function" ? (next as (prev: T) => T)(current) : next;
-        void save?.(resolved).catch(() => {});
-        return resolved;
-      });
-    },
-    [save],
-  );
-
-  return [value, set];
 }
 
 export default function Index() {
@@ -202,10 +164,10 @@ function HomeScreen() {
     removeAccount,
     refresh,
   } = useAssetAccounts();
-  const defaultDisplayCurrency = useMemo(
-    () => defaultDisplayCurrencyForLanguageTag(languageTag),
-    [languageTag],
-  );
+  // Not memoized: it returns a `Currency` string, and every dep array below
+  // compares it by value.
+  const defaultDisplayCurrency =
+    defaultDisplayCurrencyForLanguageTag(languageTag);
   // The display currency starts on the locale default and the chart on the
   // window the footer used before it became selectable, so both render before
   // storage answers; the stored preference replaces them once it loads.
@@ -220,11 +182,9 @@ function HomeScreen() {
   );
   // Assets start visible and hydrate from storage in the background; a failed
   // read stays visible and a failed write reverts on the next launch, neither
-  // worth an alert over a view setting (see useStoredPreference).
-  const loadStoredAssetPrivacyMode = useCallback(
-    () => loadAssetPrivacyMode("visible"),
-    [],
-  );
+  // worth an alert over a view setting (see useStoredPreference). The loader is
+  // a module constant rather than an empty-dep `useCallback` — it captures
+  // nothing, and the hook's effect keys off its identity.
   const [assetPrivacyMode, setAssetPrivacyMode] = useStoredPreference(
     loadStoredAssetPrivacyMode,
     "visible",
@@ -304,10 +264,27 @@ function HomeScreen() {
       kind,
       label: t(ASSET_KIND_CHART_LABEL_KEYS[kind]),
       percent: percents[index],
+      // The signed total behind the percentage. The legend needs it because a
+      // real holding can round to 0% (0.4% of net worth), and filtering the
+      // legend on the PERCENT dropped that kind off the screen entirely — the
+      // user holds crypto and the home screen said they held none.
+      //
+      // A NEGATIVE total counts as held too. The composition bar excludes it on
+      // purpose (a negative slice is meaningless, see `roundPercentages`), but
+      // dropping the row said the user has no cash while the net worth above it
+      // was quietly subtracting a card's debt.
+      held: totalsByKind[kind] !== 0,
+      // Whether it is part of the composition at all — a liability is not.
+      inComposition: totalsByKind[kind] > 0,
       color: ASSET_KIND_DISTRIBUTION_COLORS[kind],
     }));
   }, [totalsByKind, t]);
-  const hasDistribution = displayTotal !== null && displayTotal > 0;
+  // Gated on the POSITIVE kinds, not on net worth. The composition bar already
+  // excludes negative kinds (see `roundPercentages`), so a user whose card debt
+  // exceeds their cash still has a real composition to show — testing the
+  // signed net total instead hid the bar and greyed the dots while the legend
+  // beside them went on reading "Cash 100%".
+  const hasDistribution = distribution.some((slice) => slice.percent > 0);
   // While accounts or rates are still loading (or a load failed) show "—".
   // Once settled: no accounts → 0.00 plus a hint to add an account (the total
   // is genuinely 0); accounts present but the total didn't convert (rates
@@ -325,7 +302,7 @@ function HomeScreen() {
       // Waiting state shows the "—" placeholder, which the mask leaves readable
       // (no digits to hide): revealing "—" while loaded figures are masked
       // doesn't leak anything real, unlike showing an actual amount would.
-      return "—";
+      return UNAVAILABLE_VALUE;
     }
     if (displayTotal === null) {
       return showEmptyBalanceHint
@@ -333,7 +310,7 @@ function HomeScreen() {
             formatCurrency(0, displayCurrency),
             isAssetPrivacyModeEnabled,
           )
-        : "—";
+        : UNAVAILABLE_VALUE;
     }
     return maskAssetAmount(
       formatCurrency(displayTotal, displayCurrency),
@@ -346,7 +323,7 @@ function HomeScreen() {
     // with its "building history" placeholder, so the footer stays a dash
     // rather than repeating that sentence a few points away from it.
     if (trend.delta === null) {
-      return "—";
+      return UNAVAILABLE_VALUE;
     }
     const sign = trend.delta >= 0 ? "+" : "-";
     return maskAssetAmount(
@@ -628,7 +605,13 @@ function HomeScreen() {
 
         <View style={styles.distributionCard}>
           <View style={styles.distributionBar}>
-            {hasDistribution ? (
+            {/* The bar draws the composition itself, so privacy mode gets the
+                same grey placeholder track as an empty screen. Masking only the
+                legend left the shares on display: cash 70% / crypto 30% is two
+                segments in a 7:3 ratio beside a legend reading "••••", which is
+                the composition the mask is there to hide — and the segment
+                count alone says which classes are held. */}
+            {hasDistribution && !isAssetPrivacyModeEnabled ? (
               distribution
                 .filter((item) => item.percent > 0)
                 .map((item) => (
@@ -653,7 +636,18 @@ function HomeScreen() {
             )}
           </View>
           <View style={[styles.legend, isCompact && styles.legendCompact]}>
-            {distribution.map((item) => (
+            {/* With a composition to show, the legend lists every kind the user
+                actually HOLDS — which is not the same set the bar draws: a
+                holding under half a percent rounds to 0% and gets no segment,
+                but it is still money and belongs in the legend, reading "<1%".
+                A negative kind is in neither. With no composition (no accounts
+                yet, no rates, or liabilities only) it lists every kind at 0%
+                beside the grey placeholder bar, so the empty state still says
+                what the bar WOULD show. */}
+            {(hasDistribution && !isAssetPrivacyModeEnabled
+              ? distribution.filter((item) => item.held)
+              : distribution
+            ).map((item) => (
               <View key={item.kind} style={styles.legendItem}>
                 <View
                   style={[
@@ -669,10 +663,27 @@ function HomeScreen() {
                   {item.label}
                 </Text>
                 <Text style={styles.legendValue}>
-                  {maskAssetAmount(
-                    `${item.percent}%`,
-                    isAssetPrivacyModeEnabled,
-                  )}
+                  {isAssetPrivacyModeEnabled
+                    ? // Every kind, every value masked the same way. The
+                      // readable variants below each say something a mask is
+                      // supposed to hide: the liability label marks a kind as a
+                      // net debt, "<1%" gives a magnitude band, and filtering
+                      // the list to held kinds reveals which classes the user
+                      // holds at all — none of which a masked screen should
+                      // show.
+                      maskAssetAmount(`${item.percent}%`, true)
+                    : // A liability has no share of the composition — "0%"
+                      // would read as "you hold none", which is not what a debt
+                      // is. Said in words rather than with UNAVAILABLE_VALUE:
+                      // this screen already prints that dash a few points above
+                      // for "there is no figure to show" (the total while rates
+                      // load), and a card balance of -S$4,766.92 then read as
+                      // "couldn't compute" instead of "you owe money".
+                      !item.inComposition && item.held
+                      ? t("home.netLiability")
+                      : item.percent === 0 && item.held
+                        ? t("home.lessThanOnePercent")
+                        : `${item.percent}%`}
                 </Text>
               </View>
             ))}

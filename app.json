@@ -75,7 +75,9 @@
           "iosEngine": "auto"
         }
       ],
-      "expo-sharing"
+      "expo-sharing",
+      "expo-asset",
+      "expo-image"
     ],
     "experiments": {
       "typedRoutes": true,

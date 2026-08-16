@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -31,14 +32,16 @@ import {
   applyRecognizedToDrafts,
   draftHasContent,
   draftToValidAccount,
+  isWorthDrafting,
   recognizedToDraft,
 } from "@/features/assets/account-draft";
+import { invalidateAccounts } from "@/features/assets/accounts-query";
 import {
   findOrCreateGroupByName,
   hasDuplicateAccountKeys,
   upsertAssetAccounts,
 } from "@/features/assets/asset-repository";
-import { type BankId } from "@/features/assets/ocr-bank-config";
+import { type InstitutionId } from "@whole/ocr";
 import { defaultDisplayCurrencyForLanguageTag } from "@/features/assets/currencies";
 import { type RecognizedAccount } from "@/features/assets/screenshot-recognition";
 import { useAppLocale } from "@/i18n";
@@ -49,56 +52,42 @@ import { screenStyles } from "@/theme/screen-styles";
 import { SPACING } from "@/theme/spacing";
 import { FONT_SIZE, FONT_WEIGHT } from "@/theme/typography";
 
-// Maps a detected BankId to its localized display-name i18n key, so the
-// wizard can offer a suggested group name ("OCBC", "DBS", …) without coupling
-// the pure OCR modules to display strings. `as const satisfies Record<BankId,
-// string>` keeps the values as literal key unions (so the strictly-typed `t`
-// accepts them) and forces every BankId to provide a key — adding a bank to
-// DETECT_BANKS without a matching key is a compile error here.
-const BANK_NAME_KEYS = {
-  ocbc: "bankNames.ocbc",
-  dbs: "bankNames.dbs",
-  unknown: "bankNames.unknown",
-} as const satisfies Record<BankId, string>;
+// A detected InstitutionId's localized display-name i18n key, so the wizard can
+// offer a suggested group name ("OCBC", "DBS", …) without coupling the pure OCR
+// modules to display strings.
+//
+// The template literal type expands to the exact union of the 14 keys, so the
+// strictly-typed `t` still rejects an institution the message catalogs don't
+// name — which is the completeness check a hand-written key map was there for.
+function institutionNameKey(institutionId: InstitutionId) {
+  return `institutionNames.${institutionId}` as const;
+}
 
-// When a screenshot's accounts all share a bank, the wizard suggests grouping
-// them under that bank's display name — regardless of how many accounts were
-// recognized. A single DBS Multiplier screenshot still creates a "DBS" parent
-// with one sub-account; the parent is the institution, not a count threshold.
-// "unknown" is still suggested (the user names the institution manually in the
-// form), so an unrecognized bank still groups its accounts under a parent.
-// Returns null only when no bank was detected or the accounts span different
-// banks (ambiguous). Reuse by name happens at save time — see `save`.
+// When a screenshot's accounts all share an institution, the wizard suggests
+// grouping them under that institution's display name — regardless of how many
+// accounts were recognized. A single DBS Multiplier screenshot still creates a
+// "DBS" parent with one sub-account; the parent is the institution, not a count
+// threshold. "unknown" is still suggested (the user names the institution
+// manually in the form), so an unrecognized institution still groups its
+// accounts under a parent. Returns null only when no institution was detected or
+// the accounts span different institutions (ambiguous). Reuse by name happens at
+// save time — see `save`.
 function computeSuggestedGroup(
   accounts: readonly RecognizedAccount[],
-): { bankId: BankId } | null {
-  if (accounts.length === 0) {
-    return null;
-  }
-  const bankIds = accounts.map((account) => account.bankId);
-  const first = bankIds[0];
+): InstitutionId | null {
+  const institutionIds = accounts.map((account) => account.institutionId);
+  const first = institutionIds[0];
   if (!first) {
     return null;
   }
-  return bankIds.every((bankId) => bankId === first) ? { bankId: first } : null;
-}
-
-// Whether a recognized account has at least one non-zero balance. Accounts
-// whose every recognized balance is 0 are empty holdings the user didn't mean
-// to track, so the form drops them. This is the FORM-layer filter —
-// `parseOcrBlocks` still returns zero-balance accounts (the recognition result
-// keeps them, decoupled from this display decision). An account with no
-// recognized balances at all is kept (the user may fill them in).
-function hasNonZeroBalance(account: RecognizedAccount): boolean {
-  const balances = account.balances;
-  if (!balances || balances.length === 0) {
-    return true;
-  }
-  return balances.some((balance) => balance.balance !== 0);
+  return institutionIds.every((institutionId) => institutionId === first)
+    ? first
+    : null;
 }
 
 export default function NewAccountScreen() {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const { languageTag } = useAppLocale();
   const defaultCurrency = defaultDisplayCurrencyForLanguageTag(languageTag);
   const [selectedSourceImage, setSelectedSourceImage] =
@@ -119,16 +108,17 @@ export default function NewAccountScreen() {
   ]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [session, setSession] = useState(0);
-  // When non-null, the recognized accounts came from one bank's screenshot and
-  // should be saved into a single group named after that bank. Resolved to a
-  // real group id at save time (reusing an existing same-named group, else
-  // creating one). Cleared on a re-upload that doesn't share a known bank.
-  const [suggestedGroup, setSuggestedGroup] = useState<{
-    bankId: BankId;
-  } | null>(null);
-  // User-entered institution name when the detected bank is "unknown" (no
+  // When non-null, the recognized accounts came from one institution's
+  // screenshot and should be saved into a single group named after that
+  // institution. Resolved to a real group id at save time (reusing an existing
+  // same-named group, else creating one). Cleared on a re-upload that doesn't
+  // share a known institution.
+  const [suggestedGroup, setSuggestedGroup] = useState<InstitutionId | null>(
+    null,
+  );
+  // User-entered institution name when the detected institution is "unknown" (no
   // display name to use). Reset on each re-recognize; save skips grouping when
-  // this is empty and the bank is unknown.
+  // this is empty and the institution is unknown.
   const [suggestedGroupName, setSuggestedGroupName] = useState("");
   const pagerRef = useRef<SwipePagerHandle>(null);
 
@@ -181,14 +171,13 @@ export default function NewAccountScreen() {
   // promise: the badge should say "Recognized" only if the user let it through.
   const handleRecognized = (
     accounts: RecognizedAccount[],
-  ): Promise<boolean> => {
+  ): Promise<boolean | "declined"> => {
     if (accounts.length === 0) {
       return Promise.resolve(false);
     }
-    // Drop zero-balance accounts at the form layer (recognition keeps them —
-    // see hasNonZeroBalance). If every recognized account is zero, there's
-    // nothing to fill.
-    const fillableAccounts = accounts.filter(hasNonZeroBalance);
+    // Drop what isn't worth a draft at the form layer (recognition keeps them —
+    // see `isWorthDrafting`). If nothing survives, there's nothing to fill.
+    const fillableAccounts = accounts.filter(isWorthDrafting);
     if (fillableAccounts.length === 0) {
       return Promise.resolve(false);
     }
@@ -198,12 +187,12 @@ export default function NewAccountScreen() {
     const apply = () => {
       const suggestion = computeSuggestedGroup(fillableAccounts);
       setSuggestedGroup(suggestion);
-      // Pre-fill the institution field with the detected bank's display name
+      // Pre-fill the institution field with the detected institution's name
       // (which the user may correct — recognition isn't guaranteed accurate);
       // "unknown" leaves it blank for the user to name by hand.
       setSuggestedGroupName(
-        suggestion && suggestion.bankId !== "unknown"
-          ? t(BANK_NAME_KEYS[suggestion.bankId])
+        suggestion && suggestion !== "unknown"
+          ? t(institutionNameKey(suggestion))
           : "",
       );
       reseedDrafts((prev) =>
@@ -224,7 +213,11 @@ export default function NewAccountScreen() {
           {
             style: "cancel",
             text: t("common.cancel"),
-            onPress: () => resolve(false),
+            // "Declined", not "failed": the screenshot was read fine and the
+            // user turned the replacement down. Reported as `false` the
+            // uploader showed "none of the recognized accounts matched" under
+            // the card, inviting a re-upload of the same image.
+            onPress: () => resolve("declined"),
           },
           {
             style: "destructive",
@@ -235,6 +228,11 @@ export default function NewAccountScreen() {
             },
           },
         ],
+        // Android alerts are dismissable by tapping outside or pressing back,
+        // and no button handler fires when they are. The uploader awaits this
+        // promise, so an unresolved dismissal left the card spinning on
+        // "Recognizing…" forever with no way back. Dismissing IS declining.
+        { cancelable: true, onDismiss: () => resolve("declined") },
       );
     });
   };
@@ -330,16 +328,16 @@ export default function NewAccountScreen() {
     // all. Same reason the branches below sit outside the try.
     let failed = false;
     try {
-      // Resolve the suggested group to a real id: reuse an existing
-      // same-named group (so re-uploading the same bank's screenshot doesn't
-      // spawn duplicates), else create one. Both reads go through the
-      // repository cache, and group creation is serialized through `mutate`,
-      // so this stays consistent with a concurrent upsert.
+      // Resolve the suggested group to a real id: reuse an existing same-named
+      // group (so re-uploading the same institution's screenshot doesn't spawn
+      // duplicates), else create one. Both reads go through the repository
+      // cache, and group creation is serialized through `mutate`, so this stays
+      // consistent with a concurrent upsert.
       let groupId: string | undefined;
       if (suggestedGroup) {
-        // The institution name is always user-editable: a known bank pre-fills
-        // its display name (which the user may correct), and "unknown" starts
-        // blank. An empty name skips grouping entirely.
+        // The institution name is always user-editable: a known institution
+        // pre-fills its display name (which the user may correct), and
+        // "unknown" starts blank. An empty name skips grouping entirely.
         const groupName = suggestedGroupName.trim();
         if (groupName) {
           groupId = (await findOrCreateGroupByName(groupName)).id;
@@ -349,6 +347,12 @@ export default function NewAccountScreen() {
         ? validAccounts.map((account) => ({ ...account, groupId }))
         : validAccounts;
       await upsertAssetAccounts(accountsToSave);
+      // Mark the home screen's account list stale as soon as the write lands,
+      // rather than leaving it to be re-read on focus. The query is not active
+      // while this screen is on top, so this only flags it — the home screen
+      // refetches when it mounts again, and never renders a frame of the list
+      // as it was before this save.
+      await invalidateAccounts(queryClient);
     } catch {
       failed = true;
     }

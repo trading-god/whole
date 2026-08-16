@@ -1,16 +1,19 @@
 [
   {
     "accountName": "360 Account",
+    "accountLastFourDigits": "7001",
     "balances": [
       {
         "currency": "SGD",
         "balance": 6672.59
       }
     ],
-    "kind": "cash"
+    "kind": "cash",
+    "institutionId": "ocbc"
   },
   {
     "accountName": "Global Savings Account",
+    "accountLastFourDigits": "7201",
     "balances": [
       {
         "currency": "CNY",
@@ -21,16 +24,19 @@
         "balance": 0.0
       }
     ],
-    "kind": "cash"
+    "kind": "cash",
+    "institutionId": "ocbc"
   },
   {
     "accountName": "Statement Savings Account",
+    "accountLastFourDigits": "5001",
     "balances": [
       {
         "currency": "SGD",
         "balance": 0.0
       }
     ],
-    "kind": "cash"
+    "kind": "cash",
+    "institutionId": "ocbc"
   }
 ]

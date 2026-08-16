@@ -1,0 +1,13 @@
+[
+  {
+    "accountName": "Bitget Wallet",
+    "balances": [
+      {
+        "currency": "USD",
+        "balance": 403.3
+      }
+    ],
+    "kind": "crypto",
+    "institutionId": "bitget"
+  }
+]
