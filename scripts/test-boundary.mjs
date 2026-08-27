@@ -35,6 +35,7 @@ export const vitestOwnedSources = [
   "src/features/assets/currency-conversion.ts",
   "src/features/assets/display-currency-store.ts",
   "src/features/assets/exchange-rates-query.ts",
+  "src/features/home/distribution.ts",
   "src/features/assets/net-worth-flows.ts",
   "src/features/assets/net-worth-history.ts",
   "src/features/assets/net-worth-range.ts",
