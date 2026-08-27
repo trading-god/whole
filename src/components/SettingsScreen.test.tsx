@@ -22,7 +22,7 @@ jest.mock("@/features/assets/model-probe", () => ({
   probeConfiguredEndpoint: () => mockProbeEndpoint(),
 }));
 
-jest.mock("@/navigation/useReturnToOverview", () => ({
+jest.mock("@/lib/useReturnToOverview", () => ({
   useReturnToOverview: () => mockReturnToOverview,
 }));
 

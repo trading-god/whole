@@ -4,7 +4,7 @@ import { StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Button } from "@/components/Button";
-import { useReturnToOverview } from "@/navigation/useReturnToOverview";
+import { useReturnToOverview } from "@/lib/useReturnToOverview";
 import { COLORS } from "@/theme/colors";
 import { cardSurface, screenStyles } from "@/theme/screen-styles";
 import { SPACING } from "@/theme/spacing";

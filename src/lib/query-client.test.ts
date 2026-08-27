@@ -5,7 +5,7 @@ import {
   deserializePersistedClient,
   queryClient,
   queryPersistOptions,
-} from "@/features/assets/query-client";
+} from "@/lib/query-client";
 
 // The persister writes through `kv-store`; none of the cases here exercise
 // sqlite, only the envelope validation around it.

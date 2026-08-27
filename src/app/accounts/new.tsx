@@ -45,7 +45,7 @@ import { type InstitutionId } from "@whole/ocr";
 import { defaultDisplayCurrencyForLanguageTag } from "@/features/assets/currencies";
 import { type RecognizedAccount } from "@/features/assets/screenshot-recognition";
 import { useAppLocale } from "@/i18n";
-import { useReturnToOverview } from "@/navigation/useReturnToOverview";
+import { useReturnToOverview } from "@/lib/useReturnToOverview";
 import { COLORS } from "@/theme/colors";
 import { MIN_INTERACTIVE_SIZE } from "@/theme/layout";
 import { screenStyles } from "@/theme/screen-styles";

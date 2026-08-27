@@ -26,7 +26,7 @@ import {
   providerConfigToDraft,
   providerDraftHost,
 } from "@/features/assets/provider-draft";
-import { useReturnToOverview } from "@/navigation/useReturnToOverview";
+import { useReturnToOverview } from "@/lib/useReturnToOverview";
 import { COLORS } from "@/theme/colors";
 import { cardSurface, screenStyles } from "@/theme/screen-styles";
 import { SPACING } from "@/theme/spacing";

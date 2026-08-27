@@ -8,7 +8,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import {
   queryClient,
   queryPersistOptions,
-} from "@/features/assets/query-client";
+} from "@/lib/query-client";
 import { I18nProvider } from "@/i18n";
 import { OnboardingContext } from "@/features/onboarding/onboarding-context";
 import { loadOnboardingCompleted } from "@/features/onboarding/onboarding-store";

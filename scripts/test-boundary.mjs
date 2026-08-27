@@ -42,7 +42,6 @@ export const vitestOwnedSources = [
   "src/features/assets/model-runner.ts",
   "src/features/assets/net-worth-snapshots-query.ts",
   "src/features/assets/provider-draft.ts",
-  "src/features/assets/query-client.ts",
   "src/features/assets/recognition-issue.ts",
   "src/features/onboarding/onboarding-store.ts",
   "src/features/user/user-store.ts",
@@ -50,6 +49,7 @@ export const vitestOwnedSources = [
   "src/i18n/locales/zh-Hans.ts",
   "src/i18n/resources.ts",
   "src/i18n/schema.ts",
+  "src/lib/query-client.ts",
   "src/storage/cached-preference-store.ts",
 ];
 

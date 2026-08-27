@@ -2,7 +2,7 @@ import { useTranslation } from "react-i18next";
 import { StyleSheet, Text, View } from "react-native";
 
 import { IconButton } from "@/components/IconButton";
-import { useReturnToOverview } from "@/navigation/useReturnToOverview";
+import { useReturnToOverview } from "@/lib/useReturnToOverview";
 import { COLORS } from "@/theme/colors";
 import { ICON_BUTTON_SIZES } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";

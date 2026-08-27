@@ -42,7 +42,7 @@ import {
   type UpdateAssetAccountResult,
 } from "@/features/assets/asset-repository";
 import { type RecognizedAccount } from "@/features/assets/screenshot-recognition";
-import { useReturnToOverview } from "@/navigation/useReturnToOverview";
+import { useReturnToOverview } from "@/lib/useReturnToOverview";
 import { COLORS } from "@/theme/colors";
 import { screenStyles } from "@/theme/screen-styles";
 
