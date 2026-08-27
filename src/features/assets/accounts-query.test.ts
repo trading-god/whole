@@ -5,6 +5,7 @@ import {
   accountsQueryKey,
   cachedAccounts,
   fetchAccounts,
+  invalidateAccounts,
   removeAccount,
 } from "@/features/assets/accounts-query";
 import {
@@ -137,5 +138,23 @@ describe("fetchAccounts", () => {
 
   it("reports no accounts before the first load", () => {
     expect(cachedAccounts(testClient())).toBeNull();
+  });
+});
+
+// The add and edit screens write through the repository directly, so the cache
+// has to be told separately. Exported rather than spelled out per screen
+// because this is the write protocol: the day it needs more than an invalidate
+// there is one place to add it.
+describe("invalidateAccounts", () => {
+  it("marks the cached list stale so the next read refetches", async () => {
+    const client = testClient();
+    readMock.mockResolvedValue({ accounts: [account("a")], groups: [] });
+    await fetchAccounts(client);
+    readMock.mockResolvedValue({ accounts: [account("b")], groups: [] });
+
+    await invalidateAccounts(client);
+    await fetchAccounts(client);
+
+    expect(cachedAccounts(client)?.map((entry) => entry.id)).toEqual(["b"]);
   });
 });

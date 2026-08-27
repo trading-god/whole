@@ -5,10 +5,11 @@ import {
   ChevronLeft,
   ChevronRight,
   Eye,
+  LoaderCircle,
   EyeOff,
-  FlaskConical,
   Minus,
   Plus,
+  Settings,
   TrendingDown,
   TrendingUp,
 } from "lucide-react-native";
@@ -26,8 +27,9 @@ const ICONS = {
   "chevron-right": ChevronRight,
   check: Check,
   "arrow-up": ArrowUp,
-  "flask-conical": FlaskConical,
   minus: Minus,
+  settings: Settings,
+  "loader-circle": LoaderCircle,
 } as const;
 
 export type IconName = keyof typeof ICONS;
@@ -43,12 +45,13 @@ type IconProps = {
   name: IconName;
   size?: IconSize | number;
   color?: string;
+  testID?: string;
 };
 
-export function Icon({ name, size = "md", color }: IconProps) {
+export function Icon({ name, size = "md", color, testID }: IconProps) {
   const Glyph = ICONS[name];
   const resolvedSize = typeof size === "number" ? size : SIZE[size];
   const resolvedColor = color ?? COLORS.ink;
 
-  return <Glyph color={resolvedColor} size={resolvedSize} />;
+  return <Glyph color={resolvedColor} size={resolvedSize} testID={testID} />;
 }

@@ -1,16 +1,21 @@
 // Public entry point for account-screenshot recognition. This is what the
-// account screens call; everything from here down is on-device (no network):
+// account screens call:
 //
-//   recognizeAccountFromScreenshot(uri, width, height)
-//     → recognizeTextOnDevice(uri)        native OCR (Vision / ML Kit)
-//     → normalizeOcrResult(...)           0..1 boxes
-//     → parseOcrBlocks(...)               pure TS semantic parser
-//     → RecognizedAccount[]               the app's contract
+//   recognizeAccountFromScreenshot(uri, width, height, options)
+//     → recognizeTextOnDevice(uri)          native OCR (Vision / ML Kit)
+//     → normalizeOcrResult(...)             0..1 boxes
+//     → recognizeAccountsWithModel(...)     grid → prompt → model → resolve
+//     → ModelRecognitionResult              accounts, or a reason there are none
 //
-// The semantic parser and the NORMALIZED blocks contract live in the pure
-// `@whole/ocr` package so the same parser runs in the Node eval harness
-// (`packages/ocr-eval`), which replays recorded blocks without touching native
-// code.
+// The OCR pass is still entirely on-device. What leaves the device — and only
+// once the user has agreed to a specific host — is the recognized TEXT, never
+// the screenshot itself. `model-recognition` is where that gate lives.
+//
+// The return type is a RESULT, not a list, and that is the substantive change
+// from the rule-engine era: "no endpoint configured", "not consented to this
+// host", "your key is wrong" and "no accounts on this screen" are four
+// different things, and a screen that cannot tell them apart will show the last
+// one when it means one of the first three.
 import { ImageManipulator } from "expo-image-manipulator";
 
 import {
@@ -18,14 +23,25 @@ import {
   normalizeOcrResult,
   recognizeTextOnDevice,
 } from "@/features/assets/ocr-engine";
-import { parseOcrBlocks } from "@whole/ocr";
+import {
+  type ModelRecognitionOptions,
+  type ModelRecognitionResult,
+  recognizeAccountsWithModel,
+} from "@/features/assets/model-recognition";
 
 export type { RecognizedAccount } from "@whole/ocr";
+export type {
+  ModelRecognitionResult,
+  RecognitionFailureCause,
+} from "@/features/assets/model-recognition";
 
-// Thrown by `recognizeAccountFromScreenshot` when the device can't run on-device
-// OCR (e.g. very old devices or certain Android builds). Callers surface this
-// as "unsupported hardware" and fall back to manual entry instead of showing
-// the confusing engine error the native call would throw.
+// Thrown when the device can't run on-device OCR (e.g. very old devices or
+// certain Android builds). Callers surface this as "unsupported hardware" and
+// fall back to manual entry instead of showing the confusing engine error the
+// native call would throw.
+//
+// Still a throw rather than another result status: it is a property of the
+// DEVICE, not of this recognition, and nothing the user can act on.
 export class RecognitionUnsupportedError extends Error {
   constructor() {
     super("On-device OCR is not supported on this device");
@@ -46,11 +62,11 @@ export async function recognizeAccountFromScreenshot(
   imageUri: string,
   imageWidth?: number,
   imageHeight?: number,
-) {
+  options: ModelRecognitionOptions = {},
+): Promise<ModelRecognitionResult> {
   // Capability gate: this device can't run on-device OCR. Folding it into the
   // public entry point means any caller inherits the fallback, not just the
-  // uploader. Throws a typed error so UI layers map it to "unsupported", while
-  // keeping the per-device support policy next to the engine it describes.
+  // uploader.
   if (!isOcrSupported()) {
     throw new RecognitionUnsupportedError();
   }
@@ -64,5 +80,5 @@ export async function recognizeAccountFromScreenshot(
       : ImageManipulator.manipulate(imageUri).renderAsync(),
   ]);
   const blocks = normalizeOcrResult(native, dims.width, dims.height);
-  return parseOcrBlocks(blocks);
+  return recognizeAccountsWithModel(blocks, options);
 }

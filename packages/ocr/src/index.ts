@@ -75,3 +75,48 @@ export {
   parseOcrBlocksTraced,
   type OcrTrace,
 } from "./engine/parser";
+
+// ── The model pipeline ─────────────────────────────────────────────────────
+//
+// The replacement for the per-institution rule engine above: geometry and
+// serialization stay here (deterministic, cheap, and the part a model is worst
+// at), the model call is injected by the app, and every value it reports is
+// resolved back to the block it pointed at.
+export {
+  buildGrid,
+  type Grid,
+  type GridCell,
+  type GridRow,
+} from "./engine/grid";
+export { serializeGrid } from "./engine/serialize";
+// The amount parser the resolver reads a pointed-at block with. Exported
+// because anything asking "could an index have produced this figure?" has to
+// ask it with the same ruler — a string comparison would answer a different
+// question.
+export { matchAmount, type ParsedAmount } from "./engine/amount";
+export {
+  RECOGNITION_SCHEMA_NAME,
+  buildRecognitionPrompt,
+  recognitionJsonSchema,
+} from "./engine/prompt";
+export {
+  recognitionSelectionSchema,
+  resolveRecognition,
+  type RecognitionSelection,
+  type RecognizedInstitution,
+  type ResolvedRecognition,
+} from "./engine/resolve";
+export {
+  LAYOUT_MATCH_THRESHOLD,
+  fingerprintSimilarity,
+  layoutFingerprint,
+  type LayoutFingerprint,
+} from "./engine/fingerprint";
+export {
+  MAX_RECOGNITION_ATTEMPTS,
+  recognizeWithModel,
+  type RecognitionAttempt,
+  type RecognitionOptions,
+  type RecognitionOutcome,
+  type RunModel,
+} from "./engine/recognize";

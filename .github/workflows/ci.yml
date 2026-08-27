@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   gates:
-    name: Lint · Format · Types · OCR
+    name: Lint · Format · Types · Tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -45,6 +45,8 @@ jobs:
       - run: pnpm format:check
       - run: pnpm typecheck
       - run: pnpm test:app
+      - run: pnpm test:llm
+      - run: pnpm test:rn
       - run: pnpm test:ocr
       - run: pnpm test:ocr:golden
       - run: pnpm eval:ocr

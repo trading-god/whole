@@ -8,3 +8,7 @@ pnpm-workspace.yaml
 packages/ocr-eval/samples/*/blocks.json
 packages/ocr-eval/samples/*/expected.json
 packages/ocr-eval/samples/*/trace.json
+
+# Coverage reports: generated HTML, and the v8 reporter's markup is not
+# well-formed enough for Prettier to parse.
+coverage/

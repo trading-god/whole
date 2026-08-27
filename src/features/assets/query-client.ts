@@ -66,41 +66,50 @@ const persistedQuerySchema = z.looseObject({
   state: z.looseObject({ data: z.unknown() }),
 });
 
+// Validates a snapshot on its way off disk, and evicts any rate table that no
+// longer parses.
+//
+// The persister's default is a bare `JSON.parse`, which would hand a
+// half-written or hand-edited blob straight to the hydrator. Validating here
+// keeps this on the same footing as every other persisted shape in the app
+// (see the Validation section in AGENTS.md). Throwing is the correct failure:
+// `persistQueryClientRestore` wraps the whole restore in a try and drops the
+// cache, which is exactly what an unreadable cache deserves.
+//
+// Exported by name because `createAsyncStoragePersister` does not expose the
+// hook it was handed, and this is the one place a corrupt rate table can be
+// caught — it is worth being able to test directly.
+export function deserializePersistedClient(raw: string): PersistedClient {
+  const restored = persistedClientSchema.parse(JSON.parse(raw));
+  // Drop a rate table that no longer parses before it ever reaches the cache.
+  // This is the only place it can be caught: `fetchQuery` and `useQuery` both
+  // serve a cached entry WITHOUT calling `queryFn` while it is fresh, so a
+  // truncated or hand-edited snapshot would otherwise be handed to
+  // `convertCurrency` verbatim and produce NaN totals instead of the "—" that
+  // means "no data". Dropping the entry makes the next read a cache miss,
+  // which fetches.
+  return {
+    ...restored,
+    clientState: {
+      ...restored.clientState,
+      queries: restored.clientState.queries.filter((query) => {
+        const parsed = persistedQuerySchema.safeParse(query);
+        if (
+          !parsed.success ||
+          parsed.data.queryKey[0] !== exchangeRatesQueryPrefix
+        ) {
+          return true;
+        }
+        return exchangeRatesSchema.safeParse(parsed.data.state.data).success;
+      }),
+    },
+  } as PersistedClient;
+}
+
 export const queryPersister = createAsyncStoragePersister({
   storage: { getItem, setItem, removeItem },
   key: QUERY_CACHE_STORAGE_KEY,
-  // The persister's default is a bare `JSON.parse`, which would hand a
-  // half-written or hand-edited blob straight to the hydrator. Validating here
-  // keeps this on the same footing as every other persisted shape in the app
-  // (see the Validation section in AGENTS.md). Throwing is the correct failure:
-  // `persistQueryClientRestore` wraps the whole restore in a try and drops the
-  // cache, which is exactly what an unreadable cache deserves.
-  deserialize: (raw) => {
-    const restored = persistedClientSchema.parse(JSON.parse(raw));
-    // Drop a rate table that no longer parses before it ever reaches the cache.
-    // This is the only place it can be caught: `fetchQuery` and `useQuery` both
-    // serve a cached entry WITHOUT calling `queryFn` while it is fresh, so a
-    // truncated or hand-edited snapshot would otherwise be handed to
-    // `convertCurrency` verbatim and produce NaN totals instead of the "—" that
-    // means "no data". Dropping the entry makes the next read a cache miss,
-    // which fetches.
-    return {
-      ...restored,
-      clientState: {
-        ...restored.clientState,
-        queries: restored.clientState.queries.filter((query) => {
-          const parsed = persistedQuerySchema.safeParse(query);
-          if (
-            !parsed.success ||
-            parsed.data.queryKey[0] !== exchangeRatesQueryPrefix
-          ) {
-            return true;
-          }
-          return exchangeRatesSchema.safeParse(parsed.data.state.data).success;
-        }),
-      },
-    } as PersistedClient;
-  },
+  deserialize: deserializePersistedClient,
 });
 
 export const queryPersistOptions = {

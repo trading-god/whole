@@ -152,11 +152,100 @@ one storage module mocked?**
   wholesale — which is what `accounts-query.test.ts` does. That is the limit of
   the exception: mock the repository module, never a scatter of individual
   Expo calls. A module that would need a second mock belongs under jest-expo.
-- **React Native components (jest-expo)** — still not set up. When a test needs
-  to render a component or touch a native module, use Expo's official preset
-  (`jest-expo` + `@testing-library/react-native`), not Vitest: it mocks the
-  native side of the Expo SDK. Do not try to unify the runners — a pure module
-  and a rendered component have genuinely different needs.
+- **React Native components (jest-expo)** — `pnpm test:rn`, configured in
+  `jest.config.mjs`. Anything that renders or touches a native module goes here,
+  not in Vitest: `jest-expo` is Expo's own preset and mocks the native side of
+  the SDK. Do not try to unify the runners — a pure module and a rendered
+  component have genuinely different needs.
+
+Four things about the Jest setup are load-bearing and non-obvious:
+
+- **The boundary between the two runners is defined once**, in
+  `scripts/test-boundary.mjs`, and imported by both configs — Vitest reads it as
+  `include`, Jest as `testPathIgnorePatterns`. Two hand-maintained copies drift,
+  and a test that neither runner claims does not fail; it silently never runs.
+  The rule is mechanical: `*.test.ts` inside the listed directories is Vitest's,
+  everything else under `src/` is Jest's. A `.test.tsx` in a Vitest-owned
+  directory still belongs to Jest.
+- **Two projects, ios and android, with merged coverage.** A `Platform.OS`
+  branch is unreachable from a single environment — under the iOS preset the
+  Android arm never executes — so 100% branch coverage is only honest when the
+  suite runs once per platform. There is no `jest-expo/web` project; the web
+  platform is unsupported.
+- **`babel.config.js` exists for Jest, not for Metro.** Metro applies
+  `babel-preset-expo` on its own, which is why the project ran for years without
+  the file. `babel-jest` has no such default, and without it React Native's own
+  Flow-annotated sources fail to parse before a single test runs.
+- **`render` from `@testing-library/react-native` v14 is async** — and so is
+  `renderHook`. Forgetting the `await` does not throw; it leaves `screen`
+  unpopulated and every query fails with "`render` function has not been
+  called", which reads like a setup problem rather than a missing keyword.
+  Import globals from `@jest/globals` rather than relying on ambient types,
+  mirroring how the Vitest suites import from `"vitest"`; it keeps
+  `@types/jest` out of the Vitest files' global scope.
+
+Four more differences from the Vitest side, each of which costs a debugging
+session the first time:
+
+- **A fresh module instance is `require`, not `await import()`.** Jest runs
+  these as CommonJS, where a dynamic `import()` fails with "A dynamic import
+  callback was invoked without --experimental-vm-modules". Reach for
+  `jest.resetModules()` plus `require(...) as typeof import(...)`; the Vitest
+  suites use `await import()` for the same job.
+- **A variable a `jest.mock` factory closes over must be named `mock…`.**
+  Factories are hoisted above every other statement, so any other name is
+  refused outright. This is Jest's equivalent of Vitest's `vi.hoisted`.
+- **Spying on the `react-native` namespace does not work.** Its exports are
+  getters, so a spy never reaches the binding the module under test already
+  holds, and the test silently reads the real value instead. Mock the specific
+  module (`react-native/Libraries/Utilities/useWindowDimensions`) instead.
+- **Assert on what rendered, not on what was passed.** Several components hand
+  props to something that consumes them internally — RN's own
+  `KeyboardAvoidingView` swallows `behavior` and renders a bare `View`, and
+  lucide turns `size`/`color` into an svg's `width`/`height`/`stroke`. Either
+  read the rendered output, or stand in for the collaborator and capture what it
+  received.
+
+**A screen's test cannot live in `src/app/`.** Everything under the app root is
+a ROUTE: `expo-router`'s context regex matches every `.ts`/`.tsx` file there and
+excludes only `+api`, `+html` and `+middleware`. A `settings.test.tsx` beside a
+screen therefore becomes a route, Metro bundles it, and it drags
+`@testing-library/react-native` — with its Node-only `console` import — into the
+app bundle, which then fails to bundle at all. The failure appears as a red box
+in the running app and nowhere in CI, because every test still passes.
+
+So screens live in `src/components/` with their tests beside them, and
+`src/app/` holds thin re-exports:
+
+```tsx
+// src/app/settings.tsx
+export { SettingsScreen as default } from "@/components/SettingsScreen";
+```
+
+`src/test-support/render.tsx` wraps a component in the app's real `I18nProvider`
+rather than a stub, so tests assert the copy users actually see and a missing
+key fails in CI instead of shipping as a raw key on screen. It is excluded from
+coverage — it is scaffolding, not app code.
+
+## Coverage
+
+Both configs hard-code **100% on lines, branches, functions, and statements**,
+and `v8 ignore` / `istanbul ignore` are not permitted. An unreachable line is a
+design smell to fix, not a line to hide — the three patterns that keep the
+target honestly reachable are:
+
+- `Platform.OS` branches → the two Jest projects above.
+- `__DEV__` branches → read it through an injectable constant, never off the
+  global, so a test can drive the production arm.
+- Exhaustive `switch` → drop `default` and call `assertNever`, then test
+  `assertNever` itself. The function gets covered and the call sites stop
+  carrying an unreachable branch.
+
+The thresholds are written down before the tests that satisfy them exist, so
+`pnpm test:rn:coverage` and `pnpm test:app:coverage` currently fail by design.
+CI runs the suites (`pnpm test:rn`, `pnpm test:app`), not the coverage gate;
+move the coverage commands into `.github/workflows/ci.yml` once the backfill
+lands, otherwise the gate is red from day one and gets ignored.
 
 Recognition has a third layer that is neither unit test nor app test:
 
@@ -173,7 +262,8 @@ Recognition has a third layer that is neither unit test nor app test:
 
 ```text
 config/locales/        Native permission translations
-scripts/               Repeatable asset-generation scripts
+scripts/               Repeatable asset-generation scripts and shared test
+                       tooling (the two-runner boundary in test-boundary.mjs)
 src/app/               Expo Router routes and layouts
 src/app/dev/           Dev-only routes (Dev Tools), gated by __DEV__
 src/features/assets/   Account storage, currencies, the native OCR adapter,
@@ -228,6 +318,23 @@ spacings from `src/theme/` instead of hard-coding literal values.
   it changes.
 - Share reusable style fragments (card surface, modal overlay, screen layout)
   from `src/theme/screen-styles.ts` instead of redeclaring them per screen.
+
+## Semantic Tones
+
+Colour that carries MEANING goes through `src/theme/tones.ts`, not through a
+hand-picked value at the call site. A screen asks for `TONES.safe` or
+`TONES.caution`; it never asks for a hex.
+
+- Each tone carries `surface`, `border` and `ink` together, because they are
+  only legible as a set — an ink chosen for one background is not guaranteed to
+  clear contrast on another.
+- Every value comes from `colors.ts`, and a test enforces that: a tone cannot
+  introduce a colour the rest of the app has never seen.
+- `caution` is deliberately not `danger`. Red is reserved for destructive
+  actions; spending it on "your data goes somewhere" would leave nothing louder
+  for "this deletes an account". The settings screen's privacy notice is the
+  first user of both tones — green when the endpoint is on the device, amber
+  when the text leaves it.
 
 ## Component Variants
 

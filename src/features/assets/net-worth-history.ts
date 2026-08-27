@@ -17,7 +17,10 @@ import {
   knownAssetCurrencies,
   mapCurrencies,
 } from "./currencies";
-import { type ExchangeRates, convertCurrency } from "./currency-conversion";
+import {
+  type ExchangeRates,
+  convertCurrencyOrThrow,
+} from "./currency-conversion";
 
 // One sample per day, used to draw the home net-worth chart. Storing a snapshot
 // when the accounts load means the chart reflects real data from day one and
@@ -126,8 +129,8 @@ function spreadFromBase(
   base: Currency,
   rates: ExchangeRates,
 ): CurrencyAmounts {
-  return mapCurrencies(
-    (currency) => convertCurrency(amount, base, currency, rates) ?? 0,
+  return mapCurrencies((currency) =>
+    convertCurrencyOrThrow(amount, base, currency, rates),
   );
 }
 

@@ -16,6 +16,14 @@ export const COLORS = {
   brandSoftBorder: "#A9CDBF",
   brandShadow: "#054A36",
   danger: "#C7443E",
+  // Caution — the surface for "this is allowed, and it has a cost". Warm rather
+  // than red: the app uses `danger` for destructive actions, and a privacy
+  // notice about data leaving the device is neither destructive nor an error,
+  // so borrowing red there would cry wolf against the one colour that should
+  // mean "this deletes something".
+  caution: "#7A5A12",
+  cautionSoft: "#FBF2DC",
+  cautionSoftBorder: "#E8D3A0",
   cardBorder: "rgba(25, 55, 43, 0.04)",
   outlineBorder: "rgba(20, 35, 29, 0.18)",
   // Dark overlay scrim for modals and image previews.

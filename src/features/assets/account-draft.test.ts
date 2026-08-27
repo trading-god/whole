@@ -1,8 +1,10 @@
 import { type RecognizedAccount } from "@whole/ocr";
 import { describe, expect, it } from "vitest";
 
+import type { AssetAccount } from "@/features/assets/asset-repository";
 import {
   type AccountDraft,
+  accountToDraft,
   applyRecognizedToDrafts,
   draftHasContent,
   draftToValidAccount,
@@ -385,6 +387,25 @@ describe("applyRecognizedToDrafts", () => {
     expect(drafts[0].balances.map((row) => row.currency)).toEqual(["SGD"]);
   });
 
+  // A single recognized account replacing a MULTI-draft batch has no single
+  // draft to merge into, so it reseeds — the same path a blank seed takes.
+  // Merging into an arbitrary one of them would silently drop the rest.
+  it("reseeds when a batch of drafts is replaced by one account", () => {
+    const drafts = applyRecognizedToDrafts(
+      [filledDraft(), filledDraft()],
+      [
+        {
+          accountName: "Multiplier",
+          balances: [{ currency: "SGD", balance: 1 }],
+        },
+      ],
+      "SGD",
+    );
+
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0].name).toBe("Multiplier");
+  });
+
   it("merges into a draft the user has filled in", () => {
     const drafts = applyRecognizedToDrafts(
       [filledDraft()],
@@ -408,5 +429,36 @@ describe("draftHasContent", () => {
     expect(
       draftHasContent(draft({ balances: [createBalanceRow("SGD", "1")] })),
     ).toBe(true);
+  });
+});
+
+describe("accountToDraft", () => {
+  const stored = {
+    id: "a",
+    name: "360 Account",
+    kind: "cash",
+    accountLastFourDigits: "3829",
+    balances: [{ currency: "SGD", balance: 6672.59 }],
+  } as unknown as AssetAccount;
+
+  it("seeds the edit screen from a stored account", () => {
+    const draft = accountToDraft(stored);
+
+    expect(draft).toMatchObject({
+      name: "360 Account",
+      lastFour: "3829",
+      kind: "cash",
+    });
+    expect(draft.balances).toMatchObject([
+      { currency: "SGD", balance: "6672.59" },
+    ]);
+  });
+
+  // The field is optional on a stored account but the form input is always a
+  // string, so an absent last four becomes "" rather than undefined.
+  it("renders an absent last four as an empty field", () => {
+    const { accountLastFourDigits: _omitted, ...withoutLastFour } = stored;
+
+    expect(accountToDraft(withoutLastFour as AssetAccount).lastFour).toBe("");
   });
 });

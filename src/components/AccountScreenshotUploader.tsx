@@ -14,6 +14,10 @@ import { IconButton } from "@/components/IconButton";
 import { PrivacyNote } from "@/components/PrivacyNote";
 import { ScreenshotMediaViewer } from "@/components/ScreenshotMediaViewer";
 import {
+  type RecognitionIssue,
+  issueForRecognition,
+} from "@/features/assets/recognition-issue";
+import {
   type RecognizedAccount,
   RecognitionUnsupportedError,
   recognizeAccountFromScreenshot,
@@ -58,15 +62,27 @@ const SCREENSHOT_CARD_HEIGHT = 220;
 // Which failure to surface under the card. Rendered as an inline error hint
 // rather than Alert.alert, so the reason stays anchored to the screenshot slot
 // that failed instead of vanishing on dismiss.
+// `RecognitionIssue` covers every way the recognition pipeline can decline —
+// each with its own next step for the user, which is why they are not one
+// state. The two added here are this component's own: the picker failing, and
+// hardware that cannot run OCR at all.
 type UploadIssue =
-  "recognitionFailed" | "noMatchingAccount" | "pickerFailed" | "ocrUnsupported";
+  RecognitionIssue | "noMatchingAccount" | "pickerFailed" | "ocrUnsupported";
 
 const ISSUE_MESSAGE_KEY = {
   recognitionFailed: "accountScreenshot.recognitionFailed",
+  recognitionEmpty: "accountScreenshot.recognitionEmpty",
+  modelNotConfigured: "accountScreenshot.modelNotConfigured",
+  modelConsentRequired: "accountScreenshot.modelConsentRequired",
+  modelUnauthorized: "accountScreenshot.modelUnauthorized",
+  modelRateLimited: "accountScreenshot.modelRateLimited",
+  modelOffline: "accountScreenshot.modelOffline",
+  modelUnavailable: "accountScreenshot.modelUnavailable",
+  modelUnusable: "accountScreenshot.modelUnusable",
   noMatchingAccount: "accountScreenshot.noMatchingAccount",
   pickerFailed: "accountScreenshot.pickerErrorMessage",
   ocrUnsupported: "accountScreenshot.ocrUnsupported",
-} as const;
+} as const satisfies Record<UploadIssue, string>;
 
 // Screenshot picker + on-device OCR recognition + preview card, shared by the
 // add-account and edit-account screens. Owns the recognizing/recognized UI
@@ -128,10 +144,16 @@ export function AccountScreenshotUploader({
     let applied = false;
     let declined = false;
     try {
-      const accounts = await recognizeAccountFromScreenshot(uri, width, height);
+      const result = await recognizeAccountFromScreenshot(uri, width, height);
       if (!isMountedRef.current) {
         return;
       }
+      // Everything the pipeline can decline for — no endpoint, no consent, a
+      // rejected key, a model that cannot hold the contract — arrives here as
+      // its own issue, because each one asks something different of the user.
+      failure = issueForRecognition(result);
+      const accounts =
+        result.status === "recognized" ? result.recognition.accounts : [];
       recognizedCount = accounts.length;
       // The parent reports whether it applied anything — an unparseable/empty
       // response or an ignored result (e.g. no matching account on the edit
@@ -170,7 +192,11 @@ export function AccountScreenshotUploader({
     // being edited. Without this the badge just reverts to "ready" with every
     // field unchanged, and the user cannot tell a failed pass from a screenshot
     // of the wrong account — so they retry the same upload.
-    setIssue(recognizedCount === 0 ? "recognitionFailed" : "noMatchingAccount");
+    // The pipeline read accounts and none of them was the one being edited.
+    // An empty read already has its own message from `issueForRecognition`, so
+    // reaching here with nothing recognized means the parent simply ignored
+    // what it was given.
+    setIssue(recognizedCount === 0 ? "recognitionEmpty" : "noMatchingAccount");
     return undefined;
   };
 

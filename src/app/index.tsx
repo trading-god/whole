@@ -149,10 +149,6 @@ export default function Index() {
 }
 
 function HomeScreen() {
-  // Dev-mode entry is dev-only, exactly like the /dev route registration in
-  // _layout.tsx (Metro-injected, false in production bundles). Kept as a local
-  // constant so the render reads "isDev" instead of spreading `__DEV__`.
-  const isDev = __DEV__;
   const { formatCurrency, languageTag } = useAppLocale();
   const { t } = useTranslation();
   const router = useRouter();
@@ -444,21 +440,17 @@ function HomeScreen() {
             </Text>
           </View>
           <View style={styles.headerActions}>
-            {/* Dev-mode entry, shown only in dev builds (production drops the
-                /dev route and renders a plain round add button instead; see
-                _layout.tsx). Placed left of the add button with the flask icon
-                so it reads as a developer utility next to the primary action. */}
-            {isDev ? (
-              <Button
-                size="sm"
-                variant="ghost"
-                icon="flask-conical"
-                accessibilityLabel={t("devTools.title")}
-                onPress={() => router.push("/dev")}
-              >
-                {t("home.devToolsLabel")}
-              </Button>
-            ) : null}
+            {/* Settings is where the model endpoint is configured, and every
+                "set one up in Settings" message the recognition path can
+                produce has to be able to land somewhere. */}
+            <IconButton
+              name="settings"
+              size="md"
+              variant="outline"
+              accessibilityLabel={t("settings.title")}
+              hitSlop={12}
+              onPress={() => router.push("/settings")}
+            />
             <IconButton
               name="plus"
               size="md"

@@ -76,7 +76,6 @@ export const zhHansMessages = {
     deleteGroupError: "无法删除机构，请稍后重试。",
     // 首页右上角开发者模式入口，仅在 __DEV__ 下注册（见 _layout.tsx），发布版
     // 本中没有这个入口。
-    devToolsLabel: "开发者模式",
   },
   // 账户表单本身（AccountEditorFields）的文案，添加账户页、多账户向导与编辑
   // 账户页逐字共用——表单只有一个归属，它的标签也只有一份。各屏专属文案
@@ -121,6 +120,41 @@ export const zhHansMessages = {
   // 两个共享的账户截图组件（AccountScreenshotUploader 与
   // SourceImageCleanupModal）自有的文案，添加账户页与编辑账户页都会渲染它们。
   // 独立于 `newAccount`，这样改动添加账户页的文案不会悄悄改掉编辑页的措辞。
+  settings: {
+    title: "设置",
+    intro: "截图识别通过你提供的模型端点完成。",
+    preset: {
+      ollama: "Ollama",
+      "lm-studio": "LM Studio",
+      openai: "OpenAI",
+      anthropic: "Anthropic",
+    },
+    presetLabel: "从这些开始",
+    baseUrl: "端点地址",
+    baseUrlPlaceholder: "https://api.example.com/v1",
+    protocol: "协议",
+    protocolOpenAi: "OpenAI 兼容",
+    protocolAnthropic: "Anthropic Messages",
+    apiKey: "API Key",
+    apiKeyPlaceholder: "本地端点可留空",
+    model: "模型",
+    modelPlaceholder: "gpt-5.6",
+    test: "测试",
+    testPassed: "可用",
+    testFailed: "不可用",
+    testUnauthorized: "API Key 被拒绝。",
+    testRateLimited: "额度已用尽，稍后重试。",
+    testNetwork: "无法连接端点。",
+    testUnusable: "有响应，但格式不可用。换个模型试试。",
+    localNotice: "{{host}} 在你自己的网络上，没有数据离开这台设备。",
+    remoteNotice: "识别出的文字会发送到 {{host}}。截图本身不会离开这台设备。",
+    cancel: "取消",
+    testingEndpoint: "测试中",
+    saving: "保存中",
+    save: "保存",
+    saved: "已保存",
+    saveFailed: "保存失败，请重试。",
+  },
   accountScreenshot: {
     uploadScreenshot: "上传账户截图",
     replaceScreenshot: "更换截图",
@@ -132,6 +166,18 @@ export const zhHansMessages = {
     recognizing: "正在识别…",
     recognized: "已识别，请核对",
     recognitionFailed: "无法识别截图，请手动填写账户信息。",
+    recognitionEmpty:
+      "这张截图里没有找到账户。换一张能看清账户名称和余额的截图，或手动填写信息。",
+    modelNotConfigured:
+      "识别需要先配置模型端点。请在设置中配置，或手动填写信息。",
+    modelConsentRequired:
+      "识别需要你同意把这张截图的文字发送到你配置的端点。请在设置中确认。",
+    modelUnauthorized: "模型端点拒绝了你的 API Key，请在设置中检查。",
+    modelRateLimited: "模型端点的额度暂时用尽了。请稍后重试，或手动填写信息。",
+    modelOffline: "无法连接模型端点。请检查网络和设置中的地址。",
+    modelUnavailable: "模型端点返回了错误。请稍后重试，或手动填写信息。",
+    modelUnusable:
+      "这个模型无法给出可用的答案。请在设置中换一个模型，或手动填写信息。",
     ocrUnsupported: "当前设备不支持截图识别，请手动填写账户信息。",
     noMatchingAccount:
       "这张截图中没有你正在编辑的账户，因此未填入任何信息。请选择该账户的截图。",
@@ -215,11 +261,4 @@ export const zhHansMessages = {
   },
   // 仅供开发的文案：开发者工具页（/dev）。该路由仅在 __DEV__ 下注册，无生产
   // 入口；仍走同一套 i18n 类型系统，方便与其余页面保持一致。
-  devTools: {
-    title: "开发者工具",
-    subtitle: "仅供开发使用的工具，发布版本中不可用。",
-    emptyTitle: "暂时没有工具",
-    emptyHint:
-      "OCR 采集已迁移到 macOS 的 Vision bridge（pnpm ocr），后续新的开发工具会放在这里。",
-  },
 } as const;

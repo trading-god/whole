@@ -2,6 +2,11 @@ import { fileURLToPath } from "node:url";
 
 import { defineConfig } from "vitest/config";
 
+import {
+  vitestCoverageFiles,
+  vitestTestFiles,
+} from "./scripts/test-boundary.mjs";
+
 // Tests for the app's PURE modules — the ones that are plain data in, data out.
 //
 // This does not contradict the two-runner split in AGENTS.md. That rule is
@@ -12,20 +17,31 @@ import { defineConfig } from "vitest/config";
 //
 // The boundary is therefore mechanical, not a matter of taste: a module belongs
 // here only while it can be imported by plain Node. The moment a test needs to
-// render a component or touch a native module, it belongs to jest-expo instead
-// — and that runner still has to be set up when the first such test appears.
+// render a component or touch a native module, it belongs to jest-expo instead.
 export default defineConfig({
   test: {
-    // Enumerated rather than a `src/**` glob: the glob would silently pick up
-    // the first test written beside a component and fail on the native import
-    // with a resolution error, instead of prompting whoever wrote it to reach
-    // for the right runner. Add a directory here when its modules are pure.
-    include: [
-      "src/features/assets/**/*.test.ts",
-      "src/storage/**/*.test.ts",
-      "src/i18n/**/*.test.ts",
-    ],
+    // Imported from `scripts/test-boundary.mjs` rather than written out here,
+    // because `jest.config.mjs` has to express the SAME boundary as an
+    // exclusion. Two hand-maintained copies drift, and a test neither runner
+    // claims fails silently — it just never runs.
+    include: vitestTestFiles,
     environment: "node",
+    coverage: {
+      provider: "v8",
+      include: vitestCoverageFiles,
+      exclude: ["**/*.test.ts"],
+      reportsDirectory: "./coverage/app",
+      // 100% on all four metrics, matching `jest.config.mjs`. Ignore comments
+      // (`v8 ignore`, `istanbul ignore`) are not permitted — an unreachable
+      // line is a design smell to fix, not a line to hide. See the note in
+      // `jest.config.mjs` for the three patterns that keep this reachable.
+      thresholds: {
+        lines: 100,
+        branches: 100,
+        functions: 100,
+        statements: 100,
+      },
+    },
   },
   resolve: {
     alias: {

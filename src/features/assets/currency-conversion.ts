@@ -101,6 +101,25 @@ function isUsableRate(rate: unknown): rate is number {
 // zero (which would understate totals and distort percentages). `from === to`
 // short-circuits without consulting rates, so same-currency balances always
 // convert even before rates load.
+// Converts when the rates are already known to be complete — what
+// `amountsConvertible` establishes. Callers that ran that check used to each
+// carry their own `?? 0` or `!== null` guard for a case their own precondition
+// had ruled out: a branch no test could reach, and one that silently booked
+// capital at ZERO if the precondition ever broke. Collapsing them here turns an
+// impossible case into a loud one, in the single place a test can drive it.
+export function convertCurrencyOrThrow(
+  amount: number,
+  from: Currency,
+  to: Currency,
+  rates: ExchangeRates,
+): number {
+  const converted = convertCurrency(amount, from, to, rates);
+  if (converted === null) {
+    throw new Error(`No exchange rate available for ${from} to ${to}`);
+  }
+  return converted;
+}
+
 export function convertCurrency(
   amount: number,
   from: Currency,

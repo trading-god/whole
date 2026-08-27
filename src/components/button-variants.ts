@@ -73,9 +73,13 @@ export const BUTTON_VARIANTS: Record<ButtonVariant, ButtonVariantStyle> = {
 };
 
 /**
- * disabled 态统一覆盖：中性灰底 + 中性灰字，不渲染描边。
+ * disabled 态统一覆盖：中性灰底 + 中性灰字，描边透明（仍占位，见
+ * `buttonContainerStyle`——否则 outline 按钮一变灰就会缩 2pt）。
  * `Button` 与 `IconButton` 在 disabled 时走此取值路径，与常态同构。
  */
+// One hairline for every variant, drawn or not — see `buttonContainerStyle`.
+const BORDER_WIDTH = 1;
+
 export const DISABLED_BUTTON: Omit<ButtonVariantStyle, "pressedStyle"> = {
   backgroundColor: COLORS.disabledBg,
   labelColor: COLORS.disabledText,
@@ -95,9 +99,17 @@ export function buttonContainerStyle(
 ): ViewStyle {
   return {
     backgroundColor: visual.backgroundColor,
-    ...(visual.border
-      ? { borderColor: visual.border.color, borderWidth: visual.border.width }
-      : {}),
+    // The border is ALWAYS drawn, transparent when the variant has none.
+    //
+    // React Native lays an auto-width control out as content + padding +
+    // border, so omitting the border made a variant 2pt narrower than one that
+    // drew it. Invisible on its own; visible the moment something toggles
+    // between the two — a preset chip jumped 2pt wider going from outline to
+    // primary on selection, and an outline button shrank the instant it went
+    // disabled. Reserving the space keeps a control the same size across every
+    // appearance it can take.
+    borderColor: visual.border?.color ?? "transparent",
+    borderWidth: visual.border?.width ?? BORDER_WIDTH,
     ...(elevated && !disabled ? ELEVATED_SHADOW : null),
   };
 }

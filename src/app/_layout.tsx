@@ -19,12 +19,6 @@ import { loadOnboardingCompleted } from "@/features/onboarding/onboarding-store"
 // auto-hid (e.g. a second call), which we swallow.
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
-// Development-only helpers are gated behind `__DEV__` (Metro-injected, true in
-// dev bundles, false in production builds) so the Dev Tools screen never ships
-// in a release with no route to it. Kept as a module constant so consumers
-// don't spread `__DEV__` through render bodies.
-const isDev = __DEV__;
-
 // expo-router reads a route module's named `ErrorBoundary` export and wraps that
 // route — here the root layout, so every screen — in `<Try catch={...}>`. This
 // is the app's only render-error backstop: without it an exception reaches
@@ -130,29 +124,19 @@ export default function RootLayout() {
                     }}
                   />
                   <Stack.Screen
+                    name="settings"
+                    options={{
+                      animation: "slide_from_right",
+                      gestureEnabled: true,
+                    }}
+                  />
+                  <Stack.Screen
                     name="accounts/[id]"
                     options={{
                       animation: "slide_from_right",
                       gestureEnabled: true,
                     }}
                   />
-                  {/* Dev Tools. Registered only in dev builds: the route file
-                      under `app/dev/` still gets bundled by Metro, but without
-                      this registration it has no in-app surface, and production
-                      builds drop the entry entirely. Keep each dev Screen its
-                      own conditional element — Stack's children mapper does not
-                      understand React Fragments, so wrapping several in one
-                      would warn "Unknown child element" (and crash in dev via
-                      Symbol-to-string coercion). */}
-                  {isDev ? (
-                    <Stack.Screen
-                      name="dev/index"
-                      options={{
-                        animation: "slide_from_right",
-                        gestureEnabled: true,
-                      }}
-                    />
-                  ) : null}
                 </Stack>
               </>
             )}

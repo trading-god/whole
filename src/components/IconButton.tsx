@@ -14,7 +14,7 @@ import {
   type ButtonVariant,
 } from "@/components/button-variants";
 import { PRESSED_SCALE_ICON } from "@/theme/interaction";
-import { ICON_BUTTON_SIZES, type Size } from "@/theme/sizes";
+import { BUTTON_HITSLOP, ICON_BUTTON_SIZES, type Size } from "@/theme/sizes";
 
 export type IconButtonProps = {
   name: IconName;
@@ -81,7 +81,10 @@ export function IconButton({
       accessibilityHint={accessibilityHint}
       accessibilityRole={accessibilityRole}
       accessibilityState={accessibilityState}
-      hitSlop={hitSlop}
+      // Defaulted from the size, so a compact control never ships a
+      // target smaller than `MIN_INTERACTIVE_SIZE`. A caller may still
+      // widen it further; it just cannot accidentally forget it.
+      hitSlop={hitSlop ?? BUTTON_HITSLOP[size]}
       testID={testID}
       onPress={onPress}
     >

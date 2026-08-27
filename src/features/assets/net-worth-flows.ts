@@ -13,7 +13,10 @@ import {
   knownAssetCurrencies,
   mapCurrencies,
 } from "./currencies";
-import { type ExchangeRates, convertCurrency } from "./currency-conversion";
+import {
+  type ExchangeRates,
+  convertCurrencyOrThrow,
+} from "./currency-conversion";
 
 // Capital moved in and out of Whole, converted at the rate on the day it moved
 // and frozen there — one running figure per display currency.
@@ -86,10 +89,7 @@ function bookFlow(
   rates: ExchangeRates,
 ): void {
   for (const target of knownAssetCurrencies) {
-    const converted = convertCurrency(amount, currency, target, rates);
-    if (converted !== null) {
-      amounts[target] += converted;
-    }
+    amounts[target] += convertCurrencyOrThrow(amount, currency, target, rates);
   }
 }
 
