@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { ModelRecognitionResult } from "@/features/assets/model-recognition";
-import { issueForRecognition } from "@/features/assets/recognition-issue";
+import type { ModelRecognitionResult } from "@/features/recognition/model-recognition";
+import { issueForRecognition } from "@/features/recognition/recognition-issue";
 
 const recognized = (count: number): ModelRecognitionResult => ({
   status: "recognized",

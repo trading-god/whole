@@ -16,12 +16,12 @@ import { ScreenshotMediaViewer } from "@/features/accounts/ScreenshotMediaViewer
 import {
   type RecognitionIssue,
   issueForRecognition,
-} from "@/features/assets/recognition-issue";
+} from "@/features/recognition/recognition-issue";
 import {
   type RecognizedAccount,
   RecognitionUnsupportedError,
   recognizeAccountFromScreenshot,
-} from "@/features/assets/screenshot-recognition";
+} from "@/features/recognition/screenshot-recognition";
 import { COLORS } from "@/theme/colors";
 import { cardSurface, screenStyles } from "@/theme/screen-styles";
 import { CARD_RADIUS, RADIUS } from "@/theme/sizes";

@@ -12,7 +12,7 @@ import {
   recognizeWithModel,
 } from "@whole/ocr";
 
-import { createModelRunner } from "@/features/assets/model-runner";
+import { createModelRunner } from "@/features/recognition/model-runner";
 import {
   hasConsentedTo,
   loadProviderConfig,

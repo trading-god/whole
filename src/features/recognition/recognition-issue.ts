@@ -1,7 +1,7 @@
 import type {
   ModelRecognitionResult,
   RecognitionFailureCause,
-} from "@/features/assets/model-recognition";
+} from "@/features/recognition/model-recognition";
 
 // What to tell the user when a screenshot did not turn into accounts.
 //

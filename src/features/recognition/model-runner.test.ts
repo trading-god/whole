@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_MAX_OUTPUT_TOKENS,
   createModelRunner,
-} from "@/features/assets/model-runner";
+} from "@/features/recognition/model-runner";
 
 const CONFIG: ProviderConfig = {
   baseUrl: "https://api.example.com/v1",

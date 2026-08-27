@@ -41,7 +41,7 @@ import {
   updateAssetAccount,
   type UpdateAssetAccountResult,
 } from "@/features/assets/asset-repository";
-import { type RecognizedAccount } from "@/features/assets/screenshot-recognition";
+import { type RecognizedAccount } from "@/features/recognition/screenshot-recognition";
 import { useReturnToOverview } from "@/lib/useReturnToOverview";
 import { COLORS } from "@/theme/colors";
 import { screenStyles } from "@/theme/screen-styles";

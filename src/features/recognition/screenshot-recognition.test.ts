@@ -4,8 +4,8 @@ import type { OcrTextBlock } from "@whole/ocr";
 import {
   RecognitionUnsupportedError,
   recognizeAccountFromScreenshot,
-} from "@/features/assets/screenshot-recognition";
-import type { ModelRecognitionResult } from "@/features/assets/model-recognition";
+} from "@/features/recognition/screenshot-recognition";
+import type { ModelRecognitionResult } from "@/features/recognition/model-recognition";
 
 const mockIsOcrSupported = jest.fn<() => boolean>();
 const mockRecognizeTextOnDevice = jest.fn<() => Promise<unknown>>();
@@ -15,7 +15,7 @@ const mockRenderAsync =
 const mockRecognizeAccountsWithModel =
   jest.fn<(blocks: OcrTextBlock[], options?: unknown) => Promise<unknown>>();
 
-jest.mock("@/features/assets/ocr-engine", () => ({
+jest.mock("@/features/recognition/ocr-engine", () => ({
   isOcrSupported: () => mockIsOcrSupported(),
   recognizeTextOnDevice: () => mockRecognizeTextOnDevice(),
   normalizeOcrResult: () => mockNormalizeOcrResult(),
@@ -27,7 +27,7 @@ jest.mock("expo-image-manipulator", () => ({
   },
 }));
 
-jest.mock("@/features/assets/model-recognition", () => ({
+jest.mock("@/features/recognition/model-recognition", () => ({
   recognizeAccountsWithModel: (blocks: OcrTextBlock[], options?: unknown) =>
     mockRecognizeAccountsWithModel(blocks, options),
 }));

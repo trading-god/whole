@@ -22,18 +22,18 @@ import {
   isOcrSupported,
   normalizeOcrResult,
   recognizeTextOnDevice,
-} from "@/features/assets/ocr-engine";
+} from "@/features/recognition/ocr-engine";
 import {
   type ModelRecognitionOptions,
   type ModelRecognitionResult,
   recognizeAccountsWithModel,
-} from "@/features/assets/model-recognition";
+} from "@/features/recognition/model-recognition";
 
 export type { RecognizedAccount } from "@whole/ocr";
 export type {
   ModelRecognitionResult,
   RecognitionFailureCause,
-} from "@/features/assets/model-recognition";
+} from "@/features/recognition/model-recognition";
 
 // Thrown when the device can't run on-device OCR (e.g. very old devices or
 // certain Android builds). Callers surface this as "unsupported hardware" and

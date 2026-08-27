@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, jest } from "@jest/globals";
 import { LlmError, type LlmFailureKind, type ProviderConfig } from "@whole/llm";
 import type { OcrTextBlock } from "@whole/ocr";
 
-import { recognizeAccountsWithModel } from "@/features/assets/model-recognition";
+import { recognizeAccountsWithModel } from "@/features/recognition/model-recognition";
 
 const mockLoadProviderConfig = jest.fn<() => Promise<ProviderConfig | null>>();
 const mockHasConsentedTo = jest.fn<(host: string) => Promise<boolean>>();
@@ -16,7 +16,7 @@ jest.mock("@/features/settings/model-provider-store", () => ({
   hasConsentedTo: (host: string) => mockHasConsentedTo(host),
 }));
 
-jest.mock("@/features/assets/model-runner", () => ({
+jest.mock("@/features/recognition/model-runner", () => ({
   createModelRunner: (options: RunnerOptions) => mockCreateModelRunner(options),
 }));
 

@@ -46,7 +46,7 @@ import {
 } from "@/features/assets/asset-repository";
 import { type InstitutionId } from "@whole/ocr";
 import { defaultDisplayCurrencyForLanguageTag } from "@/features/assets/currencies";
-import { type RecognizedAccount } from "@/features/assets/screenshot-recognition";
+import { type RecognizedAccount } from "@/features/recognition/screenshot-recognition";
 import { useAppLocale } from "@/i18n";
 import { useReturnToOverview } from "@/lib/useReturnToOverview";
 import { COLORS } from "@/theme/colors";
