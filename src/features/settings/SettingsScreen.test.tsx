@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, jest } from "@jest/globals";
 import { fireEvent, screen, waitFor } from "@testing-library/react-native";
 import type { ProviderConfig } from "@whole/llm";
 
-import { SettingsScreen } from "@/components/SettingsScreen";
+import { SettingsScreen } from "@/features/settings/SettingsScreen";
 import { renderWithProviders } from "@/test-support/render";
 import { TONES } from "@/theme/tones";
 
@@ -12,13 +12,13 @@ const mockRecordConsent = jest.fn<(host: string) => Promise<void>>();
 const mockProbeEndpoint = jest.fn<() => Promise<unknown>>();
 const mockReturnToOverview = jest.fn();
 
-jest.mock("@/features/assets/model-provider-store", () => ({
+jest.mock("@/features/settings/model-provider-store", () => ({
   loadProviderConfig: () => mockLoadProviderConfig(),
   saveProviderConfig: (c: ProviderConfig) => mockSaveProviderConfig(c),
   recordConsent: (host: string) => mockRecordConsent(host),
 }));
 
-jest.mock("@/features/assets/model-probe", () => ({
+jest.mock("@/features/settings/model-probe", () => ({
   probeConfiguredEndpoint: () => mockProbeEndpoint(),
 }));
 

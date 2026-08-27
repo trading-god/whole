@@ -1,7 +1,7 @@
 import type { ProviderConfig } from "@whole/llm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { probeConfiguredEndpoint } from "@/features/assets/model-probe";
+import { probeConfiguredEndpoint } from "@/features/settings/model-probe";
 
 const CONFIG: ProviderConfig = {
   baseUrl: "https://api.example.com/v1",

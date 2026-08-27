@@ -8,7 +8,7 @@ import {
   emptyProviderDraft,
   providerConfigToDraft,
   providerDraftHost,
-} from "@/features/assets/provider-draft";
+} from "@/features/settings/provider-draft";
 
 const DRAFT = {
   baseUrl: "https://api.example.com/v1",

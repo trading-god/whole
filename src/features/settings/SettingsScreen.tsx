@@ -11,12 +11,12 @@ import { FieldShell } from "@/components/FieldShell";
 import { FormField } from "@/components/FormField";
 import { KeyboardAvoidingView } from "@/components/KeyboardAvoidingView";
 import { ScreenHeader } from "@/components/ScreenHeader";
-import { probeConfiguredEndpoint } from "@/features/assets/model-probe";
+import { probeConfiguredEndpoint } from "@/features/settings/model-probe";
 import {
   loadProviderConfig,
   recordConsent,
   saveProviderConfig,
-} from "@/features/assets/model-provider-store";
+} from "@/features/settings/model-provider-store";
 import {
   PROVIDER_PRESETS,
   type ProviderDraft,
@@ -25,7 +25,7 @@ import {
   emptyProviderDraft,
   providerConfigToDraft,
   providerDraftHost,
-} from "@/features/assets/provider-draft";
+} from "@/features/settings/provider-draft";
 import { useReturnToOverview } from "@/lib/useReturnToOverview";
 import { COLORS } from "@/theme/colors";
 import { cardSurface, screenStyles } from "@/theme/screen-styles";

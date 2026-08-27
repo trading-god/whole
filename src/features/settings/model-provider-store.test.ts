@@ -40,7 +40,7 @@ const CONFIG: ProviderConfig = {
 // line immediately above the call — a two-line comment puts it out of range.
 const importStore = () =>
   // eslint-disable-next-line @typescript-eslint/no-require-imports -- see above
-  require("@/features/assets/model-provider-store") as typeof import("@/features/assets/model-provider-store");
+  require("@/features/settings/model-provider-store") as typeof import("@/features/settings/model-provider-store");
 
 beforeEach(() => {
   jest.resetModules();

@@ -11,7 +11,7 @@ type RunnerOptions = { onUsage?: (usage: unknown) => void };
 
 const mockCreateModelRunner = jest.fn<(options: RunnerOptions) => unknown>();
 
-jest.mock("@/features/assets/model-provider-store", () => ({
+jest.mock("@/features/settings/model-provider-store", () => ({
   loadProviderConfig: () => mockLoadProviderConfig(),
   hasConsentedTo: (host: string) => mockHasConsentedTo(host),
 }));

@@ -16,7 +16,7 @@ import { createModelRunner } from "@/features/assets/model-runner";
 import {
   hasConsentedTo,
   loadProviderConfig,
-} from "@/features/assets/model-provider-store";
+} from "@/features/settings/model-provider-store";
 
 // The app-facing entry point: a screenshot's OCR blocks in, recognized accounts
 // out — or a reason why not.
