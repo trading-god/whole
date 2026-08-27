@@ -59,6 +59,16 @@ default) and it is the thing a same-day Expo patch release collides with.
   reinstall. Verify with `pnpm ios` afterwards, not just `pnpm typecheck`:
   re-resolving moves native modules and the pods have to be rebuilt.
 
+### Patched dependencies
+
+`patches/expo-mlkit-ocr@0.2.7.patch` (registered under `patchedDependencies`
+in `pnpm-workspace.yaml`) adds `recognitionLanguages = ["zh-Hans", "en-US"]`
+to the module's `VNRecognizeTextRequest`, because without it Apple Vision OCR
+drops the Chinese labels most account screenshots carry. The patch is pinned to
+the exact version — **re-evaluate it on every `expo-mlkit-ocr` bump** (a version
+mismatch fails resolution loudly, but a silent patch loss shows up only as
+Chinese text dropping out of recognition).
+
 ## Technology stack
 
 - [Expo SDK 57](https://docs.expo.dev/versions/v57.0.0/)
@@ -136,14 +146,17 @@ one storage module mocked?**
   rule they cover (`engine/amount.test.ts` next to `engine/amount.ts`).
 - **The app's pure modules (Vitest)** — `pnpm test:app`, configured in
   `vitest.config.mts`. Some of the app's most consequential rules are plain
-  data-in/data-out (`account-draft.ts`, `balance-rows.ts`): they import no React
+  data-in/data-out (`features/accounts/account-draft.ts`,
+  `features/accounts/balance-rows.ts`): they import no React
   and no Expo, so running them under jest-expo would buy a native mock layer
-  they never touch. `include` enumerates directories rather than globbing
-  `src/**` on purpose — a glob would swallow the first component test and fail
+  they never touch. The include list enumerates FILES (in
+  `scripts/test-boundary.mjs`) rather than globbing `src/**` on purpose — a glob
+  would swallow the first component test and fail
   on a native import instead of pointing whoever wrote it at the right runner.
   Keeping these modules importable is a constraint, not an accident: reach for
-  a schema through `@whole/ocr` rather than through `asset-repository.ts`, which
-  pulls in `expo-crypto` and takes the whole file out of Node's reach.
+  a schema through `@whole/ocr` or `features/assets/asset-schema.ts` rather
+  than through `asset-repository.ts`, which pulls in `expo-crypto` and kv-store
+  and takes the whole file out of Node's reach.
 - **Modules that reach storage through one named seam (Vitest, mocked)** — also
   `pnpm test:app`. `accounts-query.ts` and `net-worth-snapshots-query.ts` are
   cache-coherence rules, not storage, but they import `asset-repository.ts` to
@@ -214,13 +227,16 @@ screen therefore becomes a route, Metro bundles it, and it drags
 app bundle, which then fails to bundle at all. The failure appears as a red box
 in the running app and nowhere in CI, because every test still passes.
 
-So screens live in `src/components/` with their tests beside them, and
+So screens live in their feature folder with their tests beside them, and
 `src/app/` holds thin re-exports:
 
 ```tsx
 // src/app/settings.tsx
-export { SettingsScreen as default } from "@/components/SettingsScreen";
+export { SettingsScreen as default } from "@/features/settings/SettingsScreen";
 ```
+
+This is the convention for EVERY screen — a full screen implemented directly in
+`src/app/` is a bug, not a style choice.
 
 `src/test-support/render.tsx` wraps a component in the app's real `I18nProvider`
 rather than a stub, so tests assert the copy users actually see and a missing
@@ -262,26 +278,50 @@ Recognition has a third layer that is neither unit test nor app test:
 
 ```text
 config/locales/        Native permission translations
+docs/                  Long-form design notes (e.g. the OCR redesign rationale)
 scripts/               Repeatable asset-generation scripts and shared test
                        tooling (the two-runner boundary in test-boundary.mjs)
-src/app/               Expo Router routes and layouts
-src/app/dev/           Dev-only routes (Dev Tools), gated by __DEV__
-src/features/assets/   Account storage, currencies, the native OCR adapter,
-                       and screenshot cleanup
+src/app/               Expo Router routes and layouts — thin re-exports only
+src/components/        The shared design-system layer (Button, Icon, FieldShell,
+                       ScrimModal, …) — reusable UI with no feature knowledge
+src/lib/               App-level infrastructure: the TanStack QueryClient and
+                       shared navigation hooks
+src/features/accounts/ The account wizard/detail screens, editor fields,
+                       pickers, rows, and the pure form modules they render
+                       (account-draft, balance-rows)
+src/features/assets/   The assets domain: repository, queries, net-worth math,
+                       currency conversion, and the preference stores
+src/features/home/     The home screen and its section components
+src/features/recognition/ The OCR/model recognition pipeline: the native OCR
+                       adapter, model runner, and screenshot recognition
+src/features/settings/ The settings screen and the model-provider domain
+src/features/onboarding/ Onboarding state and screen
+src/features/user/     User profile state
 src/i18n/              Runtime localization, message catalogs, and terminology
-src/storage/           kv-store (expo-sqlite) and the preference primitives
-                       built on it
+src/storage/           kv-store (expo-sqlite) and the generic preference
+                       primitives built on it (feature-specific stores live in
+                       their feature, on top of these primitives — storage/
+                       must not import from features/)
+src/test-support/      Shared test scaffolding (renderWithProviders)
+packages/llm/          @whole/llm — request construction and response parsing
+                       for a user-supplied model endpoint (pure TypeScript,
+                       injected fetch, Vitest unit tests)
 packages/ocr/          @whole/ocr — the account-recognition rule engine
                        (pure TypeScript workspace package, Vitest unit tests)
 packages/ocr-eval/     Regression harness over real screenshots, the
                        `pnpm ocr <image>` CLI, and the macOS Vision bridge
+patches/               pnpm patches (see the Patched dependencies section)
 assets/branding/       Source brand artwork
 assets/app-icons/      Generated platform icon deliverables
 .github/workflows/     CI — the quality gates on push and pull request
-eslint.config.js        Expo ESLint and Prettier integration
-vitest.config.mts       Vitest over the app's pure modules (`pnpm test:app`)
+eslint.config.js       Expo ESLint and Prettier integration
+vitest.config.mts      Vitest over the app's pure modules (`pnpm test:app`)
 .prettierignore         Generated files excluded from formatting
 ```
+
+Feature screens live in their feature folder, and every file under `src/app/`
+is a thin re-export route. `src/components/` holds only the design-system layer;
+a component that imports from `@/features/*` belongs in that feature instead.
 
 ## Technical Decisions
 
@@ -427,7 +467,7 @@ The exchange-rate fetch is the app's **only** network call. Its caching used to
 be hand-written — an in-memory memo, a persisted copy, a 6h TTL, a `force` flag,
 and a four-level fallback — which is a query cache reimplemented by hand. That
 is now `@tanstack/react-query`, configured in
-`src/features/assets/query-client.ts` and used through
+`src/lib/query-client.ts` and used through
 `src/features/assets/exchange-rates-query.ts`.
 
 - `exchangeRatesQueryOptions(base)` is the whole contract. The base is part of
@@ -439,7 +479,7 @@ is now `@tanstack/react-query`, configured in
   type-checks and silently matches nothing.
 - The home screen never stages the load by hand. Accounts and rates are separate
   queries, so the local read renders as soon as it lands and the network one
-  follows on its own — see `use-asset-accounts.ts`.
+  follows on its own — see `features/home/use-asset-accounts.ts`.
 - **Validate what comes out of the cache.** `fetchQuery` returns a cached entry
   without calling `queryFn` while it is fresh, so a snapshot rehydrated from
   disk is handed back having never passed through the fetcher. The eviction
@@ -500,7 +540,8 @@ to survive the whole chain — recognizer, form, storage, total — in order to 
 subtracted. It once did not: the form's input schema rejected negatives, so a
 correctly recognized `-4,766.92` was silently dropped on the way to storage.
 
-- `balanceInputSchema` (in `@whole/ocr`, re-exported by `asset-repository.ts`)
+- `balanceInputSchema` (in `@whole/ocr`, imported from there by
+  `features/accounts/balance-rows.ts`)
   accepts negatives and zero, and rejects blank/non-numeric entries. Do not
   reintroduce a `.nonnegative()` anywhere on the balance path.
 - The balance field uses `SIGNED_DECIMAL_KEYBOARD`, not `decimal-pad` — iOS's
@@ -536,7 +577,7 @@ shapes. Do not hand-write `if`/`else` conditional checks to validate data.
 The recognition rule engine lives in its own workspace package,
 [`@whole/ocr`](./packages/ocr/README.md) — pure TypeScript, one dependency
 (zod), no React Native or Expo. The app imports it like any other package; the
-only app-side OCR module is `src/features/assets/ocr-engine.ts`, which adapts
+only app-side OCR module is `src/features/recognition/ocr-engine.ts`, which adapts
 the native engine's output into the blocks the package consumes.
 
 It is a **standalone recognition module**, decoupled from the account form. Its

@@ -15,8 +15,8 @@
 // FILE-LEVEL, not directory-level, because the directories are genuinely mixed.
 // `src/storage` holds `cached-preference-store.ts` (pure, one mocked seam) next
 // to `kv-store.ts` (needs `expo-sqlite` AND async-storage — two seams, so Jest).
-// `src/features/assets` holds nineteen pure rule modules next to
-// `ocr-engine.ts` and `source-image-cleanup.ts`. A directory rule would have to
+// `src/features/assets` holds pure rule modules next to
+// `source-image-cleanup.ts` (expo-media-library). A directory rule would have to
 // lie about one of them.
 //
 // Enumerating every file is deliberate friction: adding a module means choosing
