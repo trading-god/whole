@@ -12,10 +12,10 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { AccountRow } from "@/components/AccountRow";
-import { AccountGroupRow } from "@/components/AccountGroupRow";
+import { AccountRow } from "@/features/accounts/AccountRow";
+import { AccountGroupRow } from "@/features/accounts/AccountGroupRow";
 import { Button } from "@/components/Button";
-import { CurrencyPicker } from "@/components/CurrencyPicker";
+import { CurrencyPicker } from "@/features/accounts/CurrencyPicker";
 import { Icon } from "@/components/Icon";
 import { IconButton } from "@/components/IconButton";
 import { NetWorthChart } from "@/components/NetWorthChart";

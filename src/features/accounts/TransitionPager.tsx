@@ -16,7 +16,7 @@ import Animated, {
 import {
   type SwipePagerHandle,
   type SwipePagerProps,
-} from "@/components/swipe-pager-contract";
+} from "@/features/accounts/swipe-pager-contract";
 import { screenStyles } from "@/theme/screen-styles";
 
 const STEP_SLIDE_MS = 280;

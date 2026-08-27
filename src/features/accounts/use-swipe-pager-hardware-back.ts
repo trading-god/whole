@@ -1,7 +1,7 @@
 import { useEffect, type RefObject } from "react";
 import { BackHandler } from "react-native";
 
-import { type SwipePagerHandle } from "@/components/swipe-pager-contract";
+import { type SwipePagerHandle } from "@/features/accounts/swipe-pager-contract";
 
 // Android hardware back for SwipePager screens: swallow while `busy` (so the
 // hardware button matches the disabled chevrons), step back one page when not

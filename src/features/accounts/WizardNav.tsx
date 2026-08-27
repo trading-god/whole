@@ -1,7 +1,7 @@
 import { ActivityIndicator, StyleSheet, View } from "react-native";
 
 import { IconButton } from "@/components/IconButton";
-import { StepIndicator } from "@/components/StepIndicator";
+import { StepIndicator } from "@/features/accounts/StepIndicator";
 import { COLORS } from "@/theme/colors";
 import { ICON_BUTTON_SIZES } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";

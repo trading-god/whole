@@ -3,14 +3,14 @@ import { useTranslation } from "react-i18next";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { ButtonBase } from "@/components/ButtonBase";
-import { CurrencyPicker } from "@/components/CurrencyPicker";
+import { CurrencyPicker } from "@/features/accounts/CurrencyPicker";
 import { FormField, SIGNED_DECIMAL_KEYBOARD } from "@/components/FormField";
 import { Icon } from "@/components/Icon";
 import { knownAssetCurrencies } from "@/features/assets/currencies";
 import {
   type BalanceRow,
   markBalanceRows,
-} from "@/features/assets/balance-rows";
+} from "@/features/accounts/balance-rows";
 import { COLORS } from "@/theme/colors";
 import { MIN_INTERACTIVE_SIZE } from "@/theme/layout";
 import { actionLink, screenStyles } from "@/theme/screen-styles";

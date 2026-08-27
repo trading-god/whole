@@ -9,7 +9,7 @@ import {
   removeBalanceRow,
   toBalanceRows,
   updateBalanceRow,
-} from "@/features/assets/balance-rows";
+} from "@/features/accounts/balance-rows";
 import { knownAssetCurrencies } from "@/features/assets/currencies";
 
 // The field's per-row markers and the save gate's duplicate check are two views

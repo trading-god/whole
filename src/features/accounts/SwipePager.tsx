@@ -5,11 +5,11 @@ import { PagerView, type PagerViewRef } from "@expo/ui/community/pager-view";
 import {
   type SwipePagerHandle,
   type SwipePagerProps,
-} from "@/components/swipe-pager-contract";
-import { TransitionPager } from "@/components/TransitionPager";
+} from "@/features/accounts/swipe-pager-contract";
+import { TransitionPager } from "@/features/accounts/TransitionPager";
 import { screenStyles } from "@/theme/screen-styles";
 
-export { type SwipePagerHandle } from "@/components/swipe-pager-contract";
+export { type SwipePagerHandle } from "@/features/accounts/swipe-pager-contract";
 
 // @expo/ui's PagerView drives paging through SwiftUI scroll APIs that are
 // gated behind `#available(iOS 17)` — on earlier iOS the modifiers silently

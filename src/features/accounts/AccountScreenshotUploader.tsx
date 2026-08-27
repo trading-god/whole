@@ -12,7 +12,7 @@ import {
 import { Icon } from "@/components/Icon";
 import { IconButton } from "@/components/IconButton";
 import { PrivacyNote } from "@/components/PrivacyNote";
-import { ScreenshotMediaViewer } from "@/components/ScreenshotMediaViewer";
+import { ScreenshotMediaViewer } from "@/features/accounts/ScreenshotMediaViewer";
 import {
   type RecognitionIssue,
   issueForRecognition,

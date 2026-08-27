@@ -25,11 +25,11 @@
 // to keep, not a coincidence to discover later.
 export const vitestOwnedSources = [
   "src/features/assets/account-appearance.ts",
-  "src/features/assets/account-draft.ts",
+  "src/features/accounts/account-draft.ts",
   "src/features/assets/accounts-query.ts",
   "src/features/assets/asset-privacy-store.ts",
   "src/features/assets/async-serializer.ts",
-  "src/features/assets/balance-rows.ts",
+  "src/features/accounts/balance-rows.ts",
   "src/features/assets/base-currency-store.ts",
   "src/features/assets/currencies.ts",
   "src/features/assets/currency-conversion.ts",

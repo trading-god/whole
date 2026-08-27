@@ -4,7 +4,7 @@ import { Alert, Linking, StyleSheet, Text } from "react-native";
 
 import { Button } from "@/components/Button";
 import { ButtonGroup } from "@/components/ButtonGroup";
-import { type SelectedSourceImage } from "@/components/AccountScreenshotUploader";
+import { type SelectedSourceImage } from "@/features/accounts/AccountScreenshotUploader";
 import { ScrimModal } from "@/components/ScrimModal";
 import {
   type DeleteSourceImageResult,

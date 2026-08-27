@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 
-import { type SelectedSourceImage } from "@/components/AccountScreenshotUploader";
+import { type SelectedSourceImage } from "@/features/accounts/AccountScreenshotUploader";
 
 // Post-save routing for a form that may have been filled from a screenshot:
 // offer to clean the screenshot up when one was used, otherwise head straight

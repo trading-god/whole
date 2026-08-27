@@ -27,7 +27,7 @@ import {
   classifyBalanceRows,
   hasDuplicateCurrencyIn,
   toBalanceRows,
-} from "@/features/assets/balance-rows";
+} from "@/features/accounts/balance-rows";
 
 // Editable form state for one account on the add-account screen — the single
 // form and the multi-account wizard share this shape. `balances` carries the

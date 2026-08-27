@@ -12,8 +12,8 @@ import {
   mergeRecognizedIntoDraft,
   recognizedToDraft,
   selectRecognizedForAccount,
-} from "@/features/assets/account-draft";
-import { createBalanceRow } from "@/features/assets/balance-rows";
+} from "@/features/accounts/account-draft";
+import { createBalanceRow } from "@/features/accounts/balance-rows";
 
 // Every case below is a bug this module's comments record having shipped once.
 // The rules are subtle enough that the comments were, until now, the only thing

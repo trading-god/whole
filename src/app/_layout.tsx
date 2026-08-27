@@ -5,10 +5,7 @@ import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
-import {
-  queryClient,
-  queryPersistOptions,
-} from "@/lib/query-client";
+import { queryClient, queryPersistOptions } from "@/lib/query-client";
 import { I18nProvider } from "@/i18n";
 import { OnboardingContext } from "@/features/onboarding/onboarding-context";
 import { loadOnboardingCompleted } from "@/features/onboarding/onboarding-store";
@@ -117,21 +114,7 @@ export default function RootLayout() {
                     options={{ animation: "none" }}
                   />
                   <Stack.Screen
-                    name="accounts/new"
-                    options={{
-                      animation: "slide_from_right",
-                      gestureEnabled: true,
-                    }}
-                  />
-                  <Stack.Screen
                     name="settings"
-                    options={{
-                      animation: "slide_from_right",
-                      gestureEnabled: true,
-                    }}
-                  />
-                  <Stack.Screen
-                    name="accounts/[id]"
                     options={{
                       animation: "slide_from_right",
                       gestureEnabled: true,

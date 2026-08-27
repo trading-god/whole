@@ -3,20 +3,20 @@ import { memo, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 
-import { BalanceRowsField } from "@/components/BalanceRowsField";
+import { BalanceRowsField } from "@/features/accounts/BalanceRowsField";
 import { ChoiceChipGroup } from "@/components/ChoiceChipGroup";
 import { FieldShell } from "@/components/FieldShell";
 import { FormField } from "@/components/FormField";
-import { InstitutionPicker } from "@/components/InstitutionPicker";
+import { InstitutionPicker } from "@/features/accounts/InstitutionPicker";
 import { assetKindPickerOptions } from "@/features/assets/account-appearance";
-import { type AccountDraft } from "@/features/assets/account-draft";
+import { type AccountDraft } from "@/features/accounts/account-draft";
 import { type AssetAccountGroup } from "@/features/assets/asset-repository";
 import {
   addBalanceRow,
   type BalanceRow,
   removeBalanceRow,
   updateBalanceRow,
-} from "@/features/assets/balance-rows";
+} from "@/features/accounts/balance-rows";
 import { screenStyles } from "@/theme/screen-styles";
 
 type AccountEditorFieldsProps = {
