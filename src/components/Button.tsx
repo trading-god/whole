@@ -26,8 +26,6 @@ import {
 import { SPACING } from "@/theme/spacing";
 import { FONT_SIZE, FONT_WEIGHT } from "@/theme/typography";
 
-export type { ButtonVariant };
-
 export type ButtonProps = {
   children?: ReactNode;
   size?: Size;
@@ -89,9 +87,10 @@ export function Button({
   ...rest
 }: ButtonProps) {
   const variantStyle = BUTTON_VARIANTS[variant];
-  // `loading` 表示异步操作进行中（如保存）：保留 variant 外观与阴影，仅阻止
-  // 按压交互，避免按钮在"可用 → 禁用 → 可用"之间灰化闪烁。只有真正不可用
-  // （disabled 且非 loading）才降级为中性灰底。
+  // `loading` means an async action is in flight (a save, say): the variant's
+  // appearance and shadow stay, and only the press is blocked — greying out
+  // would flash the button through enabled → disabled → enabled. Only a button
+  // that is genuinely unavailable (disabled and not loading) drops to grey.
   const visuallyDisabled = disabled && !loading;
   const visual = visuallyDisabled ? DISABLED_BUTTON : variantStyle;
 

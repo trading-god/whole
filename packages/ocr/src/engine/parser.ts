@@ -17,12 +17,17 @@
 // rule decided it; production code calls `parseOcrBlocks`, which returns a bare
 // `RecognizedAccount[]`.
 import { lastFourDigitsSchema } from "../contract/asset-kind";
+import type { Currency } from "../contract/currency";
 import { detectAssetKind } from "./kind";
 import { classifyRow, type RowRole } from "./line-classify";
 import { clusterIntoLines } from "./line-clustering";
 import { groupIntoAccounts, type OcrAccountGroup } from "./account-grouping";
 import type { InstitutionId } from "../contract/institution";
 import type { InstitutionConfig } from "../institutions/config";
+import {
+  ablateInstitution,
+  type InstitutionAblation,
+} from "../institutions/ablation";
 import { resolveInstitutionConfig } from "../institutions/detect";
 import { classifyTokens, type TokenWithRole } from "./token-classify";
 import type { RecognizedAccount } from "../contract/recognized-account";
@@ -57,16 +62,51 @@ type ClassifiedLine = {
   tokens: TokenWithRole[]; // per-token roles (token-level classifier output)
 };
 
-// Shared pipeline core: clusters blocks into lines, labels row roles and
-// per-token roles, resolves the detected institution's config, and groups into
-// accounts. Both the plain and tracing entry points run these same steps so a
-// pipeline change is one edit, not two copies.
-function runPipeline(blocks: OcrTextBlock[]): {
+/** Knobs that change how a replay runs, never how the app runs. */
+export type PipelineOptions = {
+  /**
+   * Removes one tier of the detected institution's config before grouping.
+   *
+   * The ablation harness's seam, and the only caller: it is how the corpus
+   * measures what per-institution configuration is worth when the institution
+   * is one nothing knows. See `institutions/ablation.ts`. Absent on every app
+   * path, which is why it is an option rather than an argument.
+   */
+  ablate?: InstitutionAblation;
+};
+
+/**
+ * Everything the pipeline reads out of the BLOCKS alone: the clustered,
+ * classified lines and the institution config detection routed them to.
+ *
+ * Split out from grouping because the hybrid loop groups the same screen
+ * twice — once to prompt the model, once with the home currency it inferred —
+ * and none of this stage depends on that currency. Re-running it would re-do
+ * the clustering and both classifiers to change one argument to the last step.
+ */
+export type ScreenStructure = {
   classified: ClassifiedLine[];
   institutionId: InstitutionId;
+  /** As detected, and as ablated: the caller's fallback currency is not in it. */
   institutionConfig: InstitutionConfig;
+};
+
+/** The grouped screen: the structure above, plus the accounts read out of it. */
+export type PipelineResult = ScreenStructure & {
   groups: OcrAccountGroup[];
-} {
+};
+
+// Stage one: clusters blocks into lines, labels row roles and per-token roles,
+// and resolves the detected institution's config. A pure function of the blocks
+// (and, for a replay, the ablation) — nothing here depends on the caller.
+//
+// Exported because the model pipeline (`recognize.ts`) reads the SAME structure
+// and then asks the model to annotate the regions — the hybrid's whole premise
+// is that the engine, not the model, decides what an account IS.
+export function readScreen(
+  blocks: OcrTextBlock[],
+  ablate?: InstitutionAblation,
+): ScreenStructure {
   // The typographic minus (U+2212) normalized to ASCII before anything reads a
   // sign. Apple Vision emits it for a real minus glyph, and every sign rule in
   // the engine — `NUMBER_SOURCE`, `anchoredAmountRegex`, the `-<currency>`
@@ -84,27 +124,75 @@ function runPipeline(blocks: OcrTextBlock[]): {
     return { text, role: classifyRow(text), tokens, index: index + 1 };
   });
   // Detect which institution this screenshot belongs to from the labeled
-  // tokens, then run the grouping step with that institution's config (icon
-  // tags, equivalent-total pattern, product keywords) layered on the shared
-  // defaults. "unknown" runs with the shared defaults only.
-  const { institutionId, config: institutionConfig } = resolveInstitutionConfig(
-    classified.map((l) => l.tokens),
-  );
-  const groups = groupIntoAccounts(classified, institutionConfig);
-  return { classified, institutionId, institutionConfig, groups };
+  // tokens; grouping then runs with that institution's config (icon tags,
+  // equivalent-total pattern, product keywords) layered on the shared defaults.
+  // "unknown" runs with the shared defaults only.
+  const detected = resolveInstitutionConfig(classified.map((l) => l.tokens));
+  // The ablation is applied AFTER detection, not instead of it: what is being
+  // measured is the config's contribution, and short-circuiting detection
+  // would also remove the routing evidence the report reads. It belongs to the
+  // structure, so a second grouping pass cannot forget to carry it.
+  const { institutionId, config } =
+    ablate === undefined ? detected : ablateInstitution(detected, ablate);
+  return { classified, institutionId, institutionConfig: config };
 }
 
-export function parseOcrBlocks(blocks: OcrTextBlock[]): RecognizedAccount[] {
-  const { groups, institutionId, institutionConfig } = runPipeline(blocks);
+/**
+ * Stage two: groups the classified lines into accounts.
+ *
+ * `inferredCurrency` denominates bare figures a MODEL supplied a home currency
+ * for. It is passed alongside the config rather than folded into
+ * `defaultCurrency`, because the two do not rank the same: a configured
+ * currency was checked against a real screen and outranks a currency printed
+ * below the figure, while an inference ranks below everything the screen states
+ * (`finish` in `account-grouping.ts` holds that order). The annotation turn
+ * gives `kind` the same precedence, for the same reason.
+ *
+ * It is an argument to THIS stage rather than to the pipeline because the
+ * engine resolves a balance's currency during grouping, long before the model
+ * is asked anything, and a figure nothing could denominate is dropped there —
+ * so an inferred currency has to arrive as a re-grouping, not as a patch.
+ */
+export function groupScreen(
+  structure: ScreenStructure,
+  inferredCurrency?: Currency,
+): PipelineResult {
+  return {
+    ...structure,
+    groups: groupIntoAccounts(
+      structure.classified,
+      structure.institutionConfig,
+      inferredCurrency,
+    ),
+  };
+}
+
+// Both rule-engine entry points run the two stages back to back, so a pipeline
+// change is one edit, not two copies.
+function runPipeline(
+  blocks: OcrTextBlock[],
+  options: PipelineOptions = {},
+): PipelineResult {
+  return groupScreen(readScreen(blocks, options.ablate));
+}
+
+export function parseOcrBlocks(
+  blocks: OcrTextBlock[],
+  options: PipelineOptions = {},
+): RecognizedAccount[] {
+  const { groups, institutionId, institutionConfig } = runPipeline(
+    blocks,
+    options,
+  );
   return toRecognizedAccounts(groups, institutionId, institutionConfig);
 }
 
-// Tracing variant used by the eval harness's diagnosis tooling: same pipeline,
-// but also returns the intermediate stages (clustered lines, per-line roles,
-// per-token roles, detected institution, grouped accounts with their source line
-// indexes) so an LLM can attribute parser failures to the classifying rule
-// that mis-fired. Production code calls the non-tracing `parseOcrBlocks`; this
-// stays out of the hot path.
+// Tracing variant for `pnpm ocr --trace`: same pipeline, but also returns the
+// intermediate stages (clustered lines, per-line roles, per-token roles,
+// detected institution, grouped accounts with their source line indexes) so a
+// wrong answer can be attributed to the classifying rule that mis-fired.
+// Production code calls the non-tracing `parseOcrBlocks`; this stays out of
+// the hot path.
 export function parseOcrBlocksTraced(blocks: OcrTextBlock[]): {
   accounts: RecognizedAccount[];
   trace: OcrTrace;
@@ -131,7 +219,10 @@ function toRecognizedAccounts(
     .map((account) => ({ ...account, institutionId }));
 }
 
-function groupToRecognized(
+// Exported for the model pipeline: it coerces each group this same way, but
+// keeps the group each account came FROM, because the model's annotations are
+// addressed by region number.
+export function groupToRecognized(
   group: OcrAccountGroup,
   institutionConfig: InstitutionConfig,
 ): RecognizedAccount | null {

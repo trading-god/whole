@@ -111,10 +111,3 @@ export function cachedAccounts(
     client.getQueryData<AccountsSnapshot>(accountsQueryKey)?.accounts ?? null
   );
 }
-
-// Re-reads accounts from storage through the cache. `fetchQuery` dedupes
-// concurrent callers, so two reads landing together share the one repository hit
-// instead of racing it.
-export function fetchAccounts(client: QueryClient): Promise<AccountsSnapshot> {
-  return client.fetchQuery(accountsQueryOptions());
-}

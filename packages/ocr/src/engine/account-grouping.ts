@@ -725,6 +725,10 @@ export function groupIntoAccounts(
   // cycle, and the reverse of the layering `src/index.ts` documents. The type
   // import stays: it erases, so it creates no such edge.
   institutionConfig: InstitutionConfig,
+  // The home currency a MODEL inferred, when the institution's config declares
+  // none. Separate from the config's own because it ranks below everything the
+  // screen states — see `finish`. Absent on every rules-only path.
+  inferredCurrency?: Currency,
 ): OcrAccountGroup[] {
   // Institution-specific rules resolved once per parse: the keyword regex
   // (shared defaults + this institution's product keywords) and the
@@ -777,7 +781,7 @@ export function groupIntoAccounts(
   let hasEmittedIdentifiedAccount = false;
   const closeOpen = () => {
     if (open && groupHasContent(open)) {
-      const finished = finish(open, defaultCurrency);
+      const finished = finish(open, defaultCurrency, inferredCurrency);
       hasEmittedIdentifiedAccount ||=
         finished.name !== "" || finished.lastFour !== undefined;
       groups.push(finished);
@@ -1215,6 +1219,10 @@ export function groupIntoAccounts(
         // that is classified from the name alone.
         if (carried) {
           open.pending.unshift(...carried.pending);
+          // Ahead of this group's own rows, because the carried row was above
+          // them on screen.
+          open.sourceText.unshift(...carried.sourceText);
+          open.sourceLineNumbers.unshift(...carried.sourceLineNumbers);
           if (!open.name && carried.name) {
             open.name = carried.name;
             open.nameSource = carried.nameSource;
@@ -1373,7 +1381,13 @@ export function groupIntoAccounts(
               isDebtRow,
             );
             carried = held;
-            attachSource(open, line, lineIndex);
+            // The row's SOURCE travels with its money, not with the region
+            // above it. `lineNumbers` used to be trace-only, but `recognize.ts`
+            // now builds the annotation prompt's region prefixes from it —
+            // leaving this line on the previous group prints this account's
+            // product words ("保证金证券 HKD 26.14") under a neighbouring
+            // region, which is exactly the evidence the kind question reads.
+            attachSource(held, line, lineIndex);
             break;
           }
         }
@@ -1471,7 +1485,7 @@ export function groupIntoAccounts(
     const largest = summaryAmounts.reduce((a, b) =>
       Math.abs(b.amount) > Math.abs(a.amount) ? b : a,
     );
-    const currency = largest.currency ?? defaultCurrency;
+    const currency = largest.currency ?? defaultCurrency ?? inferredCurrency;
     // No currency anywhere and no institution to fall back on — a crypto
     // exchange's "Total assets 44,503.83" on a config-less institution. The
     // figure cannot be reported, but the ACCOUNT can, exactly as the
@@ -1811,13 +1825,23 @@ export function cleanAccountName(
 function finish(
   group: OpenGroup,
   defaultCurrency: Currency | undefined,
+  inferredCurrency: Currency | undefined,
 ): OcrAccountGroup {
   // Resolve currency-less amounts in order of evidence: the row's own currency,
   // then the nearest currency stated ABOVE it in this account, then the
-  // institution's home currency, and only then a currency stated below. That
-  // third step is what recognizes a domestic bank's screen at all — China
-  // Merchants prints "76,007.05" with no currency marker anywhere — while never
-  // overriding something the screen did say.
+  // institution's home currency, then a currency stated below, and last of all
+  // one a model inferred. That third step is what recognizes a domestic bank's
+  // screen at all — China Merchants prints "76,007.05" with no currency marker
+  // anywhere — while never overriding something the screen did say.
+  //
+  // The model's answer sits BELOW `currencyBelow`, and the config's above it,
+  // and the difference is what each one is: a config was checked against a real
+  // screen, an inference was not. `redenominate` only asks the model where no
+  // config declared a currency, which is exactly the case where a currency
+  // printed below the figure is the engine's real last resort — outranking it
+  // with a guess is how a screen that plainly says 美元 gets reported in HKD,
+  // the wrong-currency failure the prompt itself warns is worse than a missing
+  // one.
   //
   // Direction matters, and reading forward first was wrong: HSBC HK prints
   // "可用余额 1,000.00" (HKD, unmarked) and then a 美元 sub-account below it.
@@ -1877,7 +1901,11 @@ function finish(
   let undenominated = false;
   for (const [index, { currency, amount }] of group.pending.entries()) {
     const resolved =
-      currency ?? currencyAbove(index) ?? defaultCurrency ?? currencyBelow;
+      currency ??
+      currencyAbove(index) ??
+      defaultCurrency ??
+      currencyBelow ??
+      inferredCurrency;
     if (!resolved) {
       undenominated = true;
       continue;

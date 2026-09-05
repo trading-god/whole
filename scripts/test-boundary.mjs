@@ -22,31 +22,31 @@
 // Enumerating every file is deliberate friction: adding a module means choosing
 // its runner on purpose, and the list doubles as the answer to "is this module
 // still importable by plain Node?" — a property the pure rule layer is supposed
-// to keep, not a coincidence to discover later.
+// to keep, not a coincidence to discover later. Sorted, so an addition lands
+// where it belongs rather than wherever the diff was open.
 export const vitestOwnedSources = [
-  "src/features/assets/account-appearance.ts",
   "src/features/accounts/account-draft.ts",
+  "src/features/accounts/balance-rows.ts",
+  "src/features/assets/account-appearance.ts",
   "src/features/assets/accounts-query.ts",
-  "src/features/assets/asset-privacy-store.ts",
   "src/features/assets/asset-migrations.ts",
+  "src/features/assets/asset-privacy-store.ts",
   "src/features/assets/asset-schema.ts",
   "src/features/assets/async-serializer.ts",
-  "src/features/accounts/balance-rows.ts",
   "src/features/assets/base-currency-store.ts",
   "src/features/assets/currencies.ts",
   "src/features/assets/currency-conversion.ts",
   "src/features/assets/display-currency-store.ts",
   "src/features/assets/exchange-rates-query.ts",
-  "src/features/home/distribution.ts",
   "src/features/assets/net-worth-flows.ts",
   "src/features/assets/net-worth-history.ts",
   "src/features/assets/net-worth-range.ts",
-  "src/features/settings/model-probe.ts",
-  "src/features/recognition/model-runner.ts",
   "src/features/assets/net-worth-snapshots-query.ts",
-  "src/features/settings/provider-draft.ts",
-  "src/features/recognition/recognition-issue.ts",
+  "src/features/home/distribution.ts",
+  "src/features/on-device-model/format-bytes.ts",
+  "src/features/on-device-model/on-device-catalog.ts",
   "src/features/onboarding/onboarding-store.ts",
+  "src/features/recognition/recognition-issue.ts",
   "src/features/user/user-store.ts",
   "src/i18n/locales/en.ts",
   "src/i18n/locales/zh-Hans.ts",

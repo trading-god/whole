@@ -7,30 +7,32 @@ import { ELEVATED_SHADOW } from "@/theme/shadow";
 export type ButtonVariant =
   "primary" | "secondary" | "danger" | "outline" | "ghost" | "onDark";
 
-export type ButtonVariantStyle = {
-  /** 容器背景色。 */
+type ButtonVariantStyle = {
+  /** The container fill. */
   backgroundColor: string;
-  /** 描边；缺省表示无边框，disabled 态不渲染。 */
+  /** The hairline; absent means no border, and disabled never draws one. */
   border?: { color: string; width: number };
-  /** 文字颜色。 */
+  /** The label colour. */
   labelColor: string;
-  /** 图标颜色。 */
+  /** The icon colour. */
   iconColor: string;
-  /** 按压时的视觉反馈，叠加在容器之上。 */
+  /** The pressed-state feedback, layered over the container. */
   pressedStyle: ViewStyle;
 };
 
 /**
- * 每个 variant 的完整设计语言：背景、描边、文字/图标色、按压反馈。
- * `Button` 与 `IconButton` 共用此配置，保证组件库层面一致。
+ * The whole design language of each variant: fill, border, label/icon colour,
+ * pressed feedback. `Button` and `IconButton` read the same table, which is
+ * what keeps the two consistent at the component-library level.
  *
- * 设计语言：
- * - `primary` / `secondary` / `danger`：填充态，按压时降低不透明度，保留底色识别度。
- *   `danger` 用于破坏性操作（清空、删除），红底白字与 `primary` 同等视觉权重。
- * - `outline`：透明底 + 描边，按压时浮出浅底提供明确触感。
- * - `ghost`：纯文字态，按压时浮出品牌色柔光底，呼应品牌。
- * - `onDark`：深色面的 ghost——icon tint 用 `accentOnDark`（`brand` 在
- *   `brandDark` 上只有 2.7:1），按压时浮出同色系柔光底。
+ * - `primary` / `secondary` / `danger` — filled; pressing lowers the opacity
+ *   so the fill is still readable. `danger` is for destructive actions (clear,
+ *   delete), and its white-on-red carries the same weight as `primary`.
+ * - `outline` — transparent over a hairline; pressing floats a pale fill in,
+ *   which is what makes the press legible without a colour to dim.
+ * - `ghost` — text only; pressing floats a soft brand-tinted fill in.
+ * - `onDark` — the ghost for a dark surface. The icon tint is `accentOnDark`
+ *   because `brand` on `brandDark` only reaches 2.7:1.
  */
 export const BUTTON_VARIANTS: Record<ButtonVariant, ButtonVariantStyle> = {
   primary: {
@@ -73,9 +75,11 @@ export const BUTTON_VARIANTS: Record<ButtonVariant, ButtonVariantStyle> = {
 };
 
 /**
- * disabled 态统一覆盖：中性灰底 + 中性灰字，描边透明（仍占位，见
- * `buttonContainerStyle`——否则 outline 按钮一变灰就会缩 2pt）。
- * `Button` 与 `IconButton` 在 disabled 时走此取值路径，与常态同构。
+ * The one disabled appearance every variant collapses to: a neutral grey fill
+ * and grey label. The border goes transparent but keeps its place (see
+ * `buttonContainerStyle`) — dropping it would shrink an outline button by 2pt
+ * the moment it greys out. `Button` and `IconButton` both read it here, the
+ * same way they read the table above.
  */
 // One hairline for every variant, drawn or not — see `buttonContainerStyle`.
 const BORDER_WIDTH = 1;

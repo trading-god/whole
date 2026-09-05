@@ -39,16 +39,12 @@ export const FONT_SIZE = {
   display: 34,
 } as const;
 
-export type FontSizeToken = keyof typeof FONT_SIZE;
-
 export const FONT_WEIGHT = {
   medium: "500",
   semibold: "600",
   bold: "700",
   extrabold: "800",
 } as const;
-
-export type FontWeightToken = keyof typeof FONT_WEIGHT;
 
 // Line heights are paired to their size tier; they are not a free-standing
 // scale, so only the combinations actually in use are tokenized.
@@ -62,8 +58,6 @@ export const LINE_HEIGHT = {
   // 34pt hero figure (1.06× — intentionally tight for a large numeral).
   display: 36,
 } as const;
-
-export type LineHeightToken = keyof typeof LINE_HEIGHT;
 
 export const LETTER_SPACING = {
   // 34pt hero figure.
@@ -83,5 +77,3 @@ export const LETTER_SPACING = {
   // 12pt brand wordmark.
   wordmark: 2.2,
 } as const;
-
-export type LetterSpacingToken = keyof typeof LETTER_SPACING;

@@ -285,9 +285,8 @@ function HomeScreenBody() {
             </Text>
           </View>
           <View style={styles.headerActions}>
-            {/* Settings is where the model endpoint is configured, and every
-                "set one up in Settings" message the recognition path can
-                produce has to be able to land somewhere. */}
+            {/* Settings is where recognition's on-device model is shown and
+                tested — the one thing about it a user can check on. */}
             <IconButton
               name="settings"
               size="md"

@@ -13,8 +13,19 @@ packages:
 # pins that package to the version named in it, which is how
 # @expo/metro-runtime got stranded three patch releases behind.
 minimumReleaseAge: 1440
+# Lifecycle scripts this repo permits. CI installs with `--ignore-scripts` —
+# none of its gates need a native artifact — so these run on developer machines
+# and native builds only.
 allowBuilds:
   esbuild: true
   unrs-resolver: true
+  # node-llama-cpp's postinstall downloads its prebuilt llama.cpp binaries for
+  # this platform. Only the ocr-eval harness (devDependency) uses it.
+  node-llama-cpp: true
+  # llama.rn's postinstall downloads the prebuilt llama.cpp artifacts that its
+  # CocoaPods spec and Android build link against — without it, pod install and
+  # gradle both fail to find the sources.
+  llama.rn: true
 patchedDependencies:
   expo-mlkit-ocr@0.2.7: patches/expo-mlkit-ocr@0.2.7.patch
+  llama.rn@0.12.9: patches/llama.rn@0.12.9.patch

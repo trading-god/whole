@@ -152,6 +152,12 @@ export function detectInstitution(lines: TokenWithRole[][]): InstitutionId {
   return byNumberFormat.length === 1 ? byNumberFormat[0] : "unknown";
 }
 
+/** What detection resolved: the routed institution and the config to run with. */
+export type InstitutionResolution = {
+  institutionId: InstitutionId;
+  config: InstitutionConfig;
+};
+
 // Resolves the full `InstitutionConfig` to run with, given detected tokens.
 // Merges the detected institution's overrides on top of `DEFAULT_CONFIG` — so
 // an institution only has to declare what it changes (icon tags, product
@@ -160,10 +166,9 @@ export function detectInstitution(lines: TokenWithRole[][]): InstitutionId {
 //
 // The word lists every institution inherits are NOT merged here: they are the
 // engine's own vocabulary (`engine/vocabulary.ts`), not config.
-export function resolveInstitutionConfig(lines: TokenWithRole[][]): {
-  institutionId: InstitutionId;
-  config: InstitutionConfig;
-} {
+export function resolveInstitutionConfig(
+  lines: TokenWithRole[][],
+): InstitutionResolution {
   const institutionId = detectInstitution(lines);
   // Layer the institution's overrides on the shared defaults;
   // `equivalentTotalPattern` and other omitted fields fall through to the

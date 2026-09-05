@@ -8,10 +8,11 @@ import { z } from "zod";
 // lives in the plain key-value store — see AGENTS.md on namespacing keys with
 // `whole.`.
 
-// 单一的「合法称呼」定义：trim 后非空、上限 USER_NAME_MAX_LENGTH 字符。
-// 引导页用 safeParse 校验、输入框 maxLength 引用 USER_NAME_MAX_LENGTH，二者
-// 同源避免「什么是一个合法称呼」在两处分别表达而漂移。首页只读取已存储的值
-// （保存前已校验），不复用此 schema。
+// The single definition of a valid name: non-empty after trimming, at most
+// USER_NAME_MAX_LENGTH characters. Onboarding validates with `safeParse` and
+// the input's `maxLength` reads the same constant, so "what counts as a name"
+// cannot drift between the two. The home screen only reads what was already
+// stored (validated on the way in) and does not re-use this schema.
 export const USER_NAME_MAX_LENGTH = 30;
 export const userNameSchema = z
   .string()

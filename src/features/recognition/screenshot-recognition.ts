@@ -1,21 +1,19 @@
 // Public entry point for account-screenshot recognition. This is what the
 // account screens call:
 //
-//   recognizeAccountFromScreenshot(uri, width, height, options)
+//   recognizeAccountFromScreenshot(uri, width, height)
 //     → recognizeTextOnDevice(uri)          native OCR (Vision / ML Kit)
 //     → normalizeOcrResult(...)             0..1 boxes
-//     → recognizeAccountsWithModel(...)     grid → prompt → model → resolve
+//     → recognizeAccountsWithModel(...)     engine structure + model annotation
 //     → ModelRecognitionResult              accounts, or a reason there are none
 //
-// The OCR pass is still entirely on-device. What leaves the device — and only
-// once the user has agreed to a specific host — is the recognized TEXT, never
-// the screenshot itself. `model-recognition` is where that gate lives.
+// Every step runs on this device — the OCR pass, the rules engine, and the
+// bundled model that annotates what rules cannot know. Nothing leaves the
+// phone: no endpoint, no consent, no network call at all.
 //
-// The return type is a RESULT, not a list, and that is the substantive change
-// from the rule-engine era: "no endpoint configured", "not consented to this
-// host", "your key is wrong" and "no accounts on this screen" are four
-// different things, and a screen that cannot tell them apart will show the last
-// one when it means one of the first three.
+// The return type is a RESULT, not a list, so the caller can tell the ways this
+// can end apart — see `recognition-issue.ts` for why that distinction earns its
+// keep.
 import { ImageManipulator } from "expo-image-manipulator";
 
 import {
@@ -24,16 +22,15 @@ import {
   recognizeTextOnDevice,
 } from "@/features/recognition/ocr-engine";
 import {
-  type ModelRecognitionOptions,
+  prewarmOnDeviceContext,
+  releaseOnDeviceContext,
+} from "@/features/on-device-model/model-context";
+import {
   type ModelRecognitionResult,
   recognizeAccountsWithModel,
 } from "@/features/recognition/model-recognition";
 
 export type { RecognizedAccount } from "@whole/ocr";
-export type {
-  ModelRecognitionResult,
-  RecognitionFailureCause,
-} from "@/features/recognition/model-recognition";
 
 // Thrown when the device can't run on-device OCR (e.g. very old devices or
 // certain Android builds). Callers surface this as "unsupported hardware" and
@@ -62,7 +59,6 @@ export async function recognizeAccountFromScreenshot(
   imageUri: string,
   imageWidth?: number,
   imageHeight?: number,
-  options: ModelRecognitionOptions = {},
 ): Promise<ModelRecognitionResult> {
   // Capability gate: this device can't run on-device OCR. Folding it into the
   // public entry point means any caller inherits the fallback, not just the
@@ -70,15 +66,43 @@ export async function recognizeAccountFromScreenshot(
   if (!isOcrSupported()) {
     throw new RecognitionUnsupportedError();
   }
+  // The model context depends on nothing in this function, and loading it is
+  // seconds of CPU (longer on a phone with no Metal). Started here, it warms
+  // while the OCR pass runs instead of after it — on a cold start that is the
+  // single largest slice of the user's visible "recognizing" wait. Past the
+  // capability gate, because a device that cannot OCR will never ask for it.
+  //
+  // It is started before the screen is known to hold any account, which is the
+  // price of the overlap: only the blocks can say, and they do not exist yet.
+  // Every way it turns out wasted is bounded: a screen the engine groups
+  // nothing on releases the context immediately
+  // (`recognizeAccountsWithModel`), an OCR pass that throws releases it below,
+  // and a load that fails is swallowed, so the "no accounts on this
+  // screenshot" verdict still reaches the user instead of a memory warning
+  // about a model that was never needed.
+  prewarmOnDeviceContext();
   // The OCR pass is the slow step; the dimension read (native `renderAsync` on
   // the same uri when the caller didn't already know the size) is cheap and
   // overlaps with it, shaving user-visible "recognizing" latency.
-  const [native, dims] = await Promise.all([
-    recognizeTextOnDevice(imageUri),
-    imageWidth !== undefined && imageHeight !== undefined
-      ? Promise.resolve({ width: imageWidth, height: imageHeight })
-      : ImageManipulator.manipulate(imageUri).renderAsync(),
-  ]);
+  let native;
+  let dims;
+  try {
+    const [ocr, size] = await Promise.all([
+      recognizeTextOnDevice(imageUri),
+      imageWidth !== undefined && imageHeight !== undefined
+        ? Promise.resolve({ width: imageWidth, height: imageHeight })
+        : ImageManipulator.manipulate(imageUri).renderAsync(),
+    ]);
+    native = ocr;
+    dims = size;
+  } catch (error) {
+    // The prewarm above is still holding (or still loading) the weights for a
+    // recognition that is not going to happen. Nothing downstream will free
+    // them, so the user would fill the form in by hand beside three gigabytes
+    // waiting out the idle timer — on a device that just failed OCR.
+    void releaseOnDeviceContext().catch(() => {});
+    throw error;
+  }
   const blocks = normalizeOcrResult(native, dims.width, dims.height);
-  return recognizeAccountsWithModel(blocks, options);
+  return recognizeAccountsWithModel(blocks);
 }

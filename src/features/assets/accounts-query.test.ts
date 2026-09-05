@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   accountsQueryKey,
+  accountsQueryOptions,
   cachedAccounts,
-  fetchAccounts,
   invalidateAccounts,
   removeAccount,
 } from "@/features/assets/accounts-query";
@@ -62,7 +62,9 @@ describe("removeAccount vs. an in-flight read", () => {
       slowRead.promise as ReturnType<typeof readAccountsAndGroups>,
     );
 
-    const reading = fetchAccounts(client).catch(() => undefined);
+    const reading = client
+      .fetchQuery(accountsQueryOptions())
+      .catch(() => undefined);
 
     removeAccountMock.mockResolvedValue([account("b")]);
     await removeAccount(client, "a");
@@ -124,18 +126,7 @@ describe("removeAccount vs. an in-flight read", () => {
   });
 });
 
-describe("fetchAccounts", () => {
-  it("dedupes concurrent reads into one storage hit", async () => {
-    // Pull-to-refresh landing during a focus load should share the read, not
-    // race it.
-    const client = testClient();
-    readMock.mockResolvedValue({ accounts: [account("a")], groups: [] });
-
-    await Promise.all([fetchAccounts(client), fetchAccounts(client)]);
-
-    expect(readMock).toHaveBeenCalledTimes(1);
-  });
-
+describe("cachedAccounts", () => {
   it("reports no accounts before the first load", () => {
     expect(cachedAccounts(testClient())).toBeNull();
   });
@@ -149,11 +140,11 @@ describe("invalidateAccounts", () => {
   it("marks the cached list stale so the next read refetches", async () => {
     const client = testClient();
     readMock.mockResolvedValue({ accounts: [account("a")], groups: [] });
-    await fetchAccounts(client);
+    await client.fetchQuery(accountsQueryOptions());
     readMock.mockResolvedValue({ accounts: [account("b")], groups: [] });
 
     await invalidateAccounts(client);
-    await fetchAccounts(client);
+    await client.fetchQuery(accountsQueryOptions());
 
     expect(cachedAccounts(client)?.map((entry) => entry.id)).toEqual(["b"]);
   });

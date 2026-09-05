@@ -72,13 +72,9 @@ type UploadIssue =
 const ISSUE_MESSAGE_KEY = {
   recognitionFailed: "accountScreenshot.recognitionFailed",
   recognitionEmpty: "accountScreenshot.recognitionEmpty",
-  modelNotConfigured: "accountScreenshot.modelNotConfigured",
-  modelConsentRequired: "accountScreenshot.modelConsentRequired",
-  modelUnauthorized: "accountScreenshot.modelUnauthorized",
-  modelRateLimited: "accountScreenshot.modelRateLimited",
-  modelOffline: "accountScreenshot.modelOffline",
-  modelUnavailable: "accountScreenshot.modelUnavailable",
+  modelLoadFailed: "accountScreenshot.modelLoadFailed",
   modelUnusable: "accountScreenshot.modelUnusable",
+  modelInterrupted: "accountScreenshot.modelInterrupted",
   noMatchingAccount: "accountScreenshot.noMatchingAccount",
   pickerFailed: "accountScreenshot.pickerErrorMessage",
   ocrUnsupported: "accountScreenshot.ocrUnsupported",
@@ -140,7 +136,6 @@ export function AccountScreenshotUploader({
     // would leave this component with no memoization at all. Same reason
     // `pickImage` below resolves its `?? null` after the try.
     let failure: UploadIssue | null = null;
-    let recognizedCount = 0;
     let applied = false;
     let declined = false;
     try {
@@ -148,13 +143,17 @@ export function AccountScreenshotUploader({
       if (!isMountedRef.current) {
         return;
       }
-      // Everything the pipeline can decline for — no endpoint, no consent, a
-      // rejected key, a model that cannot hold the contract — arrives here as
-      // its own issue, because each one asks something different of the user.
+      // Everything the pipeline can decline for arrives here as its own issue,
+      // mapped by `issueForRecognition`.
       failure = issueForRecognition(result);
+      // A failed recognition still carries the engine's read (see
+      // `ModelRecognitionResult`): the user gets the names, balances and last
+      // fours pre-filled AND the message saying the model could not finish, so
+      // they correct a form rather than typing one.
       const accounts =
-        result.status === "recognized" ? result.recognition.accounts : [];
-      recognizedCount = accounts.length;
+        result.status === "recognized"
+          ? result.recognition.accounts
+          : result.accounts;
       // The parent reports whether it applied anything — an unparseable/empty
       // response or an ignored result (e.g. no matching account on the edit
       // screen) must not flip the badge to "Recognized" over an unchanged
@@ -183,21 +182,23 @@ export function AccountScreenshotUploader({
       setHasRecognized(applied);
     }
 
-    if (failure || applied || declined) {
-      setIssue(failure);
-      return declined ? "declined" : undefined;
-    }
-    // Nothing threw and nothing landed. Say which of the two it was: the OCR
-    // read no account at all, or it read accounts and none of them was the one
-    // being edited. Without this the badge just reverts to "ready" with every
-    // field unchanged, and the user cannot tell a failed pass from a screenshot
-    // of the wrong account — so they retry the same upload.
-    // The pipeline read accounts and none of them was the one being edited.
-    // An empty read already has its own message from `issueForRecognition`, so
-    // reaching here with nothing recognized means the parent simply ignored
-    // what it was given.
-    setIssue(recognizedCount === 0 ? "recognitionEmpty" : "noMatchingAccount");
-    return undefined;
+    // Two outcomes, and `failure` decides between them.
+    //
+    // `issueForRecognition` returns null only for a recognition that produced
+    // accounts, so `failure === null` with nothing applied means the parent was
+    // offered some and took none: the screenshot is of a different account.
+    // That is a message this screen can only give when nothing else went wrong
+    // — `failure` otherwise names something the user can act on (the model
+    // would not load, OCR is unsupported, the picker failed), and speaking over
+    // one of those would send them to re-upload against a problem no upload
+    // fixes.
+    //
+    // Everything else is `failure`, which is null when something DID land — and
+    // setting null is what clears a stale issue off a successful pass.
+    setIssue(
+      failure === null && !applied && !declined ? "noMatchingAccount" : failure,
+    );
+    return declined ? "declined" : undefined;
   };
 
   const pickImage = async () => {
@@ -235,9 +236,9 @@ export function AccountScreenshotUploader({
     // On-device OCR may be unavailable on some hardware (e.g. very old devices
     // or certain Android builds). Fall back to manual entry: show the selected
     // screenshot so the user can reference it while filling the form, and
-    // surface the reason instead of a confusing engine error. The recognizer
-    // throws RecognitionUnsupportedError in that case.
-    // Cannot throw — recognizeScreenshot funnels every failure into `issue`.
+    // surface the reason instead of a confusing engine error — the recognizer
+    // throws RecognitionUnsupportedError for exactly that case, and
+    // `recognizeScreenshot` catches it into `ocrUnsupported`.
     // The picker already decoded the image, so hand its pixel dimensions to the
     // recognizer instead of the recognizer re-decoding just to read them.
     const outcome = await recognizeScreenshot(

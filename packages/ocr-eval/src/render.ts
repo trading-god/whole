@@ -1,5 +1,6 @@
 // ASCII rendering for the eval runner's results. Kept separate from run-eval so
 // the formatting can be tested/read in isolation.
+import { formatFieldAggregateRow, type FieldAggregateRow } from "./aggregates";
 import type { BaselineDiff, BaselineEntry, BaselineReason } from "./baseline";
 import type { SampleComparison } from "./compare";
 
@@ -66,21 +67,31 @@ export function renderSample(
   return lines.join("\n");
 }
 
+/**
+ * The per-field accuracy block, under a caption naming how many samples it
+ * covers. Both eval runners print it, so the two reports can be laid side by
+ * side line for line — which is the whole reason `aggregates.ts` exists.
+ */
+export function renderFieldAccuracy(
+  caption: string,
+  aggregates: FieldAggregateRow[],
+): string {
+  return [caption, ...aggregates.map(formatFieldAggregateRow)].join("\n");
+}
+
 export function renderSummary(
   samples: SampleComparison[],
-  aggregates: { name: string; expected: number; passed: number }[],
+  aggregates: FieldAggregateRow[],
 ): string {
-  const total = samples.length;
   const passed = samples.filter((s) => s.pass).length;
-  const lines = [
+  return [
     "",
     "──────────────────────────────────────────────",
-    `samples: ${passed}/${total} passed`,
-  ];
-  for (const agg of aggregates) {
-    lines.push(`  ${agg.name}: ${agg.passed}/${agg.expected}`);
-  }
-  return lines.join("\n");
+    renderFieldAccuracy(
+      `samples: ${passed}/${samples.length} passed`,
+      aggregates,
+    ),
+  ].join("\n");
 }
 
 const REASON_LABELS: Record<BaselineReason, string> = {

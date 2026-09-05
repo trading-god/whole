@@ -16,5 +16,3 @@ export const SPACING = {
   xxl: 24, // screen bottom padding, section gaps
   xxxl: 32, // large blocks (used sparingly)
 } as const;
-
-export type SpacingToken = keyof typeof SPACING;

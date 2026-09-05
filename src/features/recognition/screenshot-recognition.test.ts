@@ -13,7 +13,9 @@ const mockNormalizeOcrResult = jest.fn<() => OcrTextBlock[]>();
 const mockRenderAsync =
   jest.fn<() => Promise<{ width: number; height: number }>>();
 const mockRecognizeAccountsWithModel =
-  jest.fn<(blocks: OcrTextBlock[], options?: unknown) => Promise<unknown>>();
+  jest.fn<(blocks: OcrTextBlock[]) => Promise<unknown>>();
+const mockPrewarm = jest.fn();
+const mockReleaseOnDeviceContext = jest.fn<() => Promise<void>>();
 
 jest.mock("@/features/recognition/ocr-engine", () => ({
   isOcrSupported: () => mockIsOcrSupported(),
@@ -27,9 +29,14 @@ jest.mock("expo-image-manipulator", () => ({
   },
 }));
 
+jest.mock("@/features/on-device-model/model-context", () => ({
+  prewarmOnDeviceContext: () => mockPrewarm(),
+  releaseOnDeviceContext: () => mockReleaseOnDeviceContext(),
+}));
+
 jest.mock("@/features/recognition/model-recognition", () => ({
-  recognizeAccountsWithModel: (blocks: OcrTextBlock[], options?: unknown) =>
-    mockRecognizeAccountsWithModel(blocks, options),
+  recognizeAccountsWithModel: (blocks: OcrTextBlock[]) =>
+    mockRecognizeAccountsWithModel(blocks),
 }));
 
 const BLOCKS: OcrTextBlock[] = [
@@ -42,8 +49,6 @@ const BLOCKS: OcrTextBlock[] = [
 const RECOGNIZED: ModelRecognitionResult = {
   status: "recognized",
   recognition: { accounts: [] },
-  fingerprint: { hash: "abc", tokens: ["account"] },
-  usage: { inputTokens: 1, outputTokens: 2 },
 };
 
 beforeEach(() => {
@@ -53,31 +58,55 @@ beforeEach(() => {
   mockNormalizeOcrResult.mockReturnValue(BLOCKS);
   mockRenderAsync.mockResolvedValue({ width: 1206, height: 2622 });
   mockRecognizeAccountsWithModel.mockResolvedValue(RECOGNIZED);
+  mockReleaseOnDeviceContext.mockResolvedValue(undefined);
 });
 
 describe("recognizeAccountFromScreenshot", () => {
   it("hands the normalized blocks to the model pipeline", async () => {
     const result = await recognizeAccountFromScreenshot("file://shot.png");
 
-    expect(mockRecognizeAccountsWithModel).toHaveBeenCalledWith(
-      BLOCKS,
-      expect.anything(),
-    );
+    expect(mockRecognizeAccountsWithModel).toHaveBeenCalledWith(BLOCKS);
     expect(result).toEqual(RECOGNIZED);
   });
 
   // Every reason the pipeline can decline reaches the screen unchanged, because
   // each one has a different next step for the user.
-  it.each([["not-configured"], ["consent-required"], ["failed"]])(
-    "passes a %s outcome through",
-    async (status) => {
-      mockRecognizeAccountsWithModel.mockResolvedValue({ status });
+  it("passes a failed outcome through", async () => {
+    const failed: ModelRecognitionResult = {
+      status: "failed",
+      cause: "load-failed",
+      accounts: [],
+    };
+    mockRecognizeAccountsWithModel.mockResolvedValue(failed);
 
-      expect(await recognizeAccountFromScreenshot("file://shot.png")).toEqual({
-        status,
-      });
-    },
-  );
+    expect(await recognizeAccountFromScreenshot("file://shot.png")).toEqual(
+      failed,
+    );
+  });
+
+  it("frees the prewarmed context when the OCR pass throws", async () => {
+    // Nothing downstream runs, so nothing else would release it — the user
+    // fills the form in by hand beside three gigabytes waiting out the idle
+    // timer, on a device that just failed OCR.
+    mockRecognizeTextOnDevice.mockRejectedValue(new Error("vision failed"));
+
+    await expect(
+      recognizeAccountFromScreenshot("file://shot.png"),
+    ).rejects.toThrow("vision failed");
+
+    expect(mockReleaseOnDeviceContext).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts the model load before the OCR pass, not after it", async () => {
+    // The context load depends on nothing here, and it is the largest slice of
+    // a cold recognition. Serialized behind OCR it would be added to the wait
+    // rather than hidden inside it.
+    await recognizeAccountFromScreenshot("file://shot.png");
+
+    expect(mockPrewarm.mock.invocationCallOrder[0]).toBeLessThan(
+      mockRecognizeTextOnDevice.mock.invocationCallOrder[0],
+    );
+  });
 
   // A capability gate on the ENTRY point, so every caller inherits the fallback
   // rather than only the uploader.
@@ -88,6 +117,9 @@ describe("recognizeAccountFromScreenshot", () => {
       recognizeAccountFromScreenshot("file://shot.png"),
     ).rejects.toBeInstanceOf(RecognitionUnsupportedError);
     expect(mockRecognizeTextOnDevice).not.toHaveBeenCalled();
+    // And nothing loaded three gigabytes of weights for a recognition that
+    // could never run.
+    expect(mockPrewarm).not.toHaveBeenCalled();
   });
 
   describe("image dimensions", () => {
@@ -109,18 +141,6 @@ describe("recognizeAccountFromScreenshot", () => {
       await recognizeAccountFromScreenshot("file://shot.png", 1206);
 
       expect(mockRenderAsync).toHaveBeenCalled();
-    });
-  });
-
-  // The prior that collapses most institution ambiguity, and the reason the
-  // caller — which holds the account list — passes it down.
-  it("forwards the user's existing institutions", async () => {
-    await recognizeAccountFromScreenshot("file://shot.png", 1206, 2622, {
-      knownInstitutions: ["OCBC"],
-    });
-
-    expect(mockRecognizeAccountsWithModel).toHaveBeenCalledWith(BLOCKS, {
-      knownInstitutions: ["OCBC"],
     });
   });
 });

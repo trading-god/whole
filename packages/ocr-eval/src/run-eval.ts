@@ -22,6 +22,11 @@
 //   pnpm eval:ocr -- --update-baseline                          # rewrite baseline.json
 import { parseOcrBlocks, type RecognizedAccount } from "@whole/ocr";
 import {
+  sortedFieldAggregates,
+  tallyGoldAccount,
+  type FieldAggregates,
+} from "./aggregates";
+import {
   collectFailures,
   diffSample,
   loadBaseline,
@@ -32,11 +37,10 @@ import {
 } from "./baseline";
 import {
   ACCOUNT_FIELDS,
-  compareGolds,
+  compareSample,
   fieldKey,
   goldRequires,
   type SampleComparison,
-  type FieldResult,
 } from "./compare";
 import {
   countRegressions,
@@ -47,23 +51,12 @@ import {
 } from "./render";
 import {
   errorMessage,
-  listSampleSlugs,
-  loadGoldAccounts,
+  loadGoldOrSkip,
   loadOcrBlocks,
+  namedSampleExists,
   parseSampleFlag,
   resolveSampleTargets,
 } from "./paths";
-
-function compare(
-  slug: string,
-  expected: RecognizedAccount[],
-  parsed: RecognizedAccount[],
-): SampleComparison {
-  const accounts = compareGolds(expected, parsed);
-  const count = { expected: expected.length, got: parsed.length };
-  const pass = accounts.every((a) => a.pass) && count.expected === count.got;
-  return { sample: slug, accounts, pass, count };
-}
 
 function main() {
   const args = process.argv.slice(2);
@@ -100,7 +93,7 @@ function main() {
     droppedCoverage: [],
     knownGaps: [],
   };
-  const aggregates = new Map<string, { expected: number; passed: number }>();
+  const aggregates: FieldAggregates = new Map();
   const skipped: string[] = [];
   const unreadable: string[] = [];
 
@@ -108,9 +101,8 @@ function main() {
     // `listSampleSlugs` returns every sample with a blocks.json; samples
     // without a gold expected.json (recorded, not yet annotated) can't
     // be compared, so warn and skip them instead of crashing on the missing file.
-    const expected = loadGoldAccounts(slug);
+    const expected = loadGoldOrSkip(slug);
     if (!expected) {
-      console.warn(`· ${slug}: skipped (no expected.json yet)`);
       skipped.push(slug);
       continue;
     }
@@ -125,7 +117,7 @@ function main() {
       unreadable.push(slug);
       continue;
     }
-    const comparison = compare(slug, expected, accounts);
+    const comparison = compareSample(slug, expected, accounts);
     results.push(comparison);
 
     const failures = collectFailures(comparison);
@@ -154,45 +146,15 @@ function main() {
     }
     console.log(renderSample(comparison, diff));
 
-    for (let i = 0; i < expected.length; i++) {
-      const gold = expected[i];
-      const fields = comparison.accounts[i]?.fields;
-      // Pass per required field, read off the comparison's per-field status.
-      for (const field of ACCOUNT_FIELDS) {
-        tallyPassed(
-          field.read(gold),
-          field.bucket,
-          fields?.[field.key],
-          aggregates,
-        );
-      }
-      // Balances get one bucket per currency the gold names, and each bucket
-      // reads that currency's OWN verdict. Reading the whole-account result
-      // reported the same answer for every currency, so one wrong USD figure
-      // was printed as SGD and HKD failing too.
-      // One entry per CURRENCY, not per gold row: a gold can legitimately list
-      // one currency several times (HSBC One holds three HKD sub-accounts, and
-      // `compareBalances` sums them), and counting each row tripled that
-      // currency's denominator with copies of a single verdict. Any currency
-      // the parser invented is in `perCurrency` too, so it gets its own bucket.
-      const perCurrency = fields?.balances?.perCurrency ?? {};
-      const currencies = new Set([
-        ...(gold.balances ?? []).map((b) => b.currency as string),
-        ...Object.keys(perCurrency),
-      ]);
-      for (const currency of currencies) {
-        tally(
-          `balance:${currency}`,
-          perCurrency[currency] ?? false,
-          aggregates,
-        );
-      }
-    }
+    // Per-field accuracy, one shared walk with the on-device runner's report
+    // (`aggregates.ts`): only fields the gold requires, balances bucketed per
+    // currency.
+    expected.forEach((gold, index) => {
+      tallyGoldAccount(gold, comparison.accounts[index]?.fields, aggregates);
+    });
   }
 
-  const aggregatesList = [...aggregates.entries()]
-    .map(([name, v]) => ({ name, ...v }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const aggregatesList = sortedFieldAggregates(aggregates);
   console.log(renderSummary(results, aggregatesList));
   console.log(renderBaselineReport(totals));
 
@@ -214,9 +176,7 @@ function main() {
   // yet. That is the interactive way to work on a freshly imported sample, and
   // the message below suggests it. A named slug that is not a sample at all —
   // the typo — still fails.
-  const namedSampleExists =
-    onlySlug !== null && listSampleSlugs().includes(onlySlug);
-  if (results.length === 0 && !namedSampleExists) {
+  if (results.length === 0 && !namedSampleExists(onlySlug)) {
     console.error(
       `\n✗ no sample was compared (${slugs.length} target(s) had no expected.json).`,
     );
@@ -318,31 +278,6 @@ function requiredFieldKeys(expected: RecognizedAccount[]): Set<string> {
     }
   });
   return keys;
-}
-
-function tallyPassed(
-  value: string | undefined,
-  bucket: string,
-  field: FieldResult | undefined,
-  map: Map<string, { expected: number; passed: number }>,
-): void {
-  if (!value || value.trim().length === 0) {
-    return;
-  }
-  tally(bucket, field?.status === "pass", map);
-}
-
-function tally(
-  bucket: string,
-  passed: boolean,
-  map: Map<string, { expected: number; passed: number }>,
-): void {
-  const entry = map.get(bucket) ?? { expected: 0, passed: 0 };
-  entry.expected += 1;
-  if (passed) {
-    entry.passed += 1;
-  }
-  map.set(bucket, entry);
 }
 
 // A usage error from `parseSampleFlag` (and anything else the run throws)

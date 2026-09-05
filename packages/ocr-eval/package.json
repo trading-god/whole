@@ -6,6 +6,8 @@
   "type": "module",
   "scripts": {
     "eval": "tsx src/run-eval.ts",
+    "eval:llama": "tsx src/run-llama-eval.ts",
+    "ablate": "tsx src/run-ablation.ts",
     "vision": "tsx src/vision.ts",
     "recognize": "tsx src/recognize.ts",
     "typecheck": "tsc --noEmit",
@@ -17,6 +19,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
+    "node-llama-cpp": "^3.20.0",
     "tsx": "^4.23.11",
     "typescript": "~6.0.3",
     "vitest": "^4.0.18"

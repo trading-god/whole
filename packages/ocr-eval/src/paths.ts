@@ -107,6 +107,26 @@ export function resolveSampleTargets(args: string[]): string[] {
   return slugs;
 }
 
+// The gold for one sample, or `null` after warning that there is none. Every
+// runner walks the same sample list and every one of them has to skip a sample
+// that was recorded but never annotated — so the wording of that warning lives
+// here rather than being retyped per runner.
+export function loadGoldOrSkip(slug: string): RecognizedAccount[] | null {
+  const gold = loadGoldAccounts(slug);
+  if (gold === null) {
+    console.warn(`· ${slug}: skipped (no expected.json yet)`);
+  }
+  return gold;
+}
+
+// Whether a `--sample <slug>` flag named a real sample. The runners' "no
+// sample was compared" exit treats that case as an interactive probe rather
+// than a broken invocation (a typo'd slug), so the check lives beside the flag
+// parser it reads.
+export function namedSampleExists(onlySlug: string | null): boolean {
+  return onlySlug !== null && listSampleSlugs().includes(onlySlug);
+}
+
 // Runs `worker` over `items` with at most `limit` in flight, returning results
 // in input order. The work here is almost entirely spent waiting on a Vision
 // subprocess, so a serial loop sits idle; the cap keeps that from turning into

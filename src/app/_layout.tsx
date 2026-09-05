@@ -9,6 +9,7 @@ import { queryClient, queryPersistOptions } from "@/lib/query-client";
 import { I18nProvider } from "@/i18n";
 import { OnboardingContext } from "@/features/onboarding/onboarding-context";
 import { loadOnboardingCompleted } from "@/features/onboarding/onboarding-store";
+import { removeLegacyModelKeys } from "@/storage/legacy-model-keys";
 
 // Hold the splash screen while the onboarding flag is read, so a first-run
 // user never sees a frame of the home screen before the redirect to
@@ -38,6 +39,10 @@ export default function RootLayout() {
         // still complete onboarding rather than being stuck on a blank screen.
         setIsOnboarded(false);
       });
+    // Best-effort sweep of the storage the bring-your-own-endpoint era left
+    // behind (see `removeLegacyModelKeys`). Fire-and-forget: a failure means
+    // the orphaned rows survive one more launch.
+    void removeLegacyModelKeys().catch(() => {});
   }, []);
 
   // First-launch gate (expo-router auth-gate pattern): send un-onboarded users

@@ -386,3 +386,44 @@ function describeIssue(label: string, field: FieldResult): string {
       return "";
   }
 }
+
+/**
+ * The same verdict, with `institutionId` discounted.
+ *
+ * For the `institution` ablation only: that mode forces `institutionId` to
+ * "unknown", so every gold account fails on that one field BY DEFINITION.
+ * Judged on it, the column that exists to show what survives with no config at
+ * all reads 0/17 and names every sample as a loss — while its own per-field
+ * rows say accountName survives at 45% and lastFour at 70%. Both eval runners
+ * apply it, so the engine-alone and engine-plus-model tables stay comparable.
+ */
+export function passIgnoringInstitution(comparison: SampleComparison): boolean {
+  return (
+    comparison.count.expected === comparison.count.got &&
+    comparison.accounts.every((account) =>
+      Object.entries(account.fields).every(
+        ([key, result]) => key === "institutionId" || result.status === "pass",
+      ),
+    )
+  );
+}
+
+// One sample's verdict: every gold met, and no account the gold did not ask
+// for. Shared by all three runners — the account-count half of the rule once
+// drifted out of the on-device gate, so a model that invented an account
+// scored as a pass there and a fail in the rule-engine gate, which is exactly
+// the comparability `aggregates.ts` was extracted to guarantee.
+export function compareSample(
+  slug: string,
+  golds: RecognizedAccount[],
+  parsed: RecognizedAccount[],
+): SampleComparison {
+  const accounts = compareGolds(golds, parsed);
+  const count = { expected: golds.length, got: parsed.length };
+  return {
+    sample: slug,
+    accounts,
+    pass: accounts.every((a) => a.pass) && count.expected === count.got,
+    count,
+  };
+}

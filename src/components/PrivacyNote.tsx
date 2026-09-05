@@ -9,9 +9,10 @@ type PrivacyNoteProps = {
   message: string;
 };
 
-// Shared "privacy reassurance" row: a check badge + a muted message. Used by
-// the add-account and settings screens so neither redeclares the same markup
-// and styles.
+// Shared "privacy reassurance" row: a check badge + a muted message, for a
+// screen that needs one line of reassurance inline. The settings screen makes
+// the same promise in a boxed `TONES.safe` panel instead — that one is the
+// subject of the card, not an aside beside a control.
 export function PrivacyNote({ message }: PrivacyNoteProps) {
   return (
     <View style={styles.privacyRow}>

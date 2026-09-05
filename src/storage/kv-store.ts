@@ -135,9 +135,30 @@ export async function removeItem(key: string): Promise<void> {
 // would be inert rather than harmful, but the store would then hold a marker
 // naming a base that no longer describes the data it labels — a contradiction
 // the next migration would have to reason about.
-export async function withTransaction(
-  work: () => Promise<void>,
-): Promise<void> {
-  const database = await ensureDatabase();
-  await database.withTransactionAsync(work);
+//
+// Serialized in JS, because `withTransactionAsync` is NOT exclusive: two
+// overlapping BEGINs on the one connection fail with "cannot start a
+// transaction within a transaction". The callers are one-time migrations that
+// fire from wherever their feature happens to load — the legacy-key sweep from
+// the root layout's mount effect, the net-worth history migration from its
+// query — so whether they overlap would otherwise be a matter of which
+// resolved first.
+//
+// What the queue does NOT buy is isolation: `withTransactionAsync` shares the
+// one connection, so a plain `setItem` issued while a transaction is open runs
+// inside it and is rolled back with it. Reach for
+// `withExclusiveTransactionAsync` if that ever matters — it takes a handle the
+// work has to run its statements through, which is why this has not been
+// converted for a rollback that only a disk failure produces.
+let transactionQueue: Promise<unknown> = Promise.resolve();
+
+export function withTransaction(work: () => Promise<void>): Promise<void> {
+  const run = transactionQueue.then(async () => {
+    const database = await ensureDatabase();
+    await database.withTransactionAsync(work);
+  });
+  // The queue swallows the failure so the NEXT transaction still runs; the
+  // caller still gets the rejection through `run`.
+  transactionQueue = run.catch(() => {});
+  return run;
 }

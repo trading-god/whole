@@ -16,7 +16,10 @@ export type AssetKind = (typeof knownAssetKinds)[number];
 // each re-declaring `z.enum(knownAssetKinds)`.
 export const assetKindSchema = z.enum(knownAssetKinds);
 
-const LAST_FOUR_DIGITS_PATTERN = /^\d{4}$/;
+// `[0-9]`, not `\d`, because this schema may be compiled into a GBNF grammar,
+// which cannot parse that escape — the rule and its history live in
+// `engine/grammar.ts`, which rejects the escape rather than trusting a comment.
+const LAST_FOUR_DIGITS_PATTERN = /^[0-9]{4}$/;
 
 // Schema for a 4-digit last-four string. Owned here (alongside the pattern) so
 // `asset-repository.ts`'s account identity schema and the OCR parser share one

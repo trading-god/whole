@@ -3210,3 +3210,59 @@ describe("summed sub-account balances", () => {
     ]);
   });
 });
+
+// The ablation seam, end to end. `institutions/ablation.test.ts` states what
+// each mode CLEARS; these state that clearing it reaches the parse — which is
+// the only reason the option exists.
+describe("parseOcrBlocks under an institution ablation", () => {
+  // OCBC prints an icon tag before the account name and denominates a bare
+  // figure in SGD, so one screen exercises two independent tiers. The name is
+  // three tokens on purpose: `cleanAccountName` only strips a tag when what
+  // follows is still a full account name, so "GSA Account" would keep the tag
+  // with or without the config and measure nothing.
+  const ocbcScreen = () =>
+    screen(
+      row("OCBC"),
+      row("GSA", "Global", "Savings", "Account"),
+      row("6,672.59"),
+    );
+
+  it("reads the institution's config when no ablation is passed", () => {
+    const accounts = parseOcrBlocks(ocbcScreen());
+
+    expect(accounts[0]).toMatchObject({
+      institutionId: "ocbc",
+      accountName: "Global Savings Account",
+      balances: [{ currency: "SGD", balance: 6672.59 }],
+    });
+  });
+
+  it("loses the bare figure's currency under `currency`", () => {
+    // The screen never names a currency — the institution's home currency was
+    // the only evidence there was. This is the failure mode a user hits on any
+    // domestic app whose institution has no config.
+    const accounts = parseOcrBlocks(ocbcScreen(), { ablate: "currency" });
+
+    expect(accounts[0].institutionId).toBe("ocbc");
+    expect(accounts[0].accountName).toBe("Global Savings Account");
+    expect(accounts[0].balances).toBeUndefined();
+  });
+
+  it("keeps the icon tag in the name under `icons`", () => {
+    const accounts = parseOcrBlocks(ocbcScreen(), { ablate: "icons" });
+
+    expect(accounts[0].accountName).toBe("GSA Global Savings Account");
+    // The currency default is a different tier and survives this one.
+    expect(accounts[0].balances).toEqual([
+      { currency: "SGD", balance: 6672.59 },
+    ]);
+  });
+
+  it("degrades to the shared defaults under `institution`", () => {
+    const accounts = parseOcrBlocks(ocbcScreen(), { ablate: "institution" });
+
+    expect(accounts[0].institutionId).toBe("unknown");
+    expect(accounts[0].accountName).toBe("GSA Global Savings Account");
+    expect(accounts[0].balances).toBeUndefined();
+  });
+});

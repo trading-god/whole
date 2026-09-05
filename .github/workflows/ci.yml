@@ -33,8 +33,18 @@ jobs:
       # --frozen-lockfile is already the CI default; stated explicitly so the
       # "lockfile and manifest must agree" rule is visible. pnpm 11 also
       # enforces the minimumReleaseAge supply-chain policy here.
+      #
+      # --ignore-scripts because the only lifecycle scripts this repo allows
+      # (see `allowBuilds` in pnpm-workspace.yaml) download native artifacts —
+      # llama.rn's iOS xcframework and Android libs, node-llama-cpp's llama.cpp
+      # binaries — and not one gate below touches them: every step here is pure
+      # JS, `eval:ocr:llama` needs a local GGUF and does not run in CI, and
+      # there is no native build. Skipping keeps the pipeline network-free
+      # after the registry fetch, which is what makes it a ~one-minute job that
+      # cannot flake on a CDN. Verified: all eight gates pass on a
+      # scripts-free install.
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       # The gates AGENTS.md requires, one step each: a failure names itself in
       # the GitHub UI instead of hiding in a combined log. Every one of these is
@@ -45,7 +55,6 @@ jobs:
       - run: pnpm format:check
       - run: pnpm typecheck
       - run: pnpm test:app
-      - run: pnpm test:llm
       - run: pnpm test:rn
       - run: pnpm test:ocr
       - run: pnpm test:ocr:golden

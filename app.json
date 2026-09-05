@@ -79,7 +79,17 @@
       "expo-sharing",
       "expo-asset",
       "expo-image",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "llama.rn",
+        {
+          "enableEntitlements": true,
+          "entitlementsProfile": ["", "development", "preview", "production"],
+          "forceCxx20": true,
+          "enableOpenCLAndHexagon": true
+        }
+      ],
+      "./plugins/with-whole-model"
     ],
     "experiments": {
       "typedRoutes": true,

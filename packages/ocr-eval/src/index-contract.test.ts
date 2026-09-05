@@ -1,19 +1,32 @@
-// Can the index-only contract express the right answer, on real screenshots?
+// Can the recognition contract express the right answer, on real screenshots?
 //
-// This is the one question the new recognition design cannot answer with unit
-// tests, and it is the question the whole thing rests on. The model returns
-// BLOCK INDICES and nothing else, so every value the app records must already
-// be present in some block. If a verified gold names a balance that appears in
-// no block, the model could not have produced it however well it read the
-// screen — the contract itself would be the limit.
+// This is the one question the hybrid design cannot answer with unit tests,
+// and it is the question the whole thing rests on. The ENGINE reads every
+// figure and every last four out of the blocks' own text, so every value the
+// app records must already be present in some block. If a verified gold names
+// a balance that appears in no block, the engine could not have produced it
+// however well it read the screen — the contract itself would be the limit.
 //
 // So this replays all seventeen human-verified samples and checks the claim
 // directly, against recorded OCR from real bank, broker and exchange apps.
 //
-// It asserts nothing about a model's judgement. A failure here means the
-// CONTRACT is too narrow; a model picking the wrong block is a different
+// It asserts nothing about the model's judgement. A failure here means the
+// CONTRACT is too narrow; the engine reading the wrong block is a different
 // problem, measured by the eval harness.
-import { matchAmount, buildGrid, type OcrTextBlock } from "@whole/ocr";
+import {
+  knownAssetCurrencies,
+  parseOcrBlocks,
+  type OcrTextBlock,
+} from "@whole/ocr";
+// Engine-internal on purpose, both of them. `matchAmount` is the ruler the
+// engine reads a figure with, and the question below is whether the ENGINE
+// could have produced a gold figure — asked with anything else it is a
+// different question. `runPipeline`'s stages are likewise the subject of the
+// second invariant, and `parseOcrBlocks` has thrown the region structure away
+// by the time it returns. Neither belongs on the package's public surface for
+// the sake of one test.
+import { matchAmount } from "../../ocr/src/engine/amount";
+import { groupScreen, readScreen } from "../../ocr/src/engine/parser";
 import { describe, expect, it } from "vitest";
 
 import { loadGoldAccounts, loadOcrBlocks } from "./paths";
@@ -23,16 +36,15 @@ import { VERIFIED_SAMPLES } from "./verified-samples";
 const digitsOf = (text: string) => text.replace(/\D/g, "");
 
 // Whether any block's own text parses to this amount, by the same parser the
-// resolver uses. Not a string comparison: the resolver reads "6,672.59",
+// engine uses. Not a string comparison: the engine reads "6,672.59",
 // "-1,745.52SGD" and "100,554.59" through `matchAmount`, so the question is
 // whether that parser lands on the gold figure — which is exactly what the
-// resolver would do with an index pointing here.
+// engine would do with this block.
 //
 // The MAGNITUDE is compared, because a card's debt is frequently printed as
 // what was spent ("您花了 4,766.92") with the minus living in the label. The
-// contract carries that as the balance's `isDebt` flag, which negates the
-// magnitude — so a positive block backing a negative gold is the contract
-// working, not failing.
+// engine's debt markers read the label and negate the figure — so a positive
+// block backing a negative gold is the engine working, not failing.
 function someBlockParsesTo(blocks: OcrTextBlock[], amount: number): boolean {
   return blocks.some((block) => {
     const parsed = matchAmount(block.text);
@@ -42,16 +54,18 @@ function someBlockParsesTo(blocks: OcrTextBlock[], amount: number): boolean {
   });
 }
 
-// Anywhere in the block's digit run, not only at its end. The contract lets the
-// model state the four digits when a trailing check digit makes the tail wrong
-// ("012-394-2-033676-3" is 3676, not 6763) — and the resolver then checks they
-// are IN the block, which is exactly the question asked here.
+// Anywhere in the block's digit run, not only at its end. A trailing check
+// digit can make the mechanical tail wrong ("012-394-2-033676-3" is 3676, not
+// 6763) — the engine's institution rules name the identifying digits wherever
+// they sit, and this asks whether they are IN some block, which is exactly
+// the question the contract requires.
 function someBlockContains(blocks: OcrTextBlock[], lastFour: string): boolean {
   return blocks.some((block) => digitsOf(block.text).includes(lastFour));
 }
 
 // A gold name may be spread over several blocks ("360" + "Account"), which the
-// resolver joins — so the question is whether every WORD of it is on screen.
+// engine's grouping joins — so the question is whether every WORD of it is on
+// screen.
 function everyWordAppears(blocks: OcrTextBlock[], name: string): boolean {
   const haystack = blocks
     .map((block) => block.text)
@@ -109,12 +123,71 @@ describe.each(VERIFIED_SAMPLES)("%s", (slug) => {
     expect(missing).toEqual([]);
   });
 
-  // The grid is what the model is shown. A screen that produced no rows would
-  // be a screen the model cannot read at all, whatever it knows.
-  it("lays out into rows the model can be shown", () => {
-    const grid = buildGrid(blocks);
+  // The engine is what reads the screen in the hybrid. A gold the engine
+  // cannot even match — by name or by number — would mean the structure pass
+  // is the limit, not the model.
+  //
+  // A gold carrying NEITHER a name nor a number has no identity to match on;
+  // the eval harness matches those positionally, which this assertion cannot.
+  it("is matched by the engine's parse, by name or by number", () => {
+    const parsed = parseOcrBlocks(blocks);
 
-    expect(grid.rows.length).toBeGreaterThan(0);
-    expect(grid.rows.flatMap((row) => row.cells)).toHaveLength(blocks.length);
+    const unmatched = gold
+      .filter(
+        (account) =>
+          account.accountName !== undefined ||
+          account.accountLastFourDigits !== undefined,
+      )
+      .filter(
+        (account) =>
+          !parsed.some(
+            (candidate) =>
+              (account.accountName !== undefined &&
+                candidate.accountName === account.accountName) ||
+              (account.accountLastFourDigits !== undefined &&
+                candidate.accountLastFourDigits ===
+                  account.accountLastFourDigits),
+          ),
+      );
+
+    expect(unmatched).toEqual([]);
+  });
+});
+
+// Region structure must not depend on the home currency — the invariant the
+// annotation turn's re-parse rests on.
+//
+// `recognizeWithModel` prompts the model against the FIRST pass's regions, and
+// then, when the model infers a home currency the institution config lacks,
+// GROUPS the same read screen again with it and applies the annotations to the
+// second grouping. That is only sound while a currency cannot move a region
+// boundary.
+//
+// It cannot, by construction: `groupIntoAccounts` decides whether to emit a
+// region (`groupHasContent`) and whether it counts as identified (name, last
+// four) before `finish` runs, and `finish` is the only reader of
+// `defaultCurrency`. This asserts the construction still holds, over real
+// screenshots rather than synthetic ones — so the day grouping starts
+// consulting the currency, this fails instead of an annotation silently
+// landing on the wrong account.
+describe("region structure is independent of the home currency", () => {
+  it.each(VERIFIED_SAMPLES)("holds for %s", (slug) => {
+    const blocks = loadOcrBlocks(slug);
+
+    // Ablated first, so the argument is actually consulted: on an institution
+    // that declares its own currency the `??` in `groupScreen` would ignore it
+    // and the assertion would pass without testing anything. Then un-ablated,
+    // which is the shape `redenominate` actually calls.
+    for (const ablate of ["currency", undefined] as const) {
+      const structure = readScreen(blocks, ablate);
+      const regions = (currency?: (typeof knownAssetCurrencies)[number]) =>
+        groupScreen(structure, currency).groups.map(
+          (group) => group.lineNumbers,
+        );
+
+      for (const currency of knownAssetCurrencies) {
+        expect(regions(currency)).toEqual(regions());
+      }
+    }
   });
 });

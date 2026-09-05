@@ -251,4 +251,38 @@ describe("withTransaction", () => {
     expect(mockDatabase.withTransactionAsync).toHaveBeenCalledTimes(1);
     expect(work).toHaveBeenCalledTimes(1);
   });
+
+  it("never overlaps two transactions on the one connection", async () => {
+    // `withTransactionAsync` is not exclusive: a second BEGIN inside the first
+    // is an error. Two one-time migrations can fire together at startup, so
+    // the serialization has to be here rather than left to launch order.
+    const { withTransaction } = importStore();
+    let inFlight = 0;
+    let overlapped = false;
+    const work = async () => {
+      inFlight += 1;
+      overlapped ||= inFlight > 1;
+      await Promise.resolve();
+      inFlight -= 1;
+    };
+
+    await Promise.all([withTransaction(work), withTransaction(work)]);
+
+    expect(overlapped).toBe(false);
+    expect(mockDatabase.withTransactionAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps running transactions after one fails", async () => {
+    // A rejected transaction must reach its own caller and no further: the
+    // queue is shared, and the next migration's write is unrelated to it.
+    const { withTransaction } = importStore();
+    const failing = withTransaction(async () => {
+      throw new Error("db locked");
+    });
+
+    await expect(failing).rejects.toThrow("db locked");
+    await expect(
+      withTransaction(async () => undefined),
+    ).resolves.toBeUndefined();
+  });
 });

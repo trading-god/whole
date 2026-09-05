@@ -45,10 +45,6 @@ export type {
   AssetAccountGroup,
   NewAssetAccount,
 } from "@/features/assets/asset-schema";
-export {
-  accountMatchKey,
-  normalizeAccountName,
-} from "@/features/assets/asset-schema";
 
 // Mints a stable random primary key for a newly created account. Decoupled
 // from the business key (name + last four) so renaming an account never changes

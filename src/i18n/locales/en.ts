@@ -86,12 +86,6 @@ export const enMessages = {
     accountCountInGroup_other: "{{count}} accounts",
     collapseGroup: "Collapse institution",
     expandGroup: "Expand institution",
-    deleteGroup: "Delete institution",
-    confirmDeleteGroup:
-      "Delete this institution? Accounts will be kept but no longer belong to it.",
-    deleteGroupError: "Couldn't delete the institution. Try again later.",
-    // Dev-mode entry in the home header. Registered only under __DEV__ (see
-    // _layout.tsx), so this key has no surface in release builds.
   },
   // Copy for the account form itself (AccountEditorFields), shared verbatim by
   // the add-account screen, its multi-account wizard, and the edit-account
@@ -143,39 +137,18 @@ export const enMessages = {
   // add screen's copy can't silently change what the edit screen says.
   settings: {
     title: "Settings",
-    intro: "Screenshot recognition runs through a model endpoint you provide.",
-    preset: {
-      ollama: "Ollama",
-      "lm-studio": "LM Studio",
-      openai: "OpenAI",
-      anthropic: "Anthropic",
+    onDevice: {
+      title: "Recognition runs on this device",
+      description:
+        "{{model}} is stored on your phone and does the recognition. It takes about {{size}} of storage and extra memory while recognizing.",
+      privacyNotice:
+        "Nothing about your accounts ever leaves this device. Recognition works offline.",
+      test: "Test",
+      testPassed: "Working",
+      testFailed: "Failed",
+      testFailure:
+        "The on-device model couldn't be verified. Restart the app, and free up memory and storage if it happens again.",
     },
-    presetLabel: "Start from",
-    baseUrl: "Endpoint",
-    baseUrlPlaceholder: "https://api.example.com/v1",
-    protocol: "Protocol",
-    protocolOpenAi: "OpenAI compatible",
-    protocolAnthropic: "Anthropic Messages",
-    apiKey: "API key",
-    apiKeyPlaceholder: "Optional for local endpoints",
-    model: "Model",
-    modelPlaceholder: "gpt-5.6",
-    test: "Test",
-    testPassed: "Passed",
-    testFailed: "Failed",
-    testUnauthorized: "API key rejected.",
-    testRateLimited: "Out of quota — try again shortly.",
-    testNetwork: "Couldn't reach the endpoint.",
-    testUnusable: "Answered, but not usably. Try another model.",
-    localNotice: "{{host}} is on your own network. Nothing leaves this device.",
-    remoteNotice:
-      "Recognized text is sent to {{host}}. The screenshot never leaves this device.",
-    cancel: "Cancel",
-    testingEndpoint: "Testing",
-    saving: "Saving",
-    save: "Save",
-    saved: "Saved",
-    saveFailed: "Couldn't save. Try again.",
   },
   accountScreenshot: {
     uploadScreenshot: "Upload account screenshot",
@@ -193,20 +166,12 @@ export const enMessages = {
       "Couldn't read the screenshot. Please fill in the details manually.",
     recognitionEmpty:
       "No accounts were found on this screenshot. Try one that shows the account name and balance, or fill in the details manually.",
-    modelNotConfigured:
-      "Recognition needs a model endpoint. Set one up in Settings, or fill in the details manually.",
-    modelConsentRequired:
-      "Recognition needs your permission to send this screenshot's text to the endpoint you configured. Review it in Settings.",
-    modelUnauthorized:
-      "The model endpoint rejected your API key. Check it in Settings.",
-    modelRateLimited:
-      "The model endpoint is out of quota for now. Try again shortly, or fill in the details manually.",
-    modelOffline:
-      "Couldn't reach the model endpoint. Check your connection and the address in Settings.",
-    modelUnavailable:
-      "The model endpoint returned an error. Try again shortly, or fill in the details manually.",
+    modelLoadFailed:
+      "The on-device model couldn't load, so anything it would have added is missing. Check what was filled in, then restart the app — and free up memory and storage if it happens again.",
     modelUnusable:
-      "That model couldn't return a usable answer. Try a different model in Settings, or fill in the details manually.",
+      "The model couldn't finish reading this screenshot. Check what was filled in and complete the rest.",
+    modelInterrupted:
+      "Something interrupted the on-device model, so anything it would have added is missing. Check what was filled in and complete the rest.",
     ocrUnsupported:
       "This device can't recognize screenshots. Please fill in the details manually.",
     noMatchingAccount:
@@ -297,7 +262,4 @@ export const enMessages = {
     detailLabel: "Error details",
     retry: "Try again",
   },
-  // Dev-only copy for the Dev Tools screen (/dev). Registered only under
-  // __DEV__, so this block has no production surface; it goes through the same
-  // i18n typing as the rest of the app.
 } satisfies MessageShape<typeof zhHansMessages>;
