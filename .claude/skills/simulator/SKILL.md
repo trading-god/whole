@@ -75,13 +75,13 @@ clean app state.
 
 Routes come from `src/app/`:
 
-| Route                      | Deep link               |
-| -------------------------- | ----------------------- |
-| Home                       | `whole://`              |
-| Onboarding                 | `whole://onboarding`    |
-| Add account                | `whole://accounts/new`  |
-| Account detail             | `whole://accounts/<id>` |
-| Dev tools (`__DEV__` only) | `whole://dev`           |
+| Route          | Deep link               |
+| -------------- | ----------------------- |
+| Home           | `whole://`              |
+| Onboarding     | `whole://onboarding`    |
+| Add account    | `whole://accounts/new`  |
+| Account detail | `whole://accounts/<id>` |
+| Settings       | `whole://settings`      |
 
 ```bash
 .claude/skills/simulator/ad open Whole whole://accounts/new

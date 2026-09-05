@@ -20,6 +20,7 @@ import { COLORS } from "@/theme/colors";
 import { SPACING } from "@/theme/spacing";
 import {
   FONT_SIZE,
+  FONT_VARIANT,
   FONT_WEIGHT,
   LETTER_SPACING,
   LINE_HEIGHT,
@@ -204,6 +205,10 @@ export function NetWorthCard({
               snapshots={rangedSnapshots}
               currency={displayCurrency}
               isNegative={isDeclining}
+              // The curve is a picture of the numbers the mask hides — its
+              // shape alone says whether the month went up or down — so it
+              // hides with them.
+              isHidden={isPrivacyEnabled}
               // The chart counts its own samples; the only thing it cannot
               // see is that no sample will ever be recorded without rates.
               ratesUnavailable={ratesUnavailable}
@@ -271,6 +276,7 @@ const styles = StyleSheet.create({
   totalBalance: {
     color: COLORS.white,
     fontSize: FONT_SIZE.display,
+    fontVariant: FONT_VARIANT.tabular,
     fontWeight: FONT_WEIGHT.bold,
     letterSpacing: LETTER_SPACING.displayTight,
     lineHeight: LINE_HEIGHT.display,
@@ -334,6 +340,7 @@ const styles = StyleSheet.create({
   changeText: {
     color: COLORS.accentOnDark,
     fontSize: FONT_SIZE.eyebrow,
+    fontVariant: FONT_VARIANT.tabular,
     fontWeight: FONT_WEIGHT.bold,
   },
   changeTextNegative: {
@@ -367,6 +374,7 @@ const styles = StyleSheet.create({
   chartDelta: {
     color: COLORS.accentOnDark,
     fontSize: FONT_SIZE.eyebrow,
+    fontVariant: FONT_VARIANT.tabular,
     fontWeight: FONT_WEIGHT.bold,
   },
   chartDeltaNegative: {

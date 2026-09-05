@@ -12,9 +12,8 @@ import { type AssetAccountGroup } from "@/features/assets/asset-repository";
 import { COLORS } from "@/theme/colors";
 import { PRESSED_OPACITY_SURFACE } from "@/theme/interaction";
 import { scrimCardBase } from "@/theme/screen-styles";
-import { CHIP_RADIUS } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
-import { FONT_SIZE, FONT_WEIGHT } from "@/theme/typography";
+import { FONT_SIZE, FONT_WEIGHT, LETTER_SPACING } from "@/theme/typography";
 
 type InstitutionPickerProps = {
   institutions: readonly AssetAccountGroup[];
@@ -27,12 +26,12 @@ type InstitutionPickerProps = {
   onCreate?: (name: string) => Promise<string | undefined>;
 };
 
-// The institution selector for the account form. Renders a form-styled trigger
-// (body-size text matching the other fields, not the eyebrow-size capsule
-// `OptionPicker` uses) plus an option sheet with: no institution, each
-// existing institution, and a "create institution…" entry that reveals an
-// inline name field — so an unrecognized institution can be named by hand
-// without leaving the form.
+// The institution selector for the account form. Renders a trigger in the
+// same voice as the text fields around it (input-size text, no fill, a chevron
+// where a field would have its cursor) plus a bottom sheet with: no
+// institution, each existing institution, and a "create institution…" entry
+// that reveals an inline name field — so an unrecognized institution can be
+// named by hand without leaving the form.
 export function InstitutionPicker({
   institutions,
   selectedInstitutionId,
@@ -78,7 +77,10 @@ export function InstitutionPicker({
           pressed && { opacity: PRESSED_OPACITY_SURFACE },
         ]}
       >
-        <Text numberOfLines={1} style={styles.triggerText}>
+        <Text
+          numberOfLines={1}
+          style={[styles.triggerText, !selected && styles.triggerTextEmpty]}
+        >
           {triggerLabel}
         </Text>
         <Icon name="chevron-down" size="sm" color={COLORS.muted} />
@@ -93,6 +95,7 @@ export function InstitutionPicker({
         visible={open}
         cardStyle={styles.card}
       >
+        <Text style={styles.title}>{t("accountForm.group")}</Text>
         {creating ? (
           <View>
             <FormField
@@ -147,6 +150,9 @@ export function InstitutionPicker({
               >
                 {t("accountForm.noGroup")}
               </Text>
+              {selectedInstitutionId === "" ? (
+                <Icon name="check" size="sm" color={COLORS.brand} />
+              ) : null}
             </Pressable>
             {institutions.map((institution) => {
               const isSelected = institution.id === selectedInstitutionId;
@@ -189,6 +195,7 @@ export function InstitutionPicker({
                   pressed && optionSheetStyles.optionPressed,
                 ]}
               >
+                <Icon name="plus" size="sm" color={COLORS.brand} />
                 <Text style={styles.createOptionText}>
                   {t("accountForm.createGroup")}
                 </Text>
@@ -202,35 +209,49 @@ export function InstitutionPicker({
 }
 
 const styles = StyleSheet.create({
-  // Form-styled trigger: body-size text matching the other form fields (name,
-  // balance, type), not the eyebrow-size capsule OptionPicker uses. Sized to
-  // sit beside the other fields without raising the row height.
+  // Same box model as `FormField`'s input row — input-size text, no fill, no
+  // border — so the picker sits in the form as one more field rather than a
+  // control of a different family. The chevron is the only tell that it opens
+  // a list instead of taking the keyboard.
   trigger: {
     alignItems: "center",
-    backgroundColor: COLORS.surfaceMuted,
-    borderRadius: CHIP_RADIUS,
     flexDirection: "row",
-    gap: 2,
+    gap: SPACING.sm,
     justifyContent: "space-between",
-    minHeight: 44,
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.sm,
+    minHeight: 24,
   },
   triggerText: {
     color: COLORS.ink,
     flexShrink: 1,
-    fontSize: FONT_SIZE.body,
-    fontWeight: FONT_WEIGHT.bold,
+    fontSize: FONT_SIZE.subtitle,
+    fontWeight: FONT_WEIGHT.semibold,
+  },
+  // "No institution" reads as a placeholder, in the placeholder colour, not
+  // as a value the user chose.
+  triggerTextEmpty: {
+    color: COLORS.subtle,
+    fontWeight: FONT_WEIGHT.medium,
   },
   card: {
     ...scrimCardBase,
-    maxWidth: 360,
-    padding: SPACING.md,
+    paddingHorizontal: SPACING.lg,
+    paddingTop: SPACING.md,
+  },
+  // The sheet's title, in the same voice as OptionPicker's.
+  title: {
+    color: COLORS.muted,
+    fontSize: FONT_SIZE.eyebrow,
+    fontWeight: FONT_WEIGHT.semibold,
+    letterSpacing: LETTER_SPACING.caption,
+    marginBottom: SPACING.sm,
+    paddingHorizontal: SPACING.md,
   },
   createOptionText: {
     color: COLORS.brand,
+    flex: 1,
     fontSize: FONT_SIZE.bodyLg,
     fontWeight: FONT_WEIGHT.semibold,
+    marginLeft: SPACING.sm,
   },
   createActions: {
     flexDirection: "row",

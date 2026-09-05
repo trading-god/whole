@@ -7,7 +7,6 @@ import {
 
 import { COLORS } from "@/theme/colors";
 import { PRESSED_OPACITY_SURFACE } from "@/theme/interaction";
-import { MIN_INTERACTIVE_SIZE } from "@/theme/layout";
 import { CARD_RADIUS } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
 import {
@@ -26,40 +25,31 @@ export const cardSurface: ViewStyle = {
   borderWidth: 1,
 };
 
-// Shared centered scrim overlay for modal sheets/dialogs (currency picker,
-// add-account cleanup). Spread into a screen-specific style so the modals stay
-// in lockstep instead of each redeclaring the same overlay rules.
+// Shared scrim overlay for bottom sheets (currency picker, chart range,
+// institution picker, add-account cleanup). The sheet is pinned to the bottom
+// edge; the scrim fills the rest. Spread into a screen-specific style so the
+// sheets stay in lockstep instead of each redeclaring the same overlay rules.
 export const modalOverlay: ViewStyle = {
-  alignItems: "center",
   backgroundColor: COLORS.scrim,
   flex: 1,
-  justifyContent: "center",
-  paddingHorizontal: SPACING.xl,
+  justifyContent: "flex-end",
 };
 
-// Shared base for a card rendered inside `ScrimModal` — borderless (dialog
-// cards intentionally omit the `cardSurface` hairline), with the card fill,
-// radius, and full width that every scrim-dialog card shares. Spread into a
-// screen-specific style and add `maxWidth`/`padding` per content. Keeps the
-// scrim dialogs in lockstep instead of each re-deriving fill + radius + width.
+// Shared base for the sheet rendered inside `ScrimModal` — borderless (dialog
+// sheets intentionally omit the `cardSurface` hairline), with the card fill,
+// the top-only radius of a sheet rising from the screen edge, and full width.
+// Spread into a screen-specific style and add `padding` per content. Keeps the
+// scrim sheets in lockstep instead of each re-deriving fill + radius + width.
 export const scrimCardBase: ViewStyle = {
   backgroundColor: COLORS.card,
-  borderRadius: CARD_RADIUS,
+  borderTopLeftRadius: CARD_RADIUS,
+  borderTopRightRadius: CARD_RADIUS,
   width: "100%",
 };
 
-// Shared "action link" — brand-colored bold text in a minimum-size pressable,
-// used for the home screen's inline add-account action. Centralized so the
-// style has one owner instead of being redeclared per screen.
-export const actionLinkButton: ViewStyle = {
-  alignItems: "center",
-  alignSelf: "flex-start",
-  justifyContent: "center",
-  minHeight: MIN_INTERACTIVE_SIZE,
-  minWidth: MIN_INTERACTIVE_SIZE,
-  paddingHorizontal: SPACING.sm,
-};
-
+// Shared "action link" — brand-colored bold text, used for the account form's
+// inline add-currency action. Centralized so the style has one owner instead
+// of being redeclared per screen.
 export const actionLink: TextStyle = {
   color: COLORS.brand,
   fontSize: FONT_SIZE.bodySm,

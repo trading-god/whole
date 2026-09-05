@@ -56,6 +56,10 @@ type NetWorthChartProps = {
   // an empty window has to say — and whether it draws its lone point — follows
   // from counting the samples, which is the chart's own job.
   ratesUnavailable: boolean;
+  // Privacy mode. The curve draws nothing but its baseline: a chart is the
+  // figures it plots, and masking the total while leaving its shape on screen
+  // would hide the number and show the trend.
+  isHidden?: boolean;
 };
 
 type ChartGeometry = {
@@ -137,6 +141,7 @@ export const NetWorthChart = memo(function NetWorthChart({
   currency,
   isNegative,
   ratesUnavailable,
+  isHidden = false,
 }: NetWorthChartProps) {
   const { t } = useTranslation();
   const palette = TREND_PALETTE[isNegative ? "negative" : "positive"];
@@ -249,7 +254,9 @@ export const NetWorthChart = memo(function NetWorthChart({
             <Stop offset="1" stopColor={palette.fill} stopOpacity="0" />
           </LinearGradient>
         </Defs>
-        {geometry === null ? (
+        {isHidden ? (
+          <DashedRule stroke={COLORS.chartEmptyBaseline} y={FLAT_WINDOW_Y} />
+        ) : geometry === null ? (
           // Nothing to plot yet. A bare caption over an empty box reads as a
           // chart that failed to load, so the card keeps a faint baseline: it
           // says "a curve belongs here" without drawing one that isn't there.
@@ -280,7 +287,7 @@ export const NetWorthChart = memo(function NetWorthChart({
           </>
         )}
       </Svg>
-      {geometry === null ? (
+      {geometry === null && !isHidden ? (
         <View style={styles.placeholder}>
           <Text style={styles.placeholderText}>{placeholderCopy}</Text>
         </View>

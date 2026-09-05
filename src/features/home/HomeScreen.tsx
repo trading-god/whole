@@ -1,8 +1,7 @@
-import { Link, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -46,11 +45,7 @@ import { loadUserName } from "@/features/user/user-store";
 import { useAppLocale } from "@/i18n";
 import { useStoredPreference } from "@/storage/use-stored-preference";
 import { COLORS } from "@/theme/colors";
-import {
-  actionLink,
-  actionLinkButton,
-  screenStyles,
-} from "@/theme/screen-styles";
+import { screenStyles } from "@/theme/screen-styles";
 import { SPACING } from "@/theme/spacing";
 import { FONT_SIZE, FONT_WEIGHT, LETTER_SPACING } from "@/theme/typography";
 
@@ -343,34 +338,30 @@ function HomeScreenBody() {
           isPrivacyEnabled={isAssetPrivacyModeEnabled}
         />
 
-        <SectionHeader
-          title={t("home.myAccounts")}
-          detail={
-            <Link href="/accounts/new" asChild>
-              <Pressable
-                accessibilityLabel={t("common.addAccount")}
-                style={({ pressed }) => [
-                  actionLinkButton,
-                  pressed && screenStyles.pressed,
-                ]}
-              >
-                <Text style={actionLink}>{t("home.add")}</Text>
-              </Pressable>
-            </Link>
-          }
-        />
+        {/* No inline "add" here: the header's plus button is the one way to
+            add an account on this screen (the empty state has its own, in
+            place of the chart). Two entry points a thumb's width apart were
+            one more than the screen needed. And with nothing to list the
+            section goes too: an empty card drew as a stray hairline under
+            a heading with nothing beneath it, and the balance card above
+            has already said what to do about it. */}
+        {isSettledEmpty ? null : (
+          <>
+            <SectionHeader title={t("home.myAccounts")} />
 
-        <AccountsCard
-          accounts={accounts}
-          groups={groups}
-          displayCurrency={displayCurrency}
-          rates={rates}
-          isBalanceHidden={isAssetPrivacyModeEnabled}
-          isLoading={accountsAreLoading}
-          loadFailed={Boolean(accountLoadingFailed)}
-          onOpenAccount={handleOpenAccount}
-          onRemove={removeAccount}
-        />
+            <AccountsCard
+              accounts={accounts}
+              groups={groups}
+              displayCurrency={displayCurrency}
+              rates={rates}
+              isBalanceHidden={isAssetPrivacyModeEnabled}
+              isLoading={accountsAreLoading}
+              loadFailed={Boolean(accountLoadingFailed)}
+              onOpenAccount={handleOpenAccount}
+              onRemove={removeAccount}
+            />
+          </>
+        )}
 
         <Text style={styles.privacyNote}>{t("home.accountDataPrivacy")}</Text>
       </ScrollView>

@@ -45,6 +45,7 @@ import { type RecognizedAccount } from "@/features/recognition/screenshot-recogn
 import { useReturnToOverview } from "@/lib/useReturnToOverview";
 import { COLORS } from "@/theme/colors";
 import { screenStyles } from "@/theme/screen-styles";
+import { FONT_WEIGHT } from "@/theme/typography";
 
 export default function AccountDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -68,6 +69,8 @@ export default function AccountDetailScreen() {
     kind: "cash",
   }));
   const [isSaving, setIsSaving] = useState(false);
+  // Recognition in flight: the section header says so in place of its hint.
+  const [isRecognizing, setIsRecognizing] = useState(false);
   // The available groups (for the "所属分组" picker) and the account's current
   // group membership as a plain string ("" = ungrouped), so OptionPicker's
   // string-typed value can express "none" without a separate nullable.
@@ -261,23 +264,36 @@ export default function AccountDetailScreen() {
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
+            {/* The intro names the account: the nav bar already says "Edit
+                account", and the same words twice in two lines said nothing
+                the second time. */}
             <ScreenIntro
-              title={t("accountDetail.introTitle")}
+              title={account.name}
               subtitle={t("accountDetail.introDescription")}
             />
 
             <AccountScreenshotUploader
+              compact
               sourceImage={selectedSourceImage}
               onSourceImageChange={setSelectedSourceImage}
               onRecognized={handleRecognized}
+              onRecognizingChange={setIsRecognizing}
             />
 
             <SectionHeader
               stacked
               title={t("accountDetail.accountInformation")}
               detail={
-                <Text style={screenStyles.formHint}>
-                  {t("accountDetail.formHint")}
+                <Text
+                  accessibilityLiveRegion="polite"
+                  style={[
+                    screenStyles.formHint,
+                    isRecognizing && styles.recognizingHint,
+                  ]}
+                >
+                  {isRecognizing
+                    ? t("accountScreenshot.recognizingHint")
+                    : t("accountDetail.formHint")}
                 </Text>
               }
             />
@@ -325,5 +341,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flex: 1,
     justifyContent: "center",
+  },
+  // The hint goes brand-coloured while recognition runs: it is the one live
+  // thing on the screen, and grey would let it pass for the resting copy.
+  recognizingHint: {
+    color: COLORS.brand,
+    fontWeight: FONT_WEIGHT.semibold,
   },
 });

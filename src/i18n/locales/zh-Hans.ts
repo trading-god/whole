@@ -30,7 +30,7 @@ export const zhHansMessages = {
   home: {
     greeting: "你好，{{name}}",
     greetingFallback: "你好",
-    totalAssetsLabel: "总资产 · 折合",
+    totalAssetsLabel: "总资产，折合为",
     displayCurrency: "展示币种",
     chartRange: "图表时间范围",
     pastMonths_one: "过去 {{count}} 个月",
@@ -54,7 +54,6 @@ export const zhHansMessages = {
     investments: "投资",
     digitalAssets: "数字资产",
     myAccounts: "我的账户",
-    add: "添加",
     accountLoadError: "无法加载账户，请重新打开 Whole",
     accountDataPrivacy: "账户数据仅用于生成你的资产总览",
     delete: "删除",
@@ -71,6 +70,8 @@ export const zhHansMessages = {
     accountCountInGroup_other: "{{count}} 个账户",
     collapseGroup: "收起机构",
     expandGroup: "展开机构",
+    // 账户行余额下方的说明：余额为负的账户是一笔欠款，不是资产。
+    liability: "负债",
   },
   // 账户表单本身（AccountEditorFields）的文案，添加账户页、多账户向导与编辑
   // 账户页逐字共用——表单只有一个归属，它的标签也只有一份。各屏专属文案
@@ -100,6 +101,8 @@ export const zhHansMessages = {
     createGroup: "新建机构",
     groupName: "机构名称",
     newGroupPlaceholder: "输入机构名称",
+    // 多账户向导里机构只填一次，放在分页表单上方，这句说明它管的是整批账户。
+    batchGroupHint: "这批账户都会归入该机构，留空则不归组。",
   },
   newAccount: {
     screenTitle: "添加账户",
@@ -117,21 +120,32 @@ export const zhHansMessages = {
   // 独立于 `newAccount`，这样改动添加账户页的文案不会悄悄改掉编辑页的措辞。
   settings: {
     title: "设置",
+    display: "显示",
+    displayCurrencyHint: "首页总资产与各账户余额按这个币种折算。",
+    language: "语言",
+    languageFollowsSystem: "跟随系统设置",
+    changeInSystemSettings: "在系统设置中更改",
+    about: "关于",
+    version: "版本 {{version}}",
     onDevice: {
       title: "识别在本机完成",
       description:
         "{{model}} 模型已存储在你的手机上并负责识别。它占用约 {{size}} 存储空间，识别时额外占用内存。",
       privacyNotice: "账户信息不会离开这台设备。识别可以离线完成。",
       test: "测试",
-      testPassed: "可用",
-      testFailed: "不可用",
+      testing: "正在加载模型…",
+      testPassed: "本机模型可用",
       testFailure:
         "本机模型未能通过验证。请重启应用；若仍不行，请清理内存和存储空间。",
     },
   },
   accountScreenshot: {
     uploadScreenshot: "上传账户截图",
+    // 编辑账户页的紧凑入口：截图在这里是更新余额的手段，不是页面主体。
+    updateFromScreenshot: "用新截图更新",
     replaceScreenshot: "更换截图",
+    // 识别期间显示在表单区域。本机模型加载慢，用户要知道等多久、为什么等。
+    recognizingHint: "正在读取截图，本机模型通常需要几十秒，表单会自动填入。",
     replaceScreenshotHint: "选择其他账户截图",
     screenshotReady: "账户截图已就绪",
     screenshotGuidance: "选择一张清晰显示账户名称、账号后四位和余额的截图",
@@ -154,7 +168,7 @@ export const zhHansMessages = {
     cleanupPrompt:
       "这张账户截图已用于确认账户信息。是否从系统相册删除？系统会再次请求确认。",
     cleanupManualPhotoLibrary:
-      "系统无法定位相册中的账户截图，请前往系统相册手动删除。",
+      "账户截图已经用完。不再需要时，可以到系统相册删除它。",
     keepScreenshot: "保留账户截图",
     deletingScreenshot: "正在删除…",
     deleteScreenshot: "删除账户截图",
@@ -169,7 +183,6 @@ export const zhHansMessages = {
   },
   accountDetail: {
     screenTitle: "编辑账户",
-    introTitle: "编辑账户",
     introDescription: "更新账户名称、余额与类型。",
     accountInformation: "账户信息",
     formHint: "修改需要更新的信息",
@@ -208,8 +221,11 @@ export const zhHansMessages = {
   },
   onboarding: {
     nameTitle: "欢迎使用 Whole",
-    nameSubtitle: "告诉我们该如何称呼你，它会出现在首页。",
+    nameSubtitle:
+      "把银行、券商和交易所里的账户放到一张总览里。上传账户截图，余额自动识别。",
+    privacyNote: "账户信息和截图都留在这台设备上，识别在本机完成。",
     nameLabel: "称呼",
+    nameHint: "选填，用于首页问候。",
     namePlaceholder: "例如：小明",
     finish: "开始使用",
     completionErrorTitle: "无法完成设置",
@@ -226,6 +242,7 @@ export const zhHansMessages = {
     title: "出了点问题",
     description: "Whole 遇到意外错误，已经停在这里。你保存的账户数据不受影响。",
     detailLabel: "错误详情",
+    detailHint: "重试后仍然出错时，复制下面的内容反馈给我们。",
     retry: "重试",
   },
 } as const;

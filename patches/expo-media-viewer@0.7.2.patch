@@ -1,0 +1,37 @@
+diff --git a/src/MediaViewer.types.ts b/src/MediaViewer.types.ts
+index d398fbfb65ebbe3e7173280a6ca3d22a9e27bc30..df5683345b34bbb26965375c75bc7d65880417cb 100644
+--- a/src/MediaViewer.types.ts
++++ b/src/MediaViewer.types.ts
+@@ -68,6 +68,12 @@ export type MediaViewerConfig = {
+     edgeToEdge?: boolean;
+     hideBlurOverlay?: boolean;
+     hidePageIndicators?: boolean;
++    /**
++     * iOS only. An SF Symbol name drawn in place of the viewer's default
++     * "Close" text button, whose title is an English string the module does
++     * not localize.
++     */
++    closeIconName?: string;
+   };
+ };
+ 
+diff --git a/src/MediaViewerView.ios.tsx b/src/MediaViewerView.ios.tsx
+index d64118131752d979911c0e0f15ec57cbe5c5967f..c736201d9df08906d521e5815f05861da7f977b3 100644
+--- a/src/MediaViewerView.ios.tsx
++++ b/src/MediaViewerView.ios.tsx
+@@ -17,6 +17,7 @@ type NativeMediaViewerProps = {
+   theme: "dark" | "light";
+   hideBlurOverlay?: boolean;
+   hidePageIndicators?: boolean;
++  closeIconName?: string;
+   groupId: string;
+   thumbnailAnchorJson: string;
+   onIndexChange?: (event: MediaViewerIndexChangedEvent) => void;
+@@ -63,6 +64,7 @@ function MediaViewer<TItem extends MediaViewerItem = MediaViewerItem>({
+         theme={config?.theme ?? "dark"}
+         hideBlurOverlay={config?.viewer?.hideBlurOverlay ?? false}
+         hidePageIndicators={config?.viewer?.hidePageIndicators ?? false}
++        closeIconName={config?.viewer?.closeIconName}
+         onIndexChange={onIndexChange}
+         onVideoError={onVideoError}
+         thumbnailAnchorJson={thumbnailAnchorJson}

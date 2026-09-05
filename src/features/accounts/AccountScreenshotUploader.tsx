@@ -23,7 +23,9 @@ import {
   recognizeAccountFromScreenshot,
 } from "@/features/recognition/screenshot-recognition";
 import { COLORS } from "@/theme/colors";
+import { MIN_INTERACTIVE_SIZE } from "@/theme/layout";
 import { cardSurface, screenStyles } from "@/theme/screen-styles";
+import { ELEVATED_SHADOW } from "@/theme/shadow";
 import { CARD_RADIUS, RADIUS } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
 import { FONT_SIZE, FONT_WEIGHT } from "@/theme/typography";
@@ -53,6 +55,17 @@ type AccountScreenshotUploaderProps = {
   onRecognized: (
     accounts: RecognizedAccount[],
   ) => boolean | "declined" | Promise<boolean | "declined">;
+  // Fired when recognition starts and when it settles, so the screen can say
+  // so where the user is looking. The badge on the preview card is the
+  // uploader's own word on it, but the card scrolls away while the form
+  // stays, and a form that sits empty with a grey Save button for half a
+  // minute reads as broken.
+  onRecognizingChange?: (isRecognizing: boolean) => void;
+  // `compact` renders the empty slot as one row — icon, label, chevron —
+  // instead of the full upload card. The edit screen uses it: there a
+  // screenshot is a way to refresh a balance, not the subject of the page,
+  // and the 220pt card pushed the form it annotates below the fold.
+  compact?: boolean;
 };
 
 // One height for both states of the screenshot slot (empty upload card and
@@ -90,9 +103,21 @@ export function AccountScreenshotUploader({
   sourceImage,
   onSourceImageChange,
   onRecognized,
+  onRecognizingChange,
+  compact = false,
 }: AccountScreenshotUploaderProps) {
   const { t } = useTranslation();
   const [isRecognizing, setIsRecognizing] = useState(false);
+  // Mirrors the local flag out to the parent. An effect rather than a call
+  // beside each `setIsRecognizing`, so the two can never disagree about
+  // whether recognition is running.
+  const onRecognizingChangeRef = useRef(onRecognizingChange);
+  useEffect(() => {
+    onRecognizingChangeRef.current = onRecognizingChange;
+  }, [onRecognizingChange]);
+  useEffect(() => {
+    onRecognizingChangeRef.current?.(isRecognizing);
+  }, [isRecognizing]);
   const [hasRecognized, setHasRecognized] = useState(false);
   const [issue, setIssue] = useState<UploadIssue | null>(null);
 
@@ -272,6 +297,10 @@ export function AccountScreenshotUploader({
         // thumbnail everywhere except on the replace button itself.
         <View style={styles.previewCard}>
           <ScreenshotMediaViewer uri={sourceImage.uri} />
+          {/* No scrim over the image: the user is about to check the form
+              against exactly this picture, and a dimmed screenshot is a
+              harder one to read. The badge and the button carry their own
+              opaque surfaces instead. */}
           <View style={styles.overlayLayer} pointerEvents="box-none">
             <View style={styles.readyBadge} pointerEvents="none">
               {isRecognizing ? (
@@ -293,6 +322,25 @@ export function AccountScreenshotUploader({
             />
           </View>
         </View>
+      ) : compact ? (
+        <Pressable
+          accessibilityLabel={t("accountScreenshot.updateFromScreenshot")}
+          accessibilityRole="button"
+          disabled={isRecognizing}
+          onPress={pickImage}
+          style={({ pressed }) => [
+            styles.uploadRow,
+            pressed && screenStyles.pressed,
+          ]}
+        >
+          <View style={styles.uploadRowIcon}>
+            <Icon name="arrow-up" size="sm" color={COLORS.brand} />
+          </View>
+          <Text style={styles.uploadRowTitle}>
+            {t("accountScreenshot.updateFromScreenshot")}
+          </Text>
+          <Icon name="chevron-right" size="sm" color={COLORS.muted} />
+        </Pressable>
       ) : (
         <Pressable
           accessibilityLabel={t("accountScreenshot.uploadScreenshot")}
@@ -346,11 +394,9 @@ const styles = StyleSheet.create({
     height: SCREENSHOT_CARD_HEIGHT,
     overflow: "hidden",
   },
-  // Scrim and overlay content are one layer: the padding insets the badge and
-  // replace button without pulling the tint off the card's edges, and the
-  // layer's own background never intercepts taps under `box-none`.
+  // Overlay content only — no tint. The padding insets the badge and replace
+  // button, and the layer never intercepts taps under `box-none`.
   overlayLayer: {
-    backgroundColor: COLORS.scrim,
     bottom: 0,
     justifyContent: "space-between",
     left: 0,
@@ -362,6 +408,7 @@ const styles = StyleSheet.create({
   // `alignSelf` keeps each overlay child at its own content width instead of
   // being stretched across the column — no wrapper row needed either side.
   readyBadge: {
+    ...ELEVATED_SHADOW,
     alignItems: "center",
     alignSelf: "flex-start",
     backgroundColor: COLORS.white,
@@ -379,7 +426,34 @@ const styles = StyleSheet.create({
     fontWeight: FONT_WEIGHT.extrabold,
   },
   replaceButton: {
+    ...ELEVATED_SHADOW,
     alignSelf: "flex-end",
+  },
+  // The compact slot: a single row in the card voice, so on the edit screen
+  // the screenshot reads as one more thing the user can do, not the thing the
+  // page is about.
+  uploadRow: {
+    ...cardSurface,
+    alignItems: "center",
+    flexDirection: "row",
+    gap: SPACING.md,
+    minHeight: MIN_INTERACTIVE_SIZE,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
+  },
+  uploadRowIcon: {
+    alignItems: "center",
+    backgroundColor: COLORS.brandSoft,
+    borderRadius: 16,
+    height: 32,
+    justifyContent: "center",
+    width: 32,
+  },
+  uploadRowTitle: {
+    color: COLORS.ink,
+    flex: 1,
+    fontSize: FONT_SIZE.body,
+    fontWeight: FONT_WEIGHT.semibold,
   },
   uploadCard: {
     backgroundColor: COLORS.card,

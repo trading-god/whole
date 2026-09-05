@@ -16,6 +16,14 @@ jest.mock("@/lib/useReturnToOverview", () => ({
   useReturnToOverview: () => jest.fn(),
 }));
 
+// The display-currency row reads and writes the shared preference store,
+// which sits on kv-store and so on the native sqlite module. One module seam,
+// mocked wholesale (AGENTS.md): the screen only needs a value back.
+jest.mock("@/features/assets/display-currency-store", () => ({
+  loadDisplayCurrency: (fallback: string) => Promise.resolve(fallback),
+  saveDisplayCurrency: () => Promise.resolve(),
+}));
+
 const press = async (label: string) => {
   await fireEvent.press(screen.getByText(label));
 };
@@ -56,14 +64,17 @@ describe("SettingsScreen", () => {
     );
   });
 
-  it("reports a passing model test", async () => {
+  // The verdict is a line of text beside the button, and the button keeps its
+  // label: a button that turns into "Working" for a moment reads as a switch.
+  it("reports a passing model test beside the button", async () => {
     await renderWithProviders(<SettingsScreen />);
 
     await press("Test");
 
     await waitFor(() => {
-      expect(screen.getByText("Working")).toBeTruthy();
+      expect(screen.getByText("The on-device model is working")).toBeTruthy();
     });
+    expect(screen.getByText("Test")).toBeTruthy();
   });
 
   it("reports a failing model test with localized advice", async () => {
@@ -76,13 +87,19 @@ describe("SettingsScreen", () => {
     // The technical reason stays out of the UI: the copy is localized, and
     // the advice is the same whatever stage failed.
     await waitFor(() => {
-      expect(screen.getByText("Failed")).toBeTruthy();
       expect(
         screen.getByText(
           "The on-device model couldn't be verified. Restart the app, and free up memory and storage if it happens again.",
         ),
       ).toBeTruthy();
     });
+  });
+
+  it("offers the display currency and the app version", async () => {
+    await renderWithProviders(<SettingsScreen />);
+
+    expect(screen.getByText("Display currency")).toBeTruthy();
+    expect(screen.getByText(/^Version/)).toBeTruthy();
   });
 
   it("does not touch state after the screen is gone", async () => {
@@ -105,8 +122,8 @@ describe("SettingsScreen", () => {
     settle();
     await act(async () => {});
 
-    // The verdict expiry is never armed, so nothing is left to call
-    // `setTestPhase` on a screen that is gone.
+    // Nothing is armed after the screen is gone, so nothing is left to call
+    // `setTestPhase` on a component that no longer exists.
     expect(armTimer).not.toHaveBeenCalled();
     armTimer.mockRestore();
   });

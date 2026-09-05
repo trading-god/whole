@@ -10,7 +10,7 @@ import { useResponsiveLayout } from "@/theme/layout";
 import { cardSurface } from "@/theme/screen-styles";
 import { COLORS } from "@/theme/colors";
 import { SPACING } from "@/theme/spacing";
-import { FONT_SIZE, FONT_WEIGHT } from "@/theme/typography";
+import { FONT_SIZE, FONT_VARIANT, FONT_WEIGHT } from "@/theme/typography";
 
 // Asset-distribution bar geometry. The segment radius is half the bar height
 // so each segment reads as a capsule.
@@ -187,6 +187,7 @@ const styles = StyleSheet.create({
     color: COLORS.ink,
     flexShrink: 0,
     fontSize: FONT_SIZE.micro,
+    fontVariant: FONT_VARIANT.tabular,
     fontWeight: FONT_WEIGHT.bold,
     marginLeft: SPACING.xs,
   },

@@ -169,6 +169,9 @@ export function AccountsCard({
                     displayCurrency={displayCurrency}
                     rates={rates}
                     isBalanceHidden={isBalanceHidden}
+                    // The header names the institution; a tinted initial on
+                    // every child would only repeat it.
+                    showAvatar={false}
                     // Child rows are never the first row — the group
                     // header sits above them and provides separation.
                     isFirst={false}

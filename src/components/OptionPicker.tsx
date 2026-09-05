@@ -177,8 +177,8 @@ const styles = StyleSheet.create({
   },
   card: {
     ...scrimCardBase,
-    maxWidth: 320,
-    padding: SPACING.lg,
+    paddingHorizontal: SPACING.lg,
+    paddingTop: SPACING.md,
   },
   title: {
     color: COLORS.muted,

@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Alert,
@@ -18,6 +18,7 @@ import {
 } from "@/features/accounts/AccountScreenshotUploader";
 import { Button } from "@/components/Button";
 import { ButtonBase } from "@/components/ButtonBase";
+import { FormField } from "@/components/FormField";
 import { KeyboardAvoidingView } from "@/components/KeyboardAvoidingView";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { ScreenIntro } from "@/components/ScreenIntro";
@@ -40,8 +41,10 @@ import {
 } from "@/features/accounts/account-draft";
 import { invalidateAccounts } from "@/features/assets/accounts-query";
 import {
+  type AssetAccountGroup,
   findOrCreateGroupByName,
   hasDuplicateAccountKeys,
+  listAssetAccountGroups,
   upsertAssetAccounts,
 } from "@/features/assets/asset-repository";
 import { type InstitutionId } from "@whole/ocr";
@@ -96,6 +99,38 @@ export default function NewAccountScreen() {
   const [selectedSourceImage, setSelectedSourceImage] =
     useState<SelectedSourceImage | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  // Recognition in flight: the section header says so in place of its hint.
+  const [isRecognizing, setIsRecognizing] = useState(false);
+
+  // The institutions already on file, for the picker a hand-entered account
+  // chooses from. Until this screen had one, an account added by hand could
+  // only be filed under an institution by going back in through the edit
+  // screen — the one place the picker existed.
+  const [institutions, setInstitutions] = useState<AssetAccountGroup[]>([]);
+  const [selectedInstitutionId, setSelectedInstitutionId] = useState("");
+  useEffect(() => {
+    let active = true;
+    void listAssetAccountGroups()
+      .then((groups) => {
+        if (active) {
+          setInstitutions(groups);
+        }
+      })
+      // An unreadable group list leaves the picker empty; the account still
+      // saves, ungrouped, which is what it did before the picker existed.
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+  const handleCreateInstitution = useCallback(
+    async (name: string): Promise<string | undefined> => {
+      const group = await findOrCreateGroupByName(name);
+      setInstitutions(await listAssetAccountGroups());
+      return group.id;
+    },
+    [],
+  );
 
   // One draft per account being added — the single blank form is the
   // one-draft case, so the plain form and the wizard share one state system
@@ -345,6 +380,9 @@ export default function NewAccountScreen() {
         if (groupName) {
           groupId = (await findOrCreateGroupByName(groupName)).id;
         }
+      } else if (selectedInstitutionId) {
+        // Hand-entered account: the picker's choice, an existing institution.
+        groupId = selectedInstitutionId;
       }
       const accountsToSave = groupId
         ? validAccounts.map((account) => ({ ...account, groupId }))
@@ -401,6 +439,7 @@ export default function NewAccountScreen() {
             sourceImage={selectedSourceImage}
             onSourceImageChange={setSelectedSourceImage}
             onRecognized={handleRecognized}
+            onRecognizingChange={setIsRecognizing}
           />
 
           <SectionHeader
@@ -411,16 +450,42 @@ export default function NewAccountScreen() {
                 : t("newAccount.accountInformation")
             }
             detail={
-              <Text style={screenStyles.formHint}>
-                {isMultiAccount
-                  ? t("multiAccount.accountPosition", {
-                      current: currentIndex + 1,
-                      total: count,
-                    })
-                  : t("newAccount.formHint")}
+              <Text
+                accessibilityLiveRegion="polite"
+                style={[
+                  screenStyles.formHint,
+                  isRecognizing && styles.recognizingHint,
+                ]}
+              >
+                {isRecognizing
+                  ? t("accountScreenshot.recognizingHint")
+                  : isMultiAccount
+                    ? t("multiAccount.accountPosition", {
+                        current: currentIndex + 1,
+                        total: count,
+                      })
+                    : t("newAccount.formHint")}
               </Text>
             }
           />
+
+          {/* The institution is one answer for the whole batch, so it is
+              asked once, above the pages, rather than repeated inside each
+              of them — where the same field on three pages read as three
+              fields, and editing it on page two changed page one. */}
+          {isMultiAccount && suggestedGroup ? (
+            <View style={styles.batchInstitutionCard}>
+              <FormField
+                label={t("accountForm.group")}
+                onChangeText={setSuggestedGroupName}
+                placeholder={t("accountForm.newGroupPlaceholder")}
+                value={suggestedGroupName}
+              />
+              <Text style={styles.batchInstitutionHint}>
+                {t("accountForm.batchGroupHint")}
+              </Text>
+            </View>
+          ) : null}
 
           {isMultiAccount ? (
             <SwipePager
@@ -445,12 +510,6 @@ export default function NewAccountScreen() {
                     draft={drafts[pageIndex]}
                     index={pageIndex}
                     onChange={handleDraftChange}
-                    institutionName={
-                      suggestedGroup ? suggestedGroupName : undefined
-                    }
-                    onInstitutionNameChange={
-                      suggestedGroup ? setSuggestedGroupName : undefined
-                    }
                   />
                   {/* Per-page escape hatch. Lives inside the page, next to the
                       account it removes, so which account it applies to is
@@ -476,10 +535,19 @@ export default function NewAccountScreen() {
               draft={drafts[0]}
               index={0}
               onChange={handleDraftChange}
+              // A recognized screenshot names its institution in a text field
+              // the user can correct; a hand-entered account picks from the
+              // ones on file, as the edit screen does.
               institutionName={suggestedGroup ? suggestedGroupName : undefined}
               onInstitutionNameChange={
                 suggestedGroup ? setSuggestedGroupName : undefined
               }
+              institutions={suggestedGroup ? undefined : institutions}
+              selectedInstitutionId={selectedInstitutionId}
+              onInstitutionChange={
+                suggestedGroup ? undefined : setSelectedInstitutionId
+              }
+              onCreateInstitution={handleCreateInstitution}
             />
           )}
         </ScrollView>
@@ -538,6 +606,23 @@ const styles = StyleSheet.create({
   saveBlockedHint: {
     marginBottom: SPACING.sm,
     textAlign: "center",
+  },
+  // The hint goes brand-coloured while recognition runs: it is the one live
+  // thing on the screen, and grey would let it pass for the resting copy.
+  recognizingHint: {
+    color: COLORS.brand,
+    fontWeight: FONT_WEIGHT.semibold,
+  },
+  // The batch-wide institution, in its own card above the pager so it reads
+  // as belonging to the whole set rather than to whichever page is showing.
+  batchInstitutionCard: {
+    ...screenStyles.formCard,
+    marginBottom: SPACING.md,
+    paddingBottom: SPACING.md,
+  },
+  batchInstitutionHint: {
+    ...screenStyles.fieldHint,
+    marginTop: 0,
   },
   // Quiet, full-width destructive action closing out a wizard page — it must
   // read as an exit from this one account, not as competition for the primary

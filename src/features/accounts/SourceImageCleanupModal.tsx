@@ -157,8 +157,8 @@ export function SourceImageCleanupModal({
 const styles = StyleSheet.create({
   card: {
     ...scrimCardBase,
-    maxWidth: 360,
-    padding: SPACING.xl,
+    paddingHorizontal: SPACING.xl,
+    paddingTop: SPACING.md,
   },
   title: {
     color: COLORS.ink,

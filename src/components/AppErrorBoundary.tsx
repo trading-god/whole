@@ -44,6 +44,9 @@ export function AppErrorBoundary({ error, retry }: ErrorBoundaryProps) {
             on the device), this text is the only diagnostic that exists — the
             user copying it out is the whole reporting channel. */}
         <Text style={styles.detailLabel}>{copy.detailLabel}</Text>
+        {/* Says what the selectable text below is FOR. Without it the error
+            message is a block of grey the user has no reason to touch. */}
+        <Text style={styles.detailHint}>{copy.detailHint}</Text>
         <ScrollView
           style={styles.detail}
           contentContainerStyle={styles.detailContent}
@@ -91,6 +94,12 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZE.bodySm,
     fontWeight: FONT_WEIGHT.semibold,
     marginTop: SPACING.lg,
+  },
+  detailHint: {
+    color: COLORS.muted,
+    fontSize: FONT_SIZE.micro,
+    lineHeight: LINE_HEIGHT.tight,
+    marginTop: SPACING.xs,
   },
   detailText: {
     color: COLORS.muted,

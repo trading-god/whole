@@ -27,5 +27,6 @@ allowBuilds:
   # gradle both fail to find the sources.
   llama.rn: true
 patchedDependencies:
+  expo-media-viewer@0.7.2: patches/expo-media-viewer@0.7.2.patch
   expo-mlkit-ocr@0.2.7: patches/expo-mlkit-ocr@0.2.7.patch
   llama.rn@0.12.9: patches/llama.rn@0.12.9.patch

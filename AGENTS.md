@@ -86,6 +86,15 @@ recoverable). Separately, `plugins/with-whole-model.js` puts the shards in the
 app bundle's base module, which Google Play caps at 150 MB — an Android release
 build needs Play Asset Delivery before it can be uploaded.
 
+`patches/expo-media-viewer@0.7.2.patch` threads a `viewer.closeIconName`
+config option through the JS wrapper to the `closeIconName` prop the iOS module
+already declares. Without it the fullscreen screenshot viewer closes with a
+text button whose title is a bare English "Close" (read through
+`NSLocalizedString` with no translations shipped), the one English control in a
+Chinese UI; `ScreenshotMediaViewer` passes an SF Symbol instead. Android already
+draws an icon. **Re-evaluate on every `expo-media-viewer` bump** — a silent
+patch loss shows up only as the English "Close" coming back.
+
 On iOS the weights need the `increased-memory-limit` entitlement or the system
 jetsams the app during `initLlama`. llama.rn's plugin only adds it for the build
 profiles named in `entitlementsProfile`, which `app.json` therefore lists as

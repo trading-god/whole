@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Eye,
   LoaderCircle,
+  Lock,
   EyeOff,
   Minus,
   Plus,
@@ -30,6 +31,7 @@ const ICONS = {
   minus: Minus,
   settings: Settings,
   "loader-circle": LoaderCircle,
+  lock: Lock,
 } as const;
 
 export type IconName = keyof typeof ICONS;

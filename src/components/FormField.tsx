@@ -9,6 +9,7 @@ import {
 } from "react-native";
 
 import { FieldShell } from "@/components/FieldShell";
+import { Icon } from "@/components/Icon";
 import { screenStyles } from "@/theme/screen-styles";
 import { COLORS } from "@/theme/colors";
 import { useResponsiveLayout } from "@/theme/layout";
@@ -80,6 +81,11 @@ export function FormField({
 }: FormFieldProps) {
   const { isCompact } = useResponsiveLayout();
   const stacksTrailing = trailingLayout === "responsive" && isCompact;
+  // A field the user cannot type into has to look like one: the value drops to
+  // the muted ink and a lock takes the trailing slot. Without both, a locked
+  // last-four read exactly like the editable name above it, and the only
+  // explanation was a line of grey text underneath.
+  const isLocked = editable === false;
 
   return (
     <FieldShell label={label} required={required}>
@@ -87,7 +93,11 @@ export function FormField({
         style={[styles.inputShell, stacksTrailing && styles.inputShellStacked]}
       >
         <View style={styles.inputRow}>
-          {prefix ? <Text style={styles.inputPrefix}>{prefix}</Text> : null}
+          {prefix ? (
+            <Text style={[styles.inputPrefix, isLocked && styles.locked]}>
+              {prefix}
+            </Text>
+          ) : null}
           <TextInput
             accessibilityLabel={accessibilityLabel ?? label}
             autoCapitalize={autoCapitalize}
@@ -101,10 +111,20 @@ export function FormField({
             placeholder={placeholder}
             placeholderTextColor={COLORS.subtle}
             selectionColor={COLORS.brand}
-            style={styles.input}
+            style={[styles.input, isLocked && styles.locked]}
             value={value}
           />
         </View>
+        {isLocked && !trailing ? (
+          <View style={styles.fieldTrailing}>
+            <Icon
+              name="lock"
+              size="sm"
+              color={COLORS.subtle}
+              testID="field-lock"
+            />
+          </View>
+        ) : null}
         {trailing ? (
           <View
             style={[
@@ -165,6 +185,9 @@ const styles = StyleSheet.create({
     minHeight: 24,
     minWidth: 0,
     padding: 0,
+  },
+  locked: {
+    color: COLORS.muted,
   },
   fieldTrailing: {
     flexShrink: 0,

@@ -17,7 +17,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 
-import { Button } from "@/components/Button";
+import { ButtonBase } from "@/components/ButtonBase";
 import {
   getAccountAppearance,
   getAccountInitial,
@@ -31,14 +31,24 @@ import { type ExchangeRates } from "@/features/assets/currency-conversion";
 import { type Currency } from "@/features/assets/currencies";
 import { useAppLocale } from "@/i18n";
 import { COLORS } from "@/theme/colors";
+import { PRESSED_OPACITY } from "@/theme/interaction";
 import { ACCOUNT_ROW_HEIGHT } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
-import { FONT_SIZE, FONT_WEIGHT, LETTER_SPACING } from "@/theme/typography";
+import {
+  FONT_SIZE,
+  FONT_VARIANT,
+  FONT_WEIGHT,
+  LETTER_SPACING,
+} from "@/theme/typography";
 
 // Horizontal travel required to start dragging a row.
 const ACTIVATION_OFFSET = 10;
-const ACTION_TRAILING_INSET = 18;
 const SNAP_CONFIG = { duration: 200, easing: Easing.out(Easing.ease) };
+// The avatar's footprint: its width plus the gap to the identity block. A row
+// without an avatar (a child of an institution group) indents its text by the
+// same amount so every account name in the card starts on one line.
+const AVATAR_SIZE = 44;
+const AVATAR_SLOT_WIDTH = AVATAR_SIZE + SPACING.md;
 
 type AccountRowProps = {
   account: AssetAccount;
@@ -48,6 +58,11 @@ type AccountRowProps = {
   // of the formatted figure. An account whose balance couldn't convert still
   // renders its "—" so missing data isn't mistaken for a hidden amount.
   isBalanceHidden: boolean;
+  // Rows under an institution header drop the avatar: the header already names
+  // where the account lives, and three identical tinted initials under one
+  // "OCBC" said nothing the header hadn't. The text keeps the avatar's indent
+  // so grouped and ungrouped names align.
+  showAvatar?: boolean;
   isFirst: boolean;
   isActive: boolean;
   onActivate: (id: string | null) => void;
@@ -64,6 +79,7 @@ export const AccountRow = memo(function AccountRow({
   displayCurrency,
   rates,
   isBalanceHidden,
+  showAvatar = true,
   isFirst,
   isActive,
   onActivate,
@@ -81,12 +97,20 @@ export const AccountRow = memo(function AccountRow({
     () => sumBalancesByKindInCurrency([account], displayCurrency, rates).total,
     [account, displayCurrency, rates],
   );
+  // A negative total is money owed (a credit card), and the sign alone is easy
+  // to miss in a column of figures. The amount takes the caution ink and the
+  // subtitle says so in words.
+  const isLiability = convertedTotal !== null && convertedTotal < 0;
   // Subtitle: currency count for multi-currency accounts, the lone currency
-  // code for single-currency ones, nothing for an empty account.
-  const subtitleText =
+  // code for single-currency ones, nothing for an empty account. A liability
+  // leads with the word for it.
+  const currencySubtitle =
     account.balances.length > 1
       ? t("home.accountCurrencies", { count: account.balances.length })
       : (account.balances[0]?.currency ?? "");
+  const subtitleText = isLiability
+    ? `${t("home.liability")} ${currencySubtitle}`.trim()
+    : currencySubtitle;
   const [confirming, setConfirming] = useState(false);
   const translateX = useSharedValue(0);
   const startX = useSharedValue(0);
@@ -110,9 +134,7 @@ export const AccountRow = memo(function AccountRow({
 
   const handleActionLayout = useCallback(
     (event: LayoutChangeEvent) => {
-      const nextWidth = Math.ceil(
-        event.nativeEvent.layout.width + ACTION_TRAILING_INSET,
-      );
+      const nextWidth = Math.ceil(event.nativeEvent.layout.width);
       if (nextWidth === actionWidth.value) {
         return;
       }
@@ -210,18 +232,20 @@ export const AccountRow = memo(function AccountRow({
     <View>
       {isFirst ? null : <View style={styles.separator} />}
       <View style={styles.rowShell}>
-        {/* The delete button sits behind the row; the opaque row slides left
-            to reveal it like a drawer. */}
+        {/* The delete action sits behind the row as a full-height red tray;
+            the opaque row slides left to uncover it, the way a list row does
+            on either platform. A tray rather than a floating pill: the
+            uncovered strip is then all action, with no card-coloured gap
+            around a button for the eye to explain. */}
         <View
           aria-hidden={!isActive}
           accessibilityElementsHidden={!isActive}
           importantForAccessibility={isActive ? "auto" : "no-hide-descendants"}
           style={styles.deleteSlot}
         >
-          <Button
-            variant="danger"
-            size="sm"
-            fullWidth={false}
+          <ButtonBase
+            baseStyle={styles.deleteAction}
+            pressedStyle={styles.deleteActionPressed}
             onLayout={handleActionLayout}
             accessibilityLabel={
               confirming
@@ -231,8 +255,10 @@ export const AccountRow = memo(function AccountRow({
             focusable={isActive}
             onPress={handleDeletePress}
           >
-            {confirming ? t("home.confirm") : t("home.delete")}
-          </Button>
+            <Text style={styles.deleteActionText}>
+              {confirming ? t("home.confirm") : t("home.delete")}
+            </Text>
+          </ButtonBase>
         </View>
         <GestureDetector gesture={composed}>
           <Animated.View
@@ -246,16 +272,26 @@ export const AccountRow = memo(function AccountRow({
             onAccessibilityAction={handleAccessibilityAction}
             style={[styles.accountRow, rowAnimatedStyle]}
           >
-            <View
-              style={[styles.accountIcon, { backgroundColor: appearance.tint }]}
-            >
-              <Text
-                style={[styles.accountInitial, { color: appearance.color }]}
+            {showAvatar ? (
+              <View
+                style={[
+                  styles.accountIcon,
+                  { backgroundColor: appearance.tint },
+                ]}
               >
-                {initial}
-              </Text>
-            </View>
-            <View style={styles.accountIdentity}>
+                <Text
+                  style={[styles.accountInitial, { color: appearance.color }]}
+                >
+                  {initial}
+                </Text>
+              </View>
+            ) : null}
+            <View
+              style={[
+                styles.accountIdentity,
+                !showAvatar && styles.accountIdentityIndented,
+              ]}
+            >
               <Text
                 ellipsizeMode="tail"
                 numberOfLines={2}
@@ -274,7 +310,10 @@ export const AccountRow = memo(function AccountRow({
                 numberOfLines={1}
                 adjustsFontSizeToFit
                 minimumFontScale={0.5}
-                style={styles.accountBalance}
+                style={[
+                  styles.accountBalance,
+                  isLiability && styles.accountBalanceLiability,
+                ]}
               >
                 {convertedTotal !== null
                   ? maskAssetAmount(
@@ -304,10 +343,28 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
     bottom: 0,
     justifyContent: "center",
-    paddingRight: ACTION_TRAILING_INSET,
     position: "absolute",
     right: 0,
     top: 0,
+  },
+  // Full height of the row, wide enough to read as a target; the row's
+  // translation is measured off this box, so the tray is exactly what gets
+  // uncovered.
+  deleteAction: {
+    alignItems: "center",
+    backgroundColor: COLORS.danger,
+    height: "100%",
+    justifyContent: "center",
+    minWidth: 88,
+    paddingHorizontal: SPACING.lg,
+  },
+  deleteActionPressed: {
+    opacity: PRESSED_OPACITY,
+  },
+  deleteActionText: {
+    color: COLORS.white,
+    fontSize: FONT_SIZE.bodySm,
+    fontWeight: FONT_WEIGHT.bold,
   },
   accountRow: {
     alignItems: "center",
@@ -320,9 +377,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderRadius: 14,
     flexShrink: 0,
-    height: 44,
+    height: AVATAR_SIZE,
     justifyContent: "center",
-    width: 44,
+    width: AVATAR_SIZE,
   },
   accountInitial: {
     fontSize: FONT_SIZE.bodySm,
@@ -333,6 +390,9 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     marginLeft: SPACING.md,
     minWidth: 0,
+  },
+  accountIdentityIndented: {
+    marginLeft: AVATAR_SLOT_WIDTH,
   },
   accountName: {
     color: COLORS.ink,
@@ -353,19 +413,23 @@ const styles = StyleSheet.create({
   accountBalance: {
     color: COLORS.ink,
     fontSize: FONT_SIZE.body,
+    fontVariant: FONT_VARIANT.tabular,
     fontWeight: FONT_WEIGHT.bold,
     maxWidth: 150,
+  },
+  accountBalanceLiability: {
+    color: COLORS.caution,
   },
   accountCurrency: {
     color: COLORS.subtle,
     fontSize: FONT_SIZE.caption,
     marginTop: SPACING.sm,
   },
-  // 72pt inset aligns the separator with the account name (icon width + identity
-  // inset); it is a layout-specific constant, not a rhythm value.
+  // The separator starts where the account name does: the row's horizontal
+  // padding plus the avatar slot.
   separator: {
     backgroundColor: COLORS.border,
     height: StyleSheet.hairlineWidth,
-    marginLeft: 72,
+    marginLeft: SPACING.lg + AVATAR_SLOT_WIDTH,
   },
 });

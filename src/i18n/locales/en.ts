@@ -35,7 +35,7 @@ export const enMessages = {
   home: {
     greeting: "Hello, {{name}}",
     greetingFallback: "Hello",
-    totalAssetsLabel: "Total assets · in",
+    totalAssetsLabel: "Total assets, in",
     displayCurrency: "Display currency",
     chartRange: "Chart range",
     pastMonths_one: "Past month",
@@ -67,7 +67,6 @@ export const enMessages = {
     investments: "Investments",
     digitalAssets: "Digital assets",
     myAccounts: "My accounts",
-    add: "Add",
     accountLoadError: "Unable to load accounts. Reopen Whole to try again.",
     accountDataPrivacy:
       "Account data is used only to create your asset overview",
@@ -86,6 +85,9 @@ export const enMessages = {
     accountCountInGroup_other: "{{count}} accounts",
     collapseGroup: "Collapse institution",
     expandGroup: "Expand institution",
+    // Under a negative balance on an account row: the figure is money owed,
+    // not an asset.
+    liability: "Owed",
   },
   // Copy for the account form itself (AccountEditorFields), shared verbatim by
   // the add-account screen, its multi-account wizard, and the edit-account
@@ -118,6 +120,10 @@ export const enMessages = {
     createGroup: "Create institution",
     groupName: "Institution name",
     newGroupPlaceholder: "Enter an institution name",
+    // The multi-account wizard asks for the institution once, above the paged
+    // form; this line says the one answer covers the whole batch.
+    batchGroupHint:
+      "Every account in this batch is filed under this institution. Leave it empty to keep them ungrouped.",
   },
   newAccount: {
     screenTitle: "Add account",
@@ -137,6 +143,14 @@ export const enMessages = {
   // add screen's copy can't silently change what the edit screen says.
   settings: {
     title: "Settings",
+    display: "Display",
+    displayCurrencyHint:
+      "The home screen total and every account balance are converted into this currency.",
+    language: "Language",
+    languageFollowsSystem: "Follows the system setting",
+    changeInSystemSettings: "Change in system settings",
+    about: "About",
+    version: "Version {{version}}",
     onDevice: {
       title: "Recognition runs on this device",
       description:
@@ -144,15 +158,22 @@ export const enMessages = {
       privacyNotice:
         "Nothing about your accounts ever leaves this device. Recognition works offline.",
       test: "Test",
-      testPassed: "Working",
-      testFailed: "Failed",
+      testing: "Loading the model…",
+      testPassed: "The on-device model is working",
       testFailure:
         "The on-device model couldn't be verified. Restart the app, and free up memory and storage if it happens again.",
     },
   },
   accountScreenshot: {
     uploadScreenshot: "Upload account screenshot",
+    // The edit screen's compact entry: here a screenshot is a way to refresh
+    // a balance, not the subject of the page.
+    updateFromScreenshot: "Update from a new screenshot",
     replaceScreenshot: "Replace screenshot",
+    // Shown in the form area while recognition runs. The on-device model is
+    // slow to load, so the user needs to know how long and why.
+    recognizingHint:
+      "Reading the screenshot. The on-device model usually takes under a minute, and the form fills in on its own.",
     replaceScreenshotHint: "Choose a different account screenshot",
     screenshotReady: "Account screenshot ready",
     screenshotGuidance:
@@ -180,7 +201,7 @@ export const enMessages = {
     cleanupPrompt:
       "This account screenshot was used to confirm the account details. Delete it from your photo library? The system will ask you to confirm.",
     cleanupManualPhotoLibrary:
-      "The system could not locate the account screenshot. Delete it manually from your photo library.",
+      "The account screenshot has done its job. Delete it from your photo library whenever you no longer need it.",
     keepScreenshot: "Keep screenshot",
     deletingScreenshot: "Deleting…",
     deleteScreenshot: "Delete screenshot",
@@ -197,7 +218,6 @@ export const enMessages = {
   },
   accountDetail: {
     screenTitle: "Edit account",
-    introTitle: "Edit account",
     introDescription: "Update the account name, balances, and type.",
     accountInformation: "Account details",
     formHint: "Edit the details you want to update",
@@ -239,8 +259,11 @@ export const enMessages = {
   onboarding: {
     nameTitle: "Welcome to Whole",
     nameSubtitle:
-      "Tell us what to call you — it'll greet you on the home screen.",
+      "Bring your bank, broker, and exchange accounts into one overview. Upload an account screenshot and the balance is read for you.",
+    privacyNote:
+      "Account details and screenshots stay on this device. Recognition runs here, not in the cloud.",
     nameLabel: "Name",
+    nameHint: "Optional. Used for the home-screen greeting.",
     namePlaceholder: "e.g. Alex",
     finish: "Get started",
     completionErrorTitle: "Couldn't finish setup",
@@ -260,6 +283,8 @@ export const enMessages = {
     description:
       "Whole hit an unexpected problem and stopped here. Your saved accounts are untouched.",
     detailLabel: "Error details",
+    detailHint:
+      "If it keeps failing after a retry, copy the details below when reporting it.",
     retry: "Try again",
   },
 } satisfies MessageShape<typeof zhHansMessages>;

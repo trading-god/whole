@@ -1,3 +1,5 @@
+import { type TextStyle } from "react-native";
+
 // Type scale, weights, leading, and tracking — the one source of truth for
 // text metrics so screens and components pull from a shared vocabulary instead
 // of scattering literal `fontSize`/`fontWeight`/`lineHeight`/`letterSpacing`
@@ -77,3 +79,14 @@ export const LETTER_SPACING = {
   // 12pt brand wordmark.
   wordmark: 2.2,
 } as const;
+
+// Every figure in a column of money — account balances, group totals, the
+// distribution legend — is set with tabular (fixed-width) digits, so the
+// numbers align under each other and a "1" takes the same room as an "8".
+// Proportional digits are right for prose and wrong for a ledger; without this
+// a column of balances wavers at the right edge from row to row.
+export const FONT_VARIANT: {
+  tabular: NonNullable<TextStyle["fontVariant"]>;
+} = {
+  tabular: ["tabular-nums"],
+};
