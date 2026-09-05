@@ -2,6 +2,10 @@
 pnpm-lock.yaml
 pnpm-workspace.yaml
 
+# The bundled on-device model weights: a 3 GB binary that is neither text nor
+# hand-edited, and larger than Prettier will read.
+assets/models/
+
 # OCR eval samples — captured OCR output (blocks.json), gold expectations
 # (expected.json), and derived debugging artifacts (trace.json) are recorded
 # data, not hand-edited source.

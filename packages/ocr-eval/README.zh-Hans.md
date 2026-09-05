@@ -4,10 +4,11 @@
 
 这不是“训练集”——iOS Apple Vision 与 Android ML Kit 是**预训练模型**，端上无法
 fine-tune。这个目录的作用是驱动并验证 [`@whole/ocr`](../ocr/README.zh-Hans.md)
-里规则引擎的正确性：**规则引擎是唯一被迭代的对象**，评测集则是它的回归门。
+里的识别流水线：规则引擎的结构部分，以及——通过下文的端侧门禁——混合架构中
+打包模型的那一半。评测集是它们的回归门。
 
 与引擎包的分工：`@whole/ocr` 用合成输入对每条规则做单测（`pnpm test:ocr`），本
-harness 则用真实录制的截图检验整个引擎。一条规则可以单独看是对的，读真实屏幕却仍然
+harness 则用真实录制的截图检验整条流水线。一条规则可以单独看是对的，读真实屏幕却仍然
 出错——这就是两者都要存在的原因。
 
 解析层的目标范围是**自用常用机构**的多币种账户总览、单账户行，以及券商/Crypto
@@ -19,13 +20,18 @@ harness 则用真实录制的截图检验整个引擎。一条规则可以单独
 packages/ocr-eval/
   src/
     run-eval.ts          # 编排器：跑全部样本，输出逐样本/逐字段结果
+    run-llama-eval.ts    # 端侧门禁：同样本经 recognizeWithModel + 本地 GGUF 回放
+    run-ablation.ts      # 测量：同样本，逐层剥掉机构配置后回放
+    llama-run-model.ts   # node-llama-cpp 版 RunModel——App 端 llama.rn runner 的 harness 一半
     baseline.ts          # 已知失败基线：回归门禁 + 缺口分类
     compare.ts           # 字段级 gold 对比（accountName / lastFour / balances / kind / institutionId）
+    aggregates.ts        # 两个 runner 共用的逐字段准确率统计
     render.ts            # ASCII 表格输出
     recognize.ts         # `pnpm ocr`——端到端识别单张图片（或单个样本）
     vision.ts            # macOS Apple Vision 桥驱动：screenshot.png → blocks.json（pnpm eval:ocr:vision）
     vision-bridge.ts     # Swift Vision 桥的共享编译与调用
     golden.test.ts       # 针对人工核对样本的硬断言（pnpm test:ocr:golden）
+    index-contract.test.ts # 契约在真实屏幕上能不能表达出正确答案
     verified-samples.ts  # 哪些 gold 已人工核对——golden.test.ts 与 vision.ts 共用
     baseline.test.ts     # 基线门禁自身差分逻辑的单元测试
     paths.ts             # 包根/samples 等路径定位（基于 import.meta）
@@ -51,11 +57,14 @@ pnpm eval:ocr:baseline                                 # 按当前结果重写 b
 pnpm eval:ocr:vision                                   # macOS：screenshot.png → blocks.json（见下节）
 #   … [--overwrite [--force]]   重新生成已存在的 fixture；真机采集的还需要 --force
 #   … [--check]                 与已入库 fixture 做解析器级别的漂移对比
+WHOLE_GGUF_PATH=<gguf> pnpm eval:ocr:llama             # 经端侧路径回放全部样本
+pnpm eval:ocr:ablate                                   # 去掉机构配置后，引擎还剩多少
 ```
 
-四条命令，各管一件事：临时识别（`ocr`）、录制 fixture（`eval:ocr:vision`）、
-查回归（`eval:ocr`）、对已核对的 gold 做硬断言（`test:ocr:golden`）。凡是 coding
-agent 读一读 `--trace` 输出和规则源码就能做的事，这里一律不做成脚本。
+六条命令，各管一件事：临时识别（`ocr`）、录制 fixture（`eval:ocr:vision`）、
+查回归（`eval:ocr`）、对已核对的 gold 做硬断言（`test:ocr:golden`）、评判端侧
+模型路径（`eval:ocr:llama`）、量一量机构配置到底值多少（`eval:ocr:ablate`）。凡是 coding agent 读一读 `--trace` 输出和规则源码
+就能做的事，这里一律不做成脚本。
 
 输出：`✓/~/✗ 样本名`、未通过项的字段级原因（`· name: expected …, got …`）、逐字段
 聚合表，以及基线判定结果。
@@ -113,6 +122,100 @@ gold 是关于“截图上写了什么”的断言，没核对过的 gold 等于
 
 新增样本时，先亲眼把它的 gold 与截图核对，再提升进 `VERIFIED_SAMPLES`
 （`src/verified-samples.ts`）。这是唯一的准入条件。
+
+## 端侧门禁（`pnpm eval:ocr:llama`）
+
+`eval:ocr` 把 `blocks.json` 回放进 `parseOcrBlocks`——混合架构里读结构的那一半。
+这道门禁把同样的样本回放进 App 实际运行的那条流水线：`recognizeWithModel`，
+只是模型调用由本地 GGUF 经 node-llama-cpp 应答，而不是 App 端的 llama.rn。
+
+```bash
+WHOLE_GGUF_PATH=/path/to/gemma.gguf pnpm eval:ocr:llama
+```
+
+两个运行时，一份契约：推理参数（上下文窗口、输出上限、温度）和 GBNF 语法都
+来自 `@whole/ocr`，所以 harness 度量的就是将来发布的东西。它是只读的——没有
+基线——因为它的结论用来选权重、定 prompt 形态，而不是守护通过状态：拿不同
+量化（Q4_K_M 对 Q6_K）、不同 prompt 改动去比那张逐字段表格即可——它的分桶、
+排序和格式与规则引擎的报告完全一致。每个样本行还会带上模型的机构回答——
+gold 里存的是引擎的枚举 id，而模型答的是自由文本，所以标注任务的那一半
+靠人眼判断。
+
+`--ablate <mode>` 会让管线的两趟解析都在剥掉某一层机构配置的状态下跑，使模型面对
+的正是“一家不认识的机构”会提出的问题。这是唯一能量出注解回合**贡献**的方式：语料里
+每个样本都有配置，不消融的话跑出来的是配置的分数，不是模型的。把它的表和
+`pnpm eval:ocr:ablate` 里同一模式那一列对照——后者是同等条件下引擎单独的成绩。
+
+```bash
+WHOLE_GGUF_PATH=<gguf> pnpm eval:ocr:llama -- --ablate currency
+```
+
+它也是唯一一道会真正执行 llama.cpp 解析的门禁。一份语法可以结构上完全正确、
+通过所有单测，却加载失败——schema `pattern` 里的 `\d` 转义就是这么漏出去的。
+这一类现在由 `engine/grammar.ts` 在转换前直接拒掉，但下一类它不会知道。凡是
+语法、prompt 或模型路径发生改动，都要跑它。
+
+## 消融报告（`pnpm eval:ocr:ablate`）
+
+这里每个样本都有一份为它写的 `InstitutionConfig`，所以 17/17 是“引擎 + 配置”
+的成绩，对一张来自谁都不认识的机构的截图什么也没说明。这个 runner 每次剥掉配置
+的一层——`institution`（整份）、`currency`、`keywords`、`layout`、`kind`、
+`icons`——回放同一份语料，打印“字段 × 模式”矩阵，以及每种模式各丢了哪些样本。
+不需要新截图，17 个全绿样本就变成了 17 个可测量的失败。
+
+```bash
+pnpm eval:ocr:ablate
+pnpm eval:ocr:ablate -- --sample ocbc-overview
+```
+
+它是测量，不是门禁：没有基线，数字再难看也退出 0。刻意不并进 `run-eval.ts`——
+带消融的 `--update-baseline` 会把每一个人为制造的失败写进基线当成已知缺口，从此
+不再报告。
+
+读表时要记住三件事：
+
+- 每一列回放的仍然是分组规则见过的布局，所以每个分数都是真实未知机构的**上限**，
+  应当读作“不会比这更好”。
+- `institutionId` 是被对比字段，所以 `institution` 模式下它的 0% 是定义使然，
+  不是发现。
+- 余额行的分母会在列之间变动：某个模式让识别报出了另一种货币，那种货币就会多出
+  自己的一个统计桶。
+
+各模式分别指向什么：`layout` 是截图用**视觉**回答的那一层（一个区域从哪开始、到
+哪结束），所以它才是判断“把图片和文本一起喂给模型是否有增量”的那一列。
+`currency` 和 `keywords` 则是图片帮不上忙的层——缺一个本币默认值、少一个中文产品
+词，都不是像素能消歧的事。
+
+### 模型到底贡献了什么
+
+同一个模式在两个 harness 里各跑一遍，差值就是注解回合的价值。在随包的
+Gemma 4 E2B 上实测，全部样本都是第一次尝试就答出：
+
+| 剥掉的层      | 引擎单独 | 引擎 + 模型 | 模型补上的是什么         |
+| ------------- | -------- | ----------- | ------------------------ |
+| `currency`    | 12/17    | **16/17**   | 机构的本币               |
+| `kind`        | 13/17    | **16/17**   | 这家机构持有什么         |
+| `institution` | 4/17     | **7/17**    | 在完全陌生的屏幕上，两者 |
+| `keywords`    | 12/17    | 12/17       | 什么也没有               |
+
+真正的发现是这个形状，不是总数：
+
+- **世界知识可以迁移。** 币种和类型是关于**机构**的事实，2B 模型手上就有。缺
+  `defaultCurrency` 造成的 5 个样本回来了 4 个，缺 `defaultKind` 造成的 4 个回来了 3 个。
+- **结构不行。** `keywords` 纹丝不动——accountName 两边都是 73%。哪一行是账户标题、
+  哪一行是子账户行，是**这张截图**的属性，不是机构的属性，再多世界知识也答不了。
+  这和 `vocabulary.ts` 从另一个方向记录的结论一致：把中文账户词加进共享词表，一个
+  字段没修好，还回归了三个。
+- **`institution` 是三个问题一起问**，也是这份语料里最接近“用户提交了一家谁都不认识
+  的机构”的一列。两边都把 `institutionId` 本身排除在判定之外——这个模式强制它变成
+  "unknown"，若按它判定则每个样本都必然失败，整列会读成 0/17，与它自己的逐字段行自相
+  矛盾。底下模型挽回的东西是实打实的：balance:CNY 44% → 78%，balance:SGD 69% → 77%，
+  kind 62% → 69%。balance:USD 反向走，70% → 64%，那是一笔凭空多出来的金额——IBKR 那个
+  样本，模型给一家券商报了本币，而券商的基础货币是账户设置，不是关于机构的事实。
+
+最后一条是诚实的代价。能补上缺失币种的模型，也能补上一个错的，而错的币种会报出用户
+并不拥有的钱。这正是 prompt 提供 `none` 的原因、声明过的 `defaultCurrency` 永远优先
+于推断的原因，也是券商的 config 应当显式声明币种的原因。
 
 ## 基线门禁（退出码由什么决定）
 
@@ -181,7 +284,7 @@ committed fixture 本身就是 macOS 生成的样本——拿 macOS 的输出去
 证明不了任何事情。
 
 ```bash
-pnpm eval:ocr:vision -- --check   # 重跑所有截图，对比的是「解析结果」
+pnpm eval:ocr:vision -- --check   # 重跑所有截图，对比的是“解析结果”
 ```
 
 `--check` 对比的是识别出的账户而非原始 blocks——因为 blocks 漂移是预期内的，账户

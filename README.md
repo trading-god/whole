@@ -38,7 +38,10 @@ source screenshot afterward.
 - Simplified Chinese and English interfaces
 
 Account recognition runs entirely on device — a screenshot is read by native
-OCR (Apple Vision on iOS, ML Kit on Android) and never leaves the device.
+OCR (Apple Vision on iOS, ML Kit on Android), structured by a deterministic
+recognition engine, and annotated by a small language model (Gemma 4) bundled
+with the app. Nothing about your accounts ever leaves the device, and
+recognition works offline.
 
 ## Getting started
 
@@ -46,13 +49,17 @@ OCR (Apple Vision on iOS, ML Kit on Android) and never leaves the device.
 
 - Node.js 22.13 or newer
 - pnpm 11.11.0, as pinned in `package.json`
+- Git LFS — the bundled model weights live in `assets/models/` and are ~3 GB
 - An iOS simulator or Android emulator
 
 ### Install
 
 ```bash
+git lfs pull
 pnpm install
 ```
+
+Without the weights the native build fails at prebuild, naming the directory.
 
 ### Run
 

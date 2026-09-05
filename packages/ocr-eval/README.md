@@ -4,13 +4,14 @@
 
 This is not a "training set" — iOS Apple Vision and Android ML Kit are
 **pretrained models** that cannot be fine-tuned on-device. The purpose of this
-directory is to drive and verify the correctness of the rule engine in
-[`@whole/ocr`](../ocr/README.md): **the rule engine is the only thing being
-iterated on**, and the eval suite is its regression gate.
+directory is to drive and verify the recognition pipeline in
+[`@whole/ocr`](../ocr/README.md): the rule engine's structure pass, and —
+through the on-device gate below — the bundled-model half of the hybrid. The
+eval suite is its regression gate.
 
 Division of labour with the engine package: `@whole/ocr` unit-tests each rule
 against synthetic input (`pnpm test:ocr`), and this harness checks the whole
-engine against real recorded screenshots. A rule can be correct in isolation and
+pipeline against real recorded screenshots. A rule can be correct in isolation and
 still read a real screen wrong, which is why both exist.
 
 The parser's target scope is **multi-currency account overviews, single-account
@@ -24,13 +25,18 @@ entry" path.
 packages/ocr-eval/
   src/
     run-eval.ts          # Orchestrator: runs all samples, per-sample/per-field output
+    run-llama-eval.ts    # On-device gate: the same samples through recognizeWithModel + a local GGUF
+    run-ablation.ts      # Measurement: the same samples with one tier of institution config removed
+    llama-run-model.ts   # node-llama-cpp RunModel — the harness half of the app's llama.rn runner
     baseline.ts          # Known-failure baseline: regression gate + gap classification
     compare.ts           # Field-level gold comparison (accountName / lastFour / balances / kind / institutionId)
+    aggregates.ts        # Shared per-field accuracy tally for both runners
     render.ts            # ASCII table output
     recognize.ts         # `pnpm ocr` — recognize one image (or one sample) end to end
     vision.ts            # macOS Apple Vision bridge driver: screenshot.png → blocks.json (pnpm eval:ocr:vision)
     vision-bridge.ts     # Shared compile-and-run for the Swift Vision bridge
     golden.test.ts       # Hard assertions over the human-verified samples (pnpm test:ocr:golden)
+    index-contract.test.ts # Can the contract express the right answer on real screens?
     verified-samples.ts  # Which golds a human has checked — read by golden.test.ts AND vision.ts
     baseline.test.ts     # Unit tests for the baseline gate's own diff arithmetic
     paths.ts             # Package root / samples path resolution (based on import.meta)
@@ -57,12 +63,16 @@ pnpm eval:ocr:vision                                   # macOS: screenshot.png �
 #   … [--overwrite [--force]]   regenerate an existing fixture; --force is
 #                               needed for a device capture
 #   … [--check]                 parser-level drift vs the committed fixtures
+WHOLE_GGUF_PATH=<gguf> pnpm eval:ocr:llama             # replay the samples through the on-device path
+pnpm eval:ocr:ablate                                   # what is the engine worth without its institution config?
 ```
 
-Four commands, one per job: recognize something ad hoc (`ocr`), record a fixture
+Six commands, one per job: recognize something ad hoc (`ocr`), record a fixture
 (`eval:ocr:vision`), check for regressions (`eval:ocr`), hard-assert the verified
-golds (`test:ocr:golden`). Anything a coding agent can do by reading `--trace`
-output and the rule sources is deliberately not a script here.
+golds (`test:ocr:golden`), judge the on-device model path (`eval:ocr:llama`), and
+measure what the institution configs are worth (`eval:ocr:ablate`).
+Anything a coding agent can do by reading `--trace` output and the rule sources
+is deliberately not a script here.
 
 Output: `✓/~/✗ sample name`, per-field reasons for anything not clean (`· name:
 expected …, got …`), a per-field aggregate table, and the baseline verdict.
@@ -128,6 +138,121 @@ and why by-eye verification is the only entry criterion.
 Promote a new sample into `VERIFIED_SAMPLES` (`src/verified-samples.ts`) once you
 have checked its gold against the screenshot by eye. That is the only entry
 criterion.
+
+## The on-device gate (`pnpm eval:ocr:llama`)
+
+`eval:ocr` replays `blocks.json` through `parseOcrBlocks` — the structure half
+of the hybrid. This gate replays the same samples through the pipeline the app
+actually runs: `recognizeWithModel`, with the model call answered by a local
+GGUF through node-llama-cpp instead of the app's llama.rn.
+
+```bash
+WHOLE_GGUF_PATH=/path/to/gemma.gguf pnpm eval:ocr:llama
+```
+
+Two runtimes, one contract: the inference parameters (context window, output
+ceiling, temperature) and the GBNF grammar both come from `@whole/ocr`, so the
+harness measures exactly what ships. It is read-only — no baseline — because its
+verdicts choose weights and prompt shapes rather than guard pass/fail state:
+compare quantizations (Q4_K_M vs Q6_K) and prompt changes against the
+per-field table, which is bucketed, sorted and formatted identically to the
+rule-engine report's. Each sample line also carries the model's institution
+answer — the gold stores the engine's enum id and the model answers free text,
+so that half of the annotation turn is judged by eye.
+
+`--ablate <mode>` runs both of the pipeline's passes with one tier of
+institution config removed, so the model faces the question an unrecognized
+institution would ask. It is the only way to measure what the annotation turn
+CONTRIBUTES: every sample in this corpus has a config, so an unablated run
+scores the config rather than the model. Compare its table against the same
+mode's column in `pnpm eval:ocr:ablate`, which is the engine alone under
+identical conditions.
+
+```bash
+WHOLE_GGUF_PATH=<gguf> pnpm eval:ocr:llama -- --ablate currency
+```
+
+It is also the only gate that executes a real llama.cpp parse. A grammar can be
+structurally right, pass every unit test, and still fail to load — the `\d`
+escape in a schema `pattern` did exactly that. `engine/grammar.ts` now rejects
+that particular class before the conversion, but it cannot know the next one.
+Run this whenever the grammar, the prompt, or the model path changes.
+
+## The ablation report (`pnpm eval:ocr:ablate`)
+
+Every sample here has an `InstitutionConfig` authored against it, so 17/17 is
+the engine's score WITH its config and says nothing about a screenshot from an
+institution nothing knows. This runner replays the same corpus with one tier of
+that config removed at a time — `institution` (all of it), `currency`,
+`keywords`, `layout`, `kind`, `icons` — and prints a field × mode matrix plus
+the samples each mode lost. Seventeen passing samples become seventeen
+measurable failures without a new screenshot.
+
+```bash
+pnpm eval:ocr:ablate
+pnpm eval:ocr:ablate -- --sample ocbc-overview
+```
+
+It is a measurement, not a gate: no baseline, and it exits 0 whatever the
+numbers say. Keeping it out of `run-eval.ts` is deliberate — an ablated
+`--update-baseline` would enter every induced failure into the gate as a known
+gap and stop reporting it.
+
+Three things to keep in mind while reading the table:
+
+- Every column still replays a layout the grouping rules were written against,
+  so each score is a **ceiling** for a genuinely unseen institution. Read a mode
+  as "no better than".
+- `institutionId` is a compared field, so under `institution` its 0% is
+  definitional, not a finding.
+- A balance row's denominator can move between columns: a mode that makes
+  recognition report a different currency adds that currency's own bucket.
+
+What the modes are for: `layout` is the tier a screenshot answers **visually**
+(where a region starts and ends), so it is the one that says whether feeding
+the model the image alongside the text has anything to add. `currency` and
+`keywords` are the tiers a picture cannot help with — a missing home currency
+or an unlisted CJK product word is not something the pixels disambiguate.
+
+### What the model actually contributes
+
+Run the same mode through both harnesses and the difference is the annotation
+turn's value. Measured on the bundled Gemma 4 E2B, every sample answered on the
+first attempt:
+
+| ablated tier  | engine alone | engine + model | what the model supplies         |
+| ------------- | ------------ | -------------- | ------------------------------- |
+| `currency`    | 12/17        | **16/17**      | the institution's home currency |
+| `kind`        | 13/17        | **16/17**      | what a venue holds              |
+| `institution` | 4/17         | **7/17**       | both, on a screen nothing knows |
+| `keywords`    | 12/17        | 12/17          | nothing                         |
+
+The shape of that is the finding, not the totals:
+
+- **World knowledge transfers.** Currency and kind are facts ABOUT an
+  institution, and a 2B model has them. Four of the five samples a missing
+  `defaultCurrency` costs come back, and three of the four a missing
+  `defaultKind` costs.
+- **Structure does not.** `keywords` is unmoved — accountName stays at 73%
+  either way. Which row titles an account and which is a sub-account row is a
+  property of THIS screenshot, not of the institution, and no amount of world
+  knowledge answers it. That is the same result `vocabulary.ts` records from
+  the other direction, where widening the shared CJK keyword list resolved
+  nothing and regressed three fields.
+- **`institution` is the whole question at once**, and the closest thing here
+  to a user submitting a screenshot from an institution nothing knows. Both
+  columns discount `institutionId` itself — the mode forces it to "unknown", so
+  judged on it every sample would fail by definition and the column would read
+  0/17 against its own per-field rows. What the model recovers underneath is
+  real: balance:CNY 44% → 78%, balance:SGD 69% → 77%, kind 62% → 69%.
+  balance:USD goes the other way, 70% → 64%, and that is one invented figure —
+  the IBKR sample, where the model names a currency for a broker whose base
+  currency is an account setting rather than a fact about the institution.
+
+The last bullet is the honest cost. A model that can supply a missing currency
+can also supply a wrong one, and a wrong currency reports money the user does
+not have. It is why the prompt offers `none`, why a declared `defaultCurrency`
+always outranks the inference, and why a broker's config should declare one.
 
 ## The baseline gate (how the exit code is decided)
 

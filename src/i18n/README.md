@@ -28,6 +28,7 @@ remain identical and cover both selecting and deleting an account screenshot.
 | The account identifier shown in the form                                 | 账号后四位         | last four digits   | 账户号码后四位       |
 | The main asset screen                                                    | 资产总览           | asset overview     | 资产首页             |
 | Currency code selection                                                  | 币种               | currency           | 货币类型             |
+| The language model bundled with the app                                  | 本机模型           | on-device model    | 端侧模型、大模型     |
 
 Accounts group under an institution (a bank, crypto exchange, or broker) on the
 home screen. An institution is a named container — it carries only a name and a

@@ -2,8 +2,16 @@
 
 [English](./README.md) | [简体中文](./README.zh-Hans.md)
 
-账户识别规则引擎。给它一张账户截图的 OCR 文本块，它回答：这屏上有哪些账户、叫什么
+账户识别引擎。给它一张账户截图的 OCR 文本块，它回答：这屏上有哪些账户、叫什么
 名字、每种币各有多少余额、账号后四位是什么、这是哪家机构。
+
+它是一个**混合体**：一条确定性的规则流水线负责读结构（账户、余额、币种、欠款
+符号、机械后四位），一次被注入的模型调用负责标注规则不可能知道语义的部分——
+屏幕上没有品牌字样时的机构归属、没有关键词命中时的账户类型，以及本地应用打出
+一个不带币种的数字时指的是哪种货币。应答这次调用的
+运行时（权重、解码）住在本包之外：App 里是 llama.rn，评测 harness 里是
+node-llama-cpp。这条接缝既让整个循环可以被单测，也让两个运行时无法各自为政地
+解码。
 
 纯 TypeScript，只有一个依赖（`zod`）——不依赖 React Native、Expo 或文件系统——所以
 同一份代码能在 App 里经 Metro 运行、在 Node 里经评测 harness 和 CLI 运行，也能跑在
@@ -41,10 +49,15 @@ src/
     kind.ts              现金 / 投资 / 加密
     account-grouping.ts  行 → 候选账户
     vocabulary.ts        所有机构共享的词表
-    parser.ts            整条流水线，以及对外入口
+    parser.ts            结构流水线（规则引擎的入口）
+    recognize.ts         混合循环：引擎读结构 + 模型做标注
+    annotate-prompt.ts   标注这一轮的指令
+    grammar.ts           zod schema → GBNF，供语法约束解码
+    json-schema-to-grammar.{js,d.ts}  内嵌的 llama.cpp 转换器
   institutions/   叠加在共享规则之上的按机构覆盖。
     config.ts       识别信号、图标标签、产品关键词
     detect.ts       这张截图属于哪家机构
+    ablation.ts     一次回放要剥掉配置的哪一层
   test-support/   让测试读起来像截图的构造器
 ```
 
@@ -73,6 +86,33 @@ App 的 `ocr-engine.ts` 里 `normalizeOcrResult` 从原生 OCR 结果产出的�
 `parseOcrBlocksTraced` 跑同一条流水线，同时返回中间态（聚类后的行、行级与词级角色、
 识别出的机构）——当结果不对、你需要知道是哪条规则做的决定时，`pnpm ocr --trace`
 打印的就是它。
+
+App 的识别再往上一层——混合循环，模型调用由外部注入：
+
+```ts
+import { recognizeWithModel, type RunModel } from "@whole/ocr";
+
+const outcome = await recognizeWithModel(blocks, runModel);
+```
+
+`runModel`（`RunModel`）用原始文本应答一次尝试；产出文本的一切——权重、上下文
+生命周期、语法约束解码——都是调用方的事。outcome 要么是识别出的账户（引擎读出的
+结构，加上模型的标注，且每条标注都先对着引擎提取的区域核验过），要么是模型始终
+没能守住契约的原因。
+
+### 注解的每个字段都是必答
+
+这一轮问三件事——每个区域的账户类型、机构、屏幕的本币——三个在编译语法所依据的
+schema 里都是**必答**，用 `"unknown"` 和 `"none"` 作为弃权方式。
+
+这是测出来的结论，不是偏好。做成可选字段时，随包的 Gemma 4 E2B 干脆一个都不填：
+在 CMB 那个样本上——屏幕上有 `朝朝宝`、`买理财，来招行`，认出招商银行的线索不比
+一个 logo 弱——模型的回答是 `{"accounts": [...]}`，机构和货币全都没有。语法允许更
+短的对象，模型就产更短的对象。改成必答之后，语法在模型给出答案前无法闭合对象，同
+一张屏第一次尝试就答出了 `CNY` 和 `招行`。
+
+所以这里新增字段应当是“必答 + 一个弃权值”，不要用可选。可选字段是小模型不会填的
+字段，而且失败是静默的——看上去就像“模型没什么可说的”。
 
 `src/index.ts` 是唯一的入口。规则级内部件曾经从第二个入口
 （`@whole/ocr/internals`）导出，供评测 harness 的 LLM 诊断工具使用；那套工具已被
@@ -133,7 +173,8 @@ parseOcrBlocks(
 | `信用额度`、`账单到期`            | 授信额度          | 绝不是余额                           |
 | `您花了 4,766.92`                 | 欠款              | 余额取其负值                         |
 | `-0.51%`、`今日变动`、`当日盈亏`  | 比率或变动        | 绝不是余额                           |
-| `3.51亿美元`                      | 带亿/万倍数的数字 | 拒绝——解析器不做倍数换算             |
+| `3.51亿美元`、`15.8K`             | 带亿/万倍数的数字 | 拒绝——解析器不做倍数换算             |
+| `HKD 现金 15.8K 市场价值`         | 已折算的持仓      | 绝不是余额——见下文                   |
 | `Transaction History`、`净现金流` | 账户列表到此为止  | 停止读取整屏                         |
 
 弄错其中一条不是小错。把信用额度和账单到期金额与余额一起相加，会把一张 4,766.92
@@ -171,6 +212,12 @@ parseOcrBlocks(
 | `accountNumberStartsAccount` | 账号在前的布局（招商永隆）                               |
 | `accountNumberLastFour`      | 识别位不在末尾的账号（中银香港的校验位）                 |
 
+`defaultCurrency` 是唯一一个由注解回合兜底的字段：config 没声明时，模型会被问到这
+屏的本币，管线再带着答案把屏幕重新分组一次（能挽回多少，见
+[`packages/ocr-eval`](../ocr-eval/README.zh-Hans.md) 的实测）。它只是兜底，绝不
+覆盖——声明过的币种永远优先，因为 config 是有人对着真屏幕核过的，而模型给的是
+推断。知道就声明。
+
 中文账户词属于 `accountKeywords`，绝不要加进共享的 `defaultAccountKeywords`。在
 全局范围内，“储蓄”和“账户”标注子账户行的频率不低于账户本身，会把一个账户炸成
 好几个——在整个语料上实测，加了它们没有修好任何一项，反而让三个字段退化。收窄到
@@ -184,6 +231,7 @@ parseOcrBlocks(
 ## 相关
 
 - [`packages/ocr-eval`](../ocr-eval/README.zh-Hans.md)——针对真实截图的回归 harness、
-  `pnpm ocr <image>` CLI，以及 macOS 上的 Apple Vision 桥。
-- `src/features/assets/ocr-engine.ts`（App）——唯一接触原生 OCR 引擎的模块。它产出的
-  就是本包消费的文本块。
+  `pnpm ocr <image>` CLI、macOS 上的 Apple Vision 桥，以及端侧模型回放门禁
+  （`pnpm eval:ocr:llama`）。
+- `src/features/recognition/ocr-engine.ts`（App）——唯一接触原生 OCR 引擎的模块。它产出
+  的就是本包消费的文本块。

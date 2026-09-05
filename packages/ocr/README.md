@@ -2,10 +2,19 @@
 
 [English](./README.md) | [简体中文](./README.zh-Hans.md)
 
-The account-recognition rule engine. Given the OCR blocks of an account
+The account-recognition engine. Given the OCR blocks of an account
 screenshot, it answers: what accounts are on this screen, what are they called,
 what are their balances per currency, what are the last four digits, and which
 institution is this?
+
+It is a **hybrid**: a deterministic rule pipeline reads the structure (accounts,
+balances, currencies, debt signs, mechanical last fours), and an injected model
+call annotates the semantics rules cannot know — the institution when no brand
+appears on screen, an account kind where no keyword applies, and the home
+currency a domestic app means by a bare number. The runtime that
+answers the call (weights, decoding) lives outside this package: llama.rn in
+the app, node-llama-cpp in the eval harness. That seam is what keeps the loop
+unit-testable and the two runtimes honest about decoding alike.
 
 Pure TypeScript with one dependency (`zod`) — no React Native, no Expo, no
 filesystem — so the same code runs in the app through Metro, in Node through the
@@ -48,10 +57,15 @@ src/
     kind.ts              cash / investment / crypto
     account-grouping.ts  rows → tentative accounts
     vocabulary.ts        the word lists every institution inherits
-    parser.ts            the pipeline, and the public entry point
+    parser.ts            the structure pipeline (the rules' entry point)
+    recognize.ts         the hybrid loop: engine structure + model annotation
+    annotate-prompt.ts   the annotation turn's instructions
+    grammar.ts           zod schema → GBNF, for grammar-constrained decoding
+    json-schema-to-grammar.{js,d.ts}  vendored llama.cpp converter
   institutions/   Per-institution overrides layered on the shared rules.
     config.ts       detection signals, icon tags, product keywords
     detect.ts       which institution is this screenshot from
+    ablation.ts     which tier of a config one replay removes
   test-support/   Builders that make tests read like screenshots
 ```
 
@@ -86,6 +100,39 @@ new OCR work.
 stages (clustered lines, per-line and per-token roles, the detected
 institution) — what `pnpm ocr --trace` prints when the answer is wrong and the
 question is which rule decided it.
+
+The app's recognition goes one layer up — the hybrid loop, with the model call
+injected:
+
+```ts
+import { recognizeWithModel, type RunModel } from "@whole/ocr";
+
+const outcome = await recognizeWithModel(blocks, runModel);
+```
+
+`runModel` (`RunModel`) answers one attempt with raw text; everything about
+producing it — weights, context lifecycle, grammar-constrained decoding — is
+the caller's. The outcome is either the recognized accounts (the engine's
+structure plus the model's annotations, every annotation verified against the
+region the engine extracted) or the reason the model never held the contract.
+
+### Every annotation field is required
+
+The turn asks three things — an account kind per region, the institution, and
+the screen's home currency — and all three are **required** in the schema the
+grammar is compiled from, with `"unknown"` and `"none"` as the ways to decline.
+
+That is a finding, not a preference. As optional fields the bundled Gemma 4 E2B
+simply never emitted them: on the CMB sample, a screen carrying 朝朝宝 and
+买理财，来招行 — which name China Merchants Bank about as plainly as a logo
+would — the answer came back as `{"accounts": [...]}` with no institution and no
+currency at all. A grammar that permits the shorter object gets the shorter
+object. Required, the grammar cannot close the object until the model has
+committed, and the same screen answers `CNY` and `招行` on the first attempt.
+
+So a new field here should be required with a decline value, never optional.
+An optional field is one a small model will not fill in, and the failure is
+silent — it reads as "the model had nothing to say".
 
 `src/index.ts` is the only entry point. Rule-level internals used to be exported
 through a second one (`@whole/ocr/internals`) for the eval harness's LLM
@@ -196,6 +243,14 @@ format, so only their flagship product names tell them apart.
 | `accountNumberStartsAccount` | number-first layouts (CMB Wing Lung)                                             |
 | `accountNumberLastFour`      | numbers whose identifying digits aren't the tail (BOCHK's check digit)           |
 
+`defaultCurrency` is the one field the annotation turn backstops: when a config
+does not declare it, the model is asked for the screen's home currency and the
+pipeline re-groups the screen with the answer (how much that recovers is
+measured in [`packages/ocr-eval`](../ocr-eval/README.md)). It is a fallback,
+never an override — a declared currency always wins, because a config was
+checked against a real screen and the model's answer is an inference. Declare it
+when you know it.
+
 Chinese account words belong in `accountKeywords`, never in the shared
 `defaultAccountKeywords`. Globally, "储蓄" and "账户" label sub-account rows as
 often as accounts and shatter one account into many — measured over the corpus,
@@ -211,6 +266,7 @@ eval tracks that as a known `unsupported-institution` gap rather than a failure.
 ## Related
 
 - [`packages/ocr-eval`](../ocr-eval/README.md) — regression harness over real
-  screenshots, the `pnpm ocr <image>` CLI, and the macOS Apple Vision bridge.
-- `src/features/assets/ocr-engine.ts` (app) — the only module that touches the
-  native OCR engine. It produces the blocks this package consumes.
+  screenshots, the `pnpm ocr <image>` CLI, the macOS Apple Vision bridge, and
+  the on-device-model replay gate (`pnpm eval:ocr:llama`).
+- `src/features/recognition/ocr-engine.ts` (app) — the only module that touches
+  the native OCR engine. It produces the blocks this package consumes.

@@ -26,7 +26,7 @@ Whole 只面向移动端：账户识别依赖原生图片选择器和媒体库�
 - 在平台支持时，由用户选择是否删除原始账户截图
 - 简体中文和英文界面
 
-账户识别完全在本机进行——截图由原生 OCR（iOS 使用 Apple Vision，Android 使用 ML Kit）读取，不会离开设备。
+账户识别完全在本机进行——截图由原生 OCR（iOS 使用 Apple Vision，Android 使用 ML Kit）读取，经确定性识别引擎整理结构，再由随应用打包的小语言模型（Gemma 4）补充语义标注。账户信息不会离开设备，识别可以离线完成。
 
 ## 开始开发
 
@@ -34,13 +34,17 @@ Whole 只面向移动端：账户识别依赖原生图片选择器和媒体库�
 
 - Node.js 22.13 或更高版本
 - `package.json` 中固定的 pnpm 11.11.0
+- Git LFS——随应用打包的模型权重放在 `assets/models/`，约 3 GB
 - iOS 模拟器或 Android 模拟器
 
 ### 安装依赖
 
 ```bash
+git lfs pull
 pnpm install
 ```
+
+没有权重时原生构建会在 prebuild 阶段失败，并提示缺失的目录。
 
 ### 运行
 

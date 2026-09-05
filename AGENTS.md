@@ -69,6 +69,34 @@ the exact version — **re-evaluate it on every `expo-mlkit-ocr` bump** (a versi
 mismatch fails resolution loudly, but a silent patch loss shows up only as
 Chinese text dropping out of recognition).
 
+`patches/llama.rn@0.12.9.patch` adds one method to the Android module:
+`extractWholeModelShards` copies the bundled model shards from the APK's
+`assets/whole_models/` into filesDir at install time, because llama.cpp can
+only load models from real filesystem paths and Android APK assets are not
+files. **Re-evaluate on every `llama.rn` bump** — a silent patch loss shows up
+only as recognition failing to load the model on Android.
+
+Two consequences of that copy, both written up where they live: Android holds
+the weights TWICE (APK plus filesDir), which is what
+`bundledModelStorageBytes` reports to the settings card; and the extraction
+skips a shard whose name is already present, so a rebuilt GGUF must be renamed
+rather than swapped in place (`model-source.ts` verifies each extracted shard's
+SIZE against the catalog and deletes a wrong one, which is what makes that
+recoverable). Separately, `plugins/with-whole-model.js` puts the shards in the
+app bundle's base module, which Google Play caps at 150 MB — an Android release
+build needs Play Asset Delivery before it can be uploaded.
+
+On iOS the weights need the `increased-memory-limit` entitlement or the system
+jetsams the app during `initLlama`. llama.rn's plugin only adds it for the build
+profiles named in `entitlementsProfile`, which `app.json` therefore lists as
+`["", "development", "preview", "production"]` rather than leaving at its
+`production` default. The empty string is the load-bearing one and not a typo:
+the plugin matches against `process.env.EAS_BUILD_PROFILE || ""`, so it is what
+covers a local `pnpm ios` — the very build AGENTS.md tells you to verify with.
+Without it the prescribed verification runs the one configuration that has no
+entitlement, and the failure looks like an out-of-memory device rather than a
+missing capability.
+
 ## Technology stack
 
 - [Expo SDK 57](https://docs.expo.dev/versions/v57.0.0/)
@@ -108,8 +136,9 @@ they run on a Linux runner in about a minute. Run them locally too; CI is the
 backstop, not the first place to find out.
 
 - Run `pnpm lint`, `pnpm format:check`, and `pnpm typecheck` before submitting a
-  change. When the change touches recognition, also run `pnpm test:ocr` and
-  `pnpm eval:ocr` (see [Testing](#testing)).
+  change. When the change touches recognition, also run `pnpm test:ocr`,
+  `pnpm eval:ocr`, and — when the grammar, prompt, or model path changed —
+  `pnpm eval:ocr:llama` (see [Testing](#testing)).
 - Use `pnpm typecheck`, not a bare `pnpm exec tsc --noEmit`. The root tsconfig
   excludes `packages/`, so the bare command silently skips the recognition
   engine and the eval harness — the script runs it and then each workspace
@@ -267,6 +296,18 @@ Recognition has a third layer that is neither unit test nor app test:
 
 - `pnpm eval:ocr` replays real recorded screenshots against a **baseline** of
   known failures. It fails only on a regression, never on a pre-existing gap.
+- `pnpm eval:ocr:llama` replays the same samples through the ON-DEVICE path:
+  `recognizeWithModel` with the model call answered by a local GGUF
+  (`WHOLE_GGUF_PATH=… pnpm eval:ocr:llama`). It is the only gate that executes
+  a real llama.cpp parse, so it alone can catch a grammar the engine accepts
+  but llama.cpp rejects. The one failure of that class we have seen — a `\d`
+  in a schema `pattern` — is now rejected by `engine/grammar.ts` before the
+  conversion; the next one will not be, which is why this still runs.
+- `pnpm eval:ocr:ablate` replays the same samples with one tier of institution
+  config removed at a time. A MEASUREMENT, not a gate — no baseline, always
+  exits 0 — because 17/17 is the engine's score WITH configs written for those
+  very screenshots. Pairing it with `eval:ocr:llama --ablate <mode>` is what
+  measures the annotation turn. `packages/ocr-eval/README.md` reads the table.
 - `pnpm test:ocr:golden` hard-asserts the samples whose gold was verified
   against the screenshot. All 17 currently qualify. Only add a new sample there
   after checking its `expected.json` against the screenshot by eye — an
@@ -292,27 +333,33 @@ src/features/accounts/ The account wizard/detail screens, editor fields,
 src/features/assets/   The assets domain: repository, queries, net-worth math,
                        currency conversion, and the preference stores
 src/features/home/     The home screen and its section components
-src/features/recognition/ The OCR/model recognition pipeline: the native OCR
-                       adapter, model runner, and screenshot recognition
-src/features/settings/ The settings screen and the model-provider domain
+src/features/recognition/ The recognition pipeline: the native OCR adapter, the
+                       model-call adapter, and screenshot recognition
+src/features/on-device-model/ The bundled model's catalog, its load path, its
+                       size formatting, and the llama context lifecycle
+                       (load, prewarm, idle release, verify)
+src/features/settings/ The settings screen (on-device model status)
 src/features/onboarding/ Onboarding state and screen
 src/features/user/     User profile state
 src/i18n/              Runtime localization, message catalogs, and terminology
-src/storage/           kv-store (expo-sqlite) and the generic preference
-                       primitives built on it (feature-specific stores live in
-                       their feature, on top of these primitives — storage/
-                       must not import from features/)
+src/storage/           kv-store (expo-sqlite), the generic preference
+                       primitives built on it, and one-time key migrations
+                       (feature-specific stores live in their feature, on top
+                       of these primitives — storage/ must not import from
+                       features/)
 src/test-support/      Shared test scaffolding (renderWithProviders)
-packages/llm/          @whole/llm — request construction and response parsing
-                       for a user-supplied model endpoint (pure TypeScript,
-                       injected fetch, Vitest unit tests)
-packages/ocr/          @whole/ocr — the account-recognition rule engine
-                       (pure TypeScript workspace package, Vitest unit tests)
+packages/ocr/          @whole/ocr — the account-recognition engine: the rule
+                       pipeline and the model-annotation loop (pure TypeScript
+                       workspace package, Vitest unit tests)
 packages/ocr-eval/     Regression harness over real screenshots, the
-                       `pnpm ocr <image>` CLI, and the macOS Vision bridge
+                       `pnpm ocr <image>` CLI, the macOS Vision bridge, and
+                       the on-device-model replay gate (`pnpm eval:ocr:llama`)
 patches/               pnpm patches (see the Patched dependencies section)
+plugins/               Expo config plugins — with-whole-model copies the GGUF
+                       shards into the native projects at prebuild
 assets/branding/       Source brand artwork
 assets/app-icons/      Generated platform icon deliverables
+assets/models/         The bundled GGUF weights (Git LFS; not hand-edited)
 .github/workflows/     CI — the quality gates on push and pull request
 eslint.config.js       Expo ESLint and Prettier integration
 vitest.config.mts      Vitest over the app's pure modules (`pnpm test:app`)
@@ -372,9 +419,10 @@ hand-picked value at the call site. A screen asks for `TONES.safe` or
   introduce a colour the rest of the app has never seen.
 - `caution` is deliberately not `danger`. Red is reserved for destructive
   actions; spending it on "your data goes somewhere" would leave nothing louder
-  for "this deletes an account". The settings screen's privacy notice is the
-  first user of both tones — green when the endpoint is on the device, amber
-  when the text leaves it.
+  for "this deletes an account". The settings screen's privacy notice is a
+  user of the safe tone — recognition runs on the device, so the notice is
+  green. `caution` stays in the palette for the next feature that needs to
+  say "this goes somewhere".
 
 ## Component Variants
 
@@ -574,11 +622,25 @@ shapes. Do not hand-write `if`/`else` conditional checks to validate data.
 
 ## OCR Recognition
 
-The recognition rule engine lives in its own workspace package,
+Recognition is a **hybrid**, and the split is the whole design: a deterministic
+rule pipeline reads the STRUCTURE (accounts, balances, currencies, debt signs,
+mechanical last fours), and one call to the bundled on-device model annotates
+the SEMANTICS rules cannot know (the institution when no brand is on screen, an
+account kind no keyword covers, the home currency a domestic app means by a bare
+number). Measured: a model doing the whole job scored 0–71% per field, with
+account grouping the dominant failure, while the engine passes 17/17 — see
+[`docs/ocr-redesign.md`](./docs/ocr-redesign.md).
+
+Both halves of the loop live in the workspace package
 [`@whole/ocr`](./packages/ocr/README.md) — pure TypeScript, one dependency
-(zod), no React Native or Expo. The app imports it like any other package; the
-only app-side OCR module is `src/features/recognition/ocr-engine.ts`, which adapts
-the native engine's output into the blocks the package consumes.
+(zod), no React Native or Expo. The model CALL is an injected parameter
+(`RunModel`), so the package never touches a runtime. Four app-side modules sit
+around it: `recognition/ocr-engine.ts` adapts the native OCR output into the
+blocks the package consumes, `recognition/on-device-runner.ts` answers the
+injected call, `recognition/model-recognition.ts` is the entry point and its
+failure taxonomy, and `recognition/screenshot-recognition.ts` chains the two.
+The weights and the llama context live one layer further out, in
+`features/on-device-model/`.
 
 It is a **standalone recognition module**, decoupled from the account form. Its
 goal: given any account screenshot, correctly recognize the account name,
