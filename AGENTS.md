@@ -2,707 +2,361 @@
 
 A personal finance aggregation app built on Expo + React Native. This file
 is the source of truth for project conventions; `CLAUDE.md` includes it via
-`@AGENTS.md`.
+`@AGENTS.md`. Read the exact versioned Expo docs at
+https://docs.expo.dev/versions/v57.0.0/ before writing Expo-specific code.
 
 # Supported Platforms
 
-Whole ships to **iOS and Android only**. The web platform is deliberately
-unsupported and its code has been removed.
+iOS and Android only. Web is deliberately unsupported and its code has been
+removed: account recognition depends on the native image-picker,
+media-library, and on-device OCR pipeline, which a browser build cannot
+deliver. Do not add web support in any form — `react-native-web`,
+`react-dom`, an `expo.web` block in `app.json`, a `pnpm web` script, a
+`+html.tsx` root, a PWA manifest, `public/` web assets, `.web.ts` /
+`.web.tsx` overrides, or `Platform.OS === "web"` branches (`Platform` checks
+distinguish ios from android only). Verify with `pnpm ios` / `pnpm android`;
+there is no web export gate.
 
-- Account recognition depends on OCR handling of account screenshots
-  that only works reliably through the native image-picker, media-library,
-  and on-device OCR pipeline, so a browser build could not deliver the
-  app's core flow.
-- Do not add `react-native-web`, `react-dom`, an `expo.web` block in
-  `app.json`, a `pnpm web` script, a `+html.tsx` root, a PWA manifest, or
-  `public/` web assets.
-- Do not write `.web.ts` / `.web.tsx` platform overrides or
-  `Platform.OS === "web"` branches. `Platform` checks are for distinguishing
-  `ios` from `android` only.
-- Verify changes with `pnpm ios` / `pnpm android`; there is no web export
-  gate.
+# Tooling
 
-# Tooling & Environment
+## Package manager
 
-## Expo SDK
-
-Read the exact versioned docs at https://docs.expo.dev/versions/v57.0.0/
-before writing any code.
-
-## Package Manager
-
-Use pnpm exclusively, at the version pinned by the `packageManager` field in
-`package.json`, with `pnpm-lock.yaml` as the only lockfile — never `npm`,
-`npx`, Yarn, or Bun (`pnpm install`, `pnpm <script>`, `pnpm exec <binary>`).
-
-### Supply-chain maturity gate
+pnpm only, at the version pinned by `package.json`'s `packageManager` field,
+with `pnpm-lock.yaml` as the only lockfile — never `npm`, `npx`, Yarn, or
+Bun. The repo's own `.npmrc` pins the public registry, so installs inside
+the repo never touch a machine-level mirror; when something fails to install
+from inside the repo, the registry is not the suspect.
 
 `pnpm-workspace.yaml` sets `minimumReleaseAge: 1440` — a version must be
-published for a day before pnpm will resolve it, transitive dependencies
-included. 1440 is pnpm v11's own default; it is written out because the setting
-is invisible otherwise (`pnpm config get minimumReleaseAge` prints nothing for a
-default) and it is the thing a same-day Expo patch release collides with.
+published for a day before pnpm resolves it, transitive dependencies
+included. A same-day release fails loudly
+(`ERR_PNPM_NO_MATURE_MATCHING_VERSION`); the bad case is silent: where a
+range is loose (an optional peer declared `*`), pnpm quietly keeps whatever
+the lockfile had — `@expo/metro-runtime` has sat behind its dependent's
+requirement this way twice. `minimumReleaseAgeExclude` entries are
+temporary: add one only to clear an outright failure, delete it at the next
+bump. After any dependency change run `pnpm exec expo-doctor`; when a
+resolution looks frozen, `pnpm update` and `overrides` will not move an
+optional peer — delete `pnpm-lock.yaml` **and**
+`node_modules/.pnpm/lock.yaml` (pnpm restores from the latter, so removing
+only the first is a no-op) and reinstall. Verify with `pnpm ios` afterwards,
+not just `pnpm typecheck`: re-resolving moves native modules and the pods
+have to be rebuilt.
 
-- A package published today fails resolution outright with
-  `ERR_PNPM_NO_MATURE_MATCHING_VERSION`, naming itself. That is the good case.
-- The bad case is silent: where a version range is loose (an optional peer
-  declared `*`), pnpm quietly keeps whatever the lockfile already had, with no
-  warning. `@expo/metro-runtime` sat three patch releases behind this way, below
-  the `^57.0.9` its own dependent required, and only `expo-doctor` noticed.
-- `minimumReleaseAgeExclude` entries are **temporary**. Add one only to clear an
-  outright failure, and delete it at the next dependency bump: a stale exclusion
-  never errors, it just pins that package to the version named in it.
-- After any dependency change, run `pnpm exec expo-doctor`. When a resolution
-  looks frozen, note that `pnpm update` and `overrides` do not move an optional
-  peer — the fix is to delete `pnpm-lock.yaml` **and** `node_modules/.pnpm/lock.yaml`
-  (pnpm restores from the latter, so removing only the first is a no-op) and
-  reinstall. Verify with `pnpm ios` afterwards, not just `pnpm typecheck`:
-  re-resolving moves native modules and the pods have to be rebuilt.
+## Patched dependencies
 
-### Patched dependencies
+All three patches are registered under `patchedDependencies` in
+`pnpm-workspace.yaml` and pinned to exact versions. **Re-evaluate each on
+every bump of the package it patches** — a version mismatch fails resolution
+loudly, but a silent patch loss shows up only as the bug it fixes coming
+back.
 
-`patches/expo-mlkit-ocr@0.2.7.patch` (registered under `patchedDependencies`
-in `pnpm-workspace.yaml`) adds `recognitionLanguages = ["zh-Hans", "en-US"]`
-to the module's `VNRecognizeTextRequest`, because without it Apple Vision OCR
-drops the Chinese labels most account screenshots carry. The patch is pinned to
-the exact version — **re-evaluate it on every `expo-mlkit-ocr` bump** (a version
-mismatch fails resolution loudly, but a silent patch loss shows up only as
-Chinese text dropping out of recognition).
+- `expo-mlkit-ocr@0.2.7` adds `recognitionLanguages = ["zh-Hans", "en-US"]`
+  to the module's `VNRecognizeTextRequest`; without it Apple Vision OCR
+  drops the Chinese labels most account screenshots carry.
+- `expo-media-viewer@0.7.2` threads a `viewer.closeIconName` config option
+  through the JS wrapper to the `closeIconName` prop the iOS module already
+  declares; without it the fullscreen screenshot viewer closes with an
+  unlocalized English "Close" — the one English control in a Chinese UI.
+  `ScreenshotMediaViewer` passes an SF Symbol instead; Android already
+  draws an icon.
+- `llama.rn@0.12.9` changes two things. It adds `extractWholeModelShards`
+  to the Android module, copying the bundled model shards from the APK's
+  `assets/whole_models/` into filesDir at install time (llama.cpp can only
+  load models from real filesystem paths, and APK assets are not files).
+  And it moves `@expo/config-plugins` from llama.rn's devDependencies into
+  dependencies: the package's Expo config plugin (`withLlamaRN`) imports it
+  at prebuild, pnpm does not install a transitive package's
+  devDependencies, and from SDK 57.0.20 the plugin resolver loads the
+  plugin's ESM build, where the unmet import kills every `expo config` /
+  prebuild with `PluginError: Cannot find package '@expo/config-plugins'`.
 
-`patches/llama.rn@0.12.9.patch` adds one method to the Android module:
-`extractWholeModelShards` copies the bundled model shards from the APK's
-`assets/whole_models/` into filesDir at install time, because llama.cpp can
-only load models from real filesystem paths and Android APK assets are not
-files. **Re-evaluate on every `llama.rn` bump** — a silent patch loss shows up
-only as recognition failing to load the model on Android.
+Two consequences of the shard copy: Android holds the weights TWICE (APK
+plus filesDir — what `bundledModelStorageBytes` reports to the settings
+card), and extraction skips a shard whose name is already present, so a
+rebuilt GGUF must be renamed rather than swapped in place
+(`model-source.ts` verifies each extracted shard's SIZE against the catalog
+and deletes a wrong one, which is what makes that recoverable). Separately,
+`plugins/with-whole-model.js` puts the shards in the app bundle's base
+module, which Google Play caps at 150 MB — an Android release build needs
+Play Asset Delivery before it can be uploaded.
 
-Two consequences of that copy, both written up where they live: Android holds
-the weights TWICE (APK plus filesDir), which is what
-`bundledModelStorageBytes` reports to the settings card; and the extraction
-skips a shard whose name is already present, so a rebuilt GGUF must be renamed
-rather than swapped in place (`model-source.ts` verifies each extracted shard's
-SIZE against the catalog and deletes a wrong one, which is what makes that
-recoverable). Separately, `plugins/with-whole-model.js` puts the shards in the
-app bundle's base module, which Google Play caps at 150 MB — an Android release
-build needs Play Asset Delivery before it can be uploaded.
-
-`patches/expo-media-viewer@0.7.2.patch` threads a `viewer.closeIconName`
-config option through the JS wrapper to the `closeIconName` prop the iOS module
-already declares. Without it the fullscreen screenshot viewer closes with a
-text button whose title is a bare English "Close" (read through
-`NSLocalizedString` with no translations shipped), the one English control in a
-Chinese UI; `ScreenshotMediaViewer` passes an SF Symbol instead. Android already
-draws an icon. **Re-evaluate on every `expo-media-viewer` bump** — a silent
-patch loss shows up only as the English "Close" coming back.
-
-On iOS the weights need the `increased-memory-limit` entitlement or the system
-jetsams the app during `initLlama`. llama.rn's plugin only adds it for the build
-profiles named in `entitlementsProfile`, which `app.json` therefore lists as
-`["", "development", "preview", "production"]` rather than leaving at its
-`production` default. The empty string is the load-bearing one and not a typo:
-the plugin matches against `process.env.EAS_BUILD_PROFILE || ""`, so it is what
-covers a local `pnpm ios` — the very build AGENTS.md tells you to verify with.
-Without it the prescribed verification runs the one configuration that has no
-entitlement, and the failure looks like an out-of-memory device rather than a
-missing capability.
-
-## Technology stack
-
-- [Expo SDK 57](https://docs.expo.dev/versions/v57.0.0/)
-- React 19 and React Native 0.86
-- Expo Router with typed routes
-- TypeScript
-- ESLint with Expo's recommended rules
-- Prettier
-- `i18next` and `react-i18next`
-- `expo-localization`
-- `expo-sqlite` for persistence (AsyncStorage remains only as the source of the
-  one-time migration in `src/storage/kv-store`)
-- `@tanstack/react-query` for the exchange-rate cache, persisted to sqlite
-- `zod` for all runtime validation
-- `expo-image-picker` and `expo-media-library`
+On iOS the weights need the `increased-memory-limit` entitlement or the
+system jetsams the app during `initLlama`. llama.rn's plugin only adds it
+for the build profiles named in `entitlementsProfile`, which `app.json`
+lists as `["", "development", "preview", "production"]`. The empty string
+is load-bearing, not a typo: the plugin matches against
+`process.env.EAS_BUILD_PROFILE || ""`, so it is what covers a local
+`pnpm ios` — the very build this file tells you to verify with. Without it
+the prescribed verification runs the one configuration with no entitlement,
+and the failure looks like an out-of-memory device rather than a missing
+capability.
 
 ## Brand assets
 
-The source logo is `assets/branding/whole-logo.svg`. Regenerate platform
-assets with:
-
-```bash
-pnpm generate:icons
-```
-
-Generated icons under `assets/app-icons/` should not be edited manually. Update
-the source artwork or the generator instead.
+The source logo is `assets/branding/whole-logo.svg`; regenerate platform
+assets with `pnpm generate:icons`. Generated files under `assets/app-icons/`
+are not edited by hand. `COLORS.brand` is the canonical brand color and the
+splash wordmark mirrors it — regenerate the icons when it changes.
 
 # Code Quality
 
-ESLint enforces the Expo, React Native, React Hooks, TypeScript, and import
-rules. Prettier is the only formatter.
+Run `pnpm lint`, `pnpm format:check`, and `pnpm typecheck` before submitting
+a change; when it touches recognition, also run `pnpm test:ocr` and
+`pnpm eval:ocr`, and — when the grammar, prompt, or model path changed —
+`pnpm eval:ocr:llama`. Every gate runs in CI
+(`.github/workflows/ci.yml`) on push and PR, pure JS on a Linux runner — CI
+is the backstop, not the first place to find out.
 
-Every gate below runs in CI (`.github/workflows/ci.yml`) on push to `main` and
-on every pull request. They are pure JS — no simulator, no native toolchain — so
-they run on a Linux runner in about a minute. Run them locally too; CI is the
-backstop, not the first place to find out.
-
-- Run `pnpm lint`, `pnpm format:check`, and `pnpm typecheck` before submitting a
-  change. When the change touches recognition, also run `pnpm test:ocr`,
-  `pnpm eval:ocr`, and — when the grammar, prompt, or model path changed —
-  `pnpm eval:ocr:llama` (see [Testing](#testing)).
-- Use `pnpm typecheck`, not a bare `pnpm exec tsc --noEmit`. The root tsconfig
-  excludes `packages/`, so the bare command silently skips the recognition
-  engine and the eval harness — the script runs it and then each workspace
-  package's own `typecheck`.
-- `lint` is a single root run (`expo lint . --max-warnings 0`), NOT `pnpm -r`.
-  The explicit `.` is load-bearing: bare `expo lint` only walks `/src`, `/app`,
-  and `/components`, which left `packages/` (the recognition engine and the eval
-  harness) and `scripts/` outside the gate entirely. The asymmetry with
-  `typecheck` is not an inconsistency — ESLint has one flat config at the root
-  that already covers every workspace, while each package has its own tsconfig,
-  so only `typecheck` has something to recurse into.
-- `--max-warnings 0` is what makes warnings mean anything. Without it a warning
-  is a message nobody is obliged to act on, and they accumulate.
-- Run `pnpm format` to format all supported, non-ignored files.
-- Keep `eslint-plugin-prettier/recommended` after `eslint-config-expo/flat` in
-  the ESLint Flat Config so formatting conflicts are disabled and formatting
-  violations remain visible in the Expo lint gate.
-- Keep `.prettierignore` minimal. Add an entry only when a generated or
-  package-manager-owned file would otherwise be formatted; never add
-  speculative or convenience-only ignores.
-- Update the ESLint config, Prettier ignore file, editor settings, scripts,
-  lockfile, and developer documentation together when changing code-quality
-  tooling.
+- `lint` is one root run, `expo lint . --max-warnings 0`. The explicit `.`
+  is load-bearing: bare `expo lint` only walks `/src`, `/app`, and
+  `/components`, leaving `packages/` and `scripts/` outside the gate. So is
+  `--max-warnings 0`.
+- `typecheck` means the script, not a bare `pnpm exec tsc --noEmit`: the
+  root tsconfig excludes `packages/`, which the script typechecks and then
+  each workspace package's own config.
+- Keep `eslint-plugin-prettier/recommended` after `eslint-config-expo/flat`
+  in the ESLint flat config, and keep `.prettierignore` minimal — an entry
+  only for a generated or package-manager-owned file that would otherwise
+  be formatted.
 
 # Testing
 
-Two runners, split by what they test — not by preference. The split is
-mechanical: **can this module be imported by plain Node, either as-is or with
-one storage module mocked?**
+Two runners, split by one mechanical question: **can plain Node import the
+module, as-is or with one storage module mocked?**
 
-- **`@whole/ocr` (Vitest)** — the recognition rule engine is pure TypeScript,
-  so it is tested as a plain TS package: `pnpm test:ocr`. Vitest is the
-  community standard there and needs no native mocks. Tests live beside the
-  rule they cover (`engine/amount.test.ts` next to `engine/amount.ts`).
-- **The app's pure modules (Vitest)** — `pnpm test:app`, configured in
-  `vitest.config.mts`. Some of the app's most consequential rules are plain
-  data-in/data-out (`features/accounts/account-draft.ts`,
-  `features/accounts/balance-rows.ts`): they import no React
-  and no Expo, so running them under jest-expo would buy a native mock layer
-  they never touch. The include list enumerates FILES (in
-  `scripts/test-boundary.mjs`) rather than globbing `src/**` on purpose — a glob
-  would swallow the first component test and fail
-  on a native import instead of pointing whoever wrote it at the right runner.
-  Keeping these modules importable is a constraint, not an accident: reach for
-  a schema through `@whole/ocr` or `features/assets/asset-schema.ts` rather
-  than through `asset-repository.ts`, which pulls in `expo-crypto` and kv-store
-  and takes the whole file out of Node's reach.
-- **Modules that reach storage through one named seam (Vitest, mocked)** — also
-  `pnpm test:app`. `accounts-query.ts` and `net-worth-snapshots-query.ts` are
-  cache-coherence rules, not storage, but they import `asset-repository.ts` to
-  do their work, so plain Node cannot load them unmodified. They qualify because
-  the native dependency is a single module boundary the test can `vi.mock`
-  wholesale — which is what `accounts-query.test.ts` does. That is the limit of
-  the exception: mock the repository module, never a scatter of individual
-  Expo calls. A module that would need a second mock belongs under jest-expo.
-- **React Native components (jest-expo)** — `pnpm test:rn`, configured in
-  `jest.config.mjs`. Anything that renders or touches a native module goes here,
-  not in Vitest: `jest-expo` is Expo's own preset and mocks the native side of
-  the SDK. Do not try to unify the runners — a pure module and a rendered
-  component have genuinely different needs.
+- **Vitest** (`pnpm test:ocr` for `@whole/ocr`, `pnpm test:app` for the
+  app's pure modules) owns the FILES enumerated in
+  `scripts/test-boundary.mjs`: a `*.test.ts` beside a listed source is
+  Vitest's; a `.test.tsx` there, and everything else under `src/`, is
+  Jest's. The boundary is defined once in that file because two
+  hand-maintained copies drift silently — the failure mode is a test
+  neither runner claims, which simply never runs.
+- **Modules that reach storage through one named seam** (e.g.
+  `accounts-query.ts`) are Vitest's with the repository module `vi.mock`ed
+  wholesale — mock the module, never a scatter of individual Expo calls; a
+  module that would need a second mock belongs under jest-expo. Keeping
+  the pure modules Node-importable is a constraint, not an accident: reach
+  for a schema through `@whole/ocr` or `features/assets/asset-schema.ts`
+  rather than through `asset-repository.ts`.
+- **jest-expo** (`pnpm test:rn`) for anything that renders or touches a
+  native module. Two projects, ios and android, with merged coverage — a
+  `Platform.OS` branch is unreachable from a single environment, so 100%
+  branch coverage is only honest when the suite runs once per platform.
+  There is deliberately no `jest-expo/web` project. `babel.config.js`
+  exists for Jest, not for Metro. Do not unify the runners.
 
-Four things about the Jest setup are load-bearing and non-obvious:
+Jest gotchas that each cost a debugging session: a fresh module instance is
+`jest.resetModules()` plus `require(...)`, not `await import()` (CommonJS);
+a variable a `jest.mock` factory closes over must be named `mock…`; spying
+on the `react-native` namespace never reaches bindings a module under test
+already holds — mock the specific module instead; assert on what RENDERED,
+not on props handed to a component that consumes them internally (RN's
+`KeyboardAvoidingView` and lucide's icons both swallow theirs). Import test
+globals from the package (`@jest/globals` / `vitest`), not ambient types.
+`render` and `renderHook` are async in @testing-library/react-native v14 —
+a missing `await` doesn't throw, it leaves every query failing.
 
-- **The boundary between the two runners is defined once**, in
-  `scripts/test-boundary.mjs`, and imported by both configs — Vitest reads it as
-  `include`, Jest as `testPathIgnorePatterns`. Two hand-maintained copies drift,
-  and a test that neither runner claims does not fail; it silently never runs.
-  The rule is mechanical: `*.test.ts` inside the listed directories is Vitest's,
-  everything else under `src/` is Jest's. A `.test.tsx` in a Vitest-owned
-  directory still belongs to Jest.
-- **Two projects, ios and android, with merged coverage.** A `Platform.OS`
-  branch is unreachable from a single environment — under the iOS preset the
-  Android arm never executes — so 100% branch coverage is only honest when the
-  suite runs once per platform. There is no `jest-expo/web` project; the web
-  platform is unsupported.
-- **`babel.config.js` exists for Jest, not for Metro.** Metro applies
-  `babel-preset-expo` on its own, which is why the project ran for years without
-  the file. `babel-jest` has no such default, and without it React Native's own
-  Flow-annotated sources fail to parse before a single test runs.
-- **`render` from `@testing-library/react-native` v14 is async** — and so is
-  `renderHook`. Forgetting the `await` does not throw; it leaves `screen`
-  unpopulated and every query fails with "`render` function has not been
-  called", which reads like a setup problem rather than a missing keyword.
-  Import globals from `@jest/globals` rather than relying on ambient types,
-  mirroring how the Vitest suites import from `"vitest"`; it keeps
-  `@types/jest` out of the Vitest files' global scope.
-
-Four more differences from the Vitest side, each of which costs a debugging
-session the first time:
-
-- **A fresh module instance is `require`, not `await import()`.** Jest runs
-  these as CommonJS, where a dynamic `import()` fails with "A dynamic import
-  callback was invoked without --experimental-vm-modules". Reach for
-  `jest.resetModules()` plus `require(...) as typeof import(...)`; the Vitest
-  suites use `await import()` for the same job.
-- **A variable a `jest.mock` factory closes over must be named `mock…`.**
-  Factories are hoisted above every other statement, so any other name is
-  refused outright. This is Jest's equivalent of Vitest's `vi.hoisted`.
-- **Spying on the `react-native` namespace does not work.** Its exports are
-  getters, so a spy never reaches the binding the module under test already
-  holds, and the test silently reads the real value instead. Mock the specific
-  module (`react-native/Libraries/Utilities/useWindowDimensions`) instead.
-- **Assert on what rendered, not on what was passed.** Several components hand
-  props to something that consumes them internally — RN's own
-  `KeyboardAvoidingView` swallows `behavior` and renders a bare `View`, and
-  lucide turns `size`/`color` into an svg's `width`/`height`/`stroke`. Either
-  read the rendered output, or stand in for the collaborator and capture what it
-  received.
-
-**A screen's test cannot live in `src/app/`.** Everything under the app root is
-a ROUTE: `expo-router`'s context regex matches every `.ts`/`.tsx` file there and
-excludes only `+api`, `+html` and `+middleware`. A `settings.test.tsx` beside a
-screen therefore becomes a route, Metro bundles it, and it drags
-`@testing-library/react-native` — with its Node-only `console` import — into the
-app bundle, which then fails to bundle at all. The failure appears as a red box
-in the running app and nowhere in CI, because every test still passes.
-
-So screens live in their feature folder with their tests beside them, and
-`src/app/` holds thin re-exports:
+**A screen's test cannot live in `src/app/`.** expo-router's context regex
+turns every `.ts`/`.tsx` file there into a route, so a test beside a screen
+gets bundled into the app — a red box in the running app and nothing in CI.
+Screens live in their feature folder with their tests beside them, and
+`src/app/` holds thin re-exports (the convention for EVERY screen — a full
+screen implemented directly in `src/app/` is a bug):
 
 ```tsx
-// src/app/settings.tsx
 export { SettingsScreen as default } from "@/features/settings/SettingsScreen";
 ```
 
-This is the convention for EVERY screen — a full screen implemented directly in
-`src/app/` is a bug, not a style choice.
-
-`src/test-support/render.tsx` wraps a component in the app's real `I18nProvider`
-rather than a stub, so tests assert the copy users actually see and a missing
-key fails in CI instead of shipping as a raw key on screen. It is excluded from
-coverage — it is scaffolding, not app code.
+`src/test-support/render.tsx` wraps a component in the app's real
+`I18nProvider` rather than a stub, so tests assert the copy users see and a
+missing key fails in CI.
 
 ## Coverage
 
-Both configs hard-code **100% on lines, branches, functions, and statements**,
-and `v8 ignore` / `istanbul ignore` are not permitted. An unreachable line is a
-design smell to fix, not a line to hide — the three patterns that keep the
-target honestly reachable are:
+Both configs hard-code **100% on lines, branches, functions, and
+statements**, and `v8 ignore` / `istanbul ignore` are not permitted — an
+unreachable line is a design smell to fix. The three patterns that keep the
+target reachable: `Platform.OS` branches → the two Jest projects; `__DEV__`
+branches → read it through an injectable constant, never off the global;
+exhaustive `switch` → drop `default` and call `assertNever`, then test
+`assertNever` itself. `pnpm test:rn:coverage` and `pnpm test:app:coverage`
+currently fail by design: CI runs the suites, not the coverage gate — move
+the coverage commands into CI once the backfill lands, otherwise the gate
+is red from day one and gets ignored.
 
-- `Platform.OS` branches → the two Jest projects above.
-- `__DEV__` branches → read it through an injectable constant, never off the
-  global, so a test can drive the production arm.
-- Exhaustive `switch` → drop `default` and call `assertNever`, then test
-  `assertNever` itself. The function gets covered and the call sites stop
-  carrying an unreachable branch.
+## Recognition evals
 
-The thresholds are written down before the tests that satisfy them exist, so
-`pnpm test:rn:coverage` and `pnpm test:app:coverage` currently fail by design.
-CI runs the suites (`pnpm test:rn`, `pnpm test:app`), not the coverage gate;
-move the coverage commands into `.github/workflows/ci.yml` once the backfill
-lands, otherwise the gate is red from day one and gets ignored.
-
-Recognition has a third layer that is neither unit test nor app test:
-
-- `pnpm eval:ocr` replays real recorded screenshots against a **baseline** of
-  known failures. It fails only on a regression, never on a pre-existing gap.
-- `pnpm eval:ocr:llama` replays the same samples through the ON-DEVICE path:
-  `recognizeWithModel` with the model call answered by a local GGUF
-  (`WHOLE_GGUF_PATH=… pnpm eval:ocr:llama`). It is the only gate that executes
-  a real llama.cpp parse, so it alone can catch a grammar the engine accepts
-  but llama.cpp rejects. The one failure of that class we have seen — a `\d`
-  in a schema `pattern` — is now rejected by `engine/grammar.ts` before the
-  conversion; the next one will not be, which is why this still runs.
-- `pnpm eval:ocr:ablate` replays the same samples with one tier of institution
-  config removed at a time. A MEASUREMENT, not a gate — no baseline, always
-  exits 0 — because 17/17 is the engine's score WITH configs written for those
-  very screenshots. Pairing it with `eval:ocr:llama --ablate <mode>` is what
-  measures the annotation turn. `packages/ocr-eval/README.md` reads the table.
+- `pnpm eval:ocr` replays real recorded screenshots against a baseline of
+  known failures — it fails only on a regression, never on a pre-existing
+  gap.
+- `pnpm eval:ocr:llama` replays the same samples through the on-device path
+  (`WHOLE_GGUF_PATH=… pnpm eval:ocr:llama`). It is the only gate that
+  executes a real llama.cpp parse, so it alone catches a grammar the engine
+  accepts but llama.cpp rejects (a `\d` in a schema `pattern` once did) —
+  run it whenever the grammar, prompt, or model path changes.
+- `pnpm eval:ocr:ablate` is a MEASUREMENT, not a gate — no baseline, always
+  exits 0. `packages/ocr-eval/README.md` reads the table.
 - `pnpm test:ocr:golden` hard-asserts the samples whose gold was verified
-  against the screenshot. All 17 currently qualify. Only add a new sample there
-  after checking its `expected.json` against the screenshot by eye — an
-  unverified LLM-generated gold would pin the engine to a guess.
+  against the screenshot BY EYE. Never add a sample there from unverified
+  LLM-generated gold — that would pin the engine to a guess.
 
-# Architecture & Conventions
+# Architecture
 
-## Project layout
+## Layout
 
 ```text
-config/locales/        Native permission translations
+config/locales/        Native permission translations (build-time config)
 docs/                  Long-form design notes (e.g. the OCR redesign rationale)
-scripts/               Repeatable asset-generation scripts and shared test
-                       tooling (the two-runner boundary in test-boundary.mjs)
-src/app/               Expo Router routes and layouts — thin re-exports only
-src/components/        The shared design-system layer (Button, Icon, FieldShell,
-                       ScrimModal, …) — reusable UI with no feature knowledge
-src/lib/               App-level infrastructure: the TanStack QueryClient and
-                       shared navigation hooks
-src/features/accounts/ The account wizard/detail screens, editor fields,
-                       pickers, rows, and the pure form modules they render
-                       (account-draft, balance-rows)
-src/features/assets/   The assets domain: repository, queries, net-worth math,
-                       currency conversion, and the preference stores
-src/features/home/     The home screen and its section components
-src/features/recognition/ The recognition pipeline: the native OCR adapter, the
-                       model-call adapter, and screenshot recognition
-src/features/on-device-model/ The bundled model's catalog, its load path, its
-                       size formatting, and the llama context lifecycle
-                       (load, prewarm, idle release, verify)
-src/features/settings/ The settings screen (on-device model status)
-src/features/onboarding/ Onboarding state and screen
-src/features/user/     User profile state
-src/i18n/              Runtime localization, message catalogs, and terminology
-src/storage/           kv-store (expo-sqlite), the generic preference
-                       primitives built on it, and one-time key migrations
-                       (feature-specific stores live in their feature, on top
-                       of these primitives — storage/ must not import from
-                       features/)
-src/test-support/      Shared test scaffolding (renderWithProviders)
-packages/ocr/          @whole/ocr — the account-recognition engine: the rule
-                       pipeline and the model-annotation loop (pure TypeScript
-                       workspace package, Vitest unit tests)
-packages/ocr-eval/     Regression harness over real screenshots, the
-                       `pnpm ocr <image>` CLI, the macOS Vision bridge, and
-                       the on-device-model replay gate (`pnpm eval:ocr:llama`)
-patches/               pnpm patches (see the Patched dependencies section)
-plugins/               Expo config plugins — with-whole-model copies the GGUF
-                       shards into the native projects at prebuild
-assets/branding/       Source brand artwork
-assets/app-icons/      Generated platform icon deliverables
-assets/models/         The bundled GGUF weights (Git LFS; not hand-edited)
-.github/workflows/     CI — the quality gates on push and pull request
-eslint.config.js       Expo ESLint and Prettier integration
-vitest.config.mts      Vitest over the app's pure modules (`pnpm test:app`)
-.prettierignore         Generated files excluded from formatting
+scripts/               Asset generation + the two-runner test boundary
+src/app/               Expo Router routes — thin re-exports only
+src/components/        Design-system layer, no feature knowledge
+src/lib/               QueryClient and shared navigation hooks
+src/features/<name>/   Each feature's screens, fields, rows, and pure modules
+src/i18n/              Runtime localization, catalogs, terminology guide
+src/storage/           kv-store and preference primitives (never imports features/)
+src/test-support/      Shared test scaffolding
+packages/ocr/          @whole/ocr — the recognition engine (pure TypeScript)
+packages/ocr-eval/     Screenshot regression harness and the `pnpm ocr` CLI
+patches/ plugins/      pnpm patches; Expo config plugins (with-whole-model)
+assets/                Branding, generated icons, bundled GGUF weights (LFS)
 ```
 
-Feature screens live in their feature folder, and every file under `src/app/`
-is a thin re-export route. `src/components/` holds only the design-system layer;
-a component that imports from `@/features/*` belongs in that feature instead.
+A component that imports from `@/features/*` belongs in that feature, not in
+`src/components/`. Feature-specific stores sit in their feature on top of
+`src/storage/`'s primitives.
 
-## Technical Decisions
+## Theme
 
-Choose established, widely adopted solutions from the React Native or broader
-React ecosystem for libraries, architecture, and integrations.
+Colors, spacing, radii, and type come from `src/theme/` — add a token there
+instead of scattering a literal, and reuse an existing token when two
+surfaces should stay in lockstep. Optical micro-values (`0`, `2`) and
+layout-specific alignment constants may stay literal. Share reusable style
+fragments (card surface, modal overlay, screen layout) from
+`src/theme/screen-styles.ts`. Colour that carries MEANING goes through
+`src/theme/tones.ts` — each tone carries surface + border + ink as a set,
+because they are only legible together; `caution` is deliberately not
+`danger`, since red is reserved for destructive actions. `Button` /
+`IconButton` appearance comes from `BUTTON_VARIANTS` in
+`src/components/button-variants.ts`, not ad-hoc styles. Where iOS and
+Android genuinely diverge, keep the branch behind one named export or use
+`<name>.ios.ts` / `<name>.android.ts` — never a `.web.ts` variant.
 
-- Verify current official documentation, Expo and React Native compatibility,
-  maintenance activity, ecosystem adoption, and production suitability before
-  adding or replacing a dependency.
-- Prefer the established React or React Native integration over a lower-level
-  JavaScript library or a custom abstraction when it satisfies the product
-  requirements.
-- Do not treat a library used in a tutorial or example as the recommended
-  production default without comparing it with the community-standard options.
-- Do not introduce a niche library or custom framework when a maintained,
-  community-standard solution meets the requirements.
-- If the community-standard option cannot satisfy a concrete requirement,
-  document the requirement and trade-off, and obtain explicit user approval
-  before implementing the exception.
+## Errors
 
-## Design Tokens
-
-Pull colors, spacing, radii, font sizes, weights, line heights, and letter
-spacings from `src/theme/` instead of hard-coding literal values.
-
-- Add a new value to the relevant token file (`colors.ts`, `spacing.ts`,
-  `sizes.ts`, `typography.ts`, etc.) rather than scattering a literal through
-  components; reuse an existing token when two surfaces should stay in
-  lockstep.
-- Optical micro-values (`0`, `2`) and layout-specific alignment constants may
-  stay literal — the 4pt spacing grid is the default, not a straitjacket.
-- `COLORS.brand` is the canonical brand color, and the splash wordmark baked
-  by `scripts/generate-app-icons.mjs` mirrors it — regenerate the icons when
-  it changes.
-- Share reusable style fragments (card surface, modal overlay, screen layout)
-  from `src/theme/screen-styles.ts` instead of redeclaring them per screen.
-
-## Semantic Tones
-
-Colour that carries MEANING goes through `src/theme/tones.ts`, not through a
-hand-picked value at the call site. A screen asks for `TONES.safe` or
-`TONES.caution`; it never asks for a hex.
-
-- Each tone carries `surface`, `border` and `ink` together, because they are
-  only legible as a set — an ink chosen for one background is not guaranteed to
-  clear contrast on another.
-- Every value comes from `colors.ts`, and a test enforces that: a tone cannot
-  introduce a colour the rest of the app has never seen.
-- `caution` is deliberately not `danger`. Red is reserved for destructive
-  actions; spending it on "your data goes somewhere" would leave nothing louder
-  for "this deletes an account". The settings screen's privacy notice is a
-  user of the safe tone — recognition runs on the device, so the notice is
-  green. `caution` stays in the palette for the next feature that needs to
-  say "this goes somewhere".
-
-## Component Variants
-
-Common controls share a variant config so the visual language stays
-consistent across the component library.
-
-- `Button` and `IconButton` derive their appearance from `BUTTON_VARIANTS`,
-  `DISABLED_BUTTON`, and `buttonContainerStyle` in
-  `src/components/button-variants.ts`. Add a variant there, not as ad-hoc
-  styles inside a component.
-- Sizes (`sm` / `md` / `lg`) and radii come from `src/theme/sizes.ts`.
-
-## Platform-Specific Modules
-
-iOS and Android are the only supported targets, so most code is shared. Where
-they genuinely diverge, keep the branch in one place with a consistent API
-rather than re-inlining `Platform.OS` through feature code.
-
-- Isolate the branch behind a named export or a small wrapper — see
-  `sourceImageDeletionIsSupported` in
-  `src/features/assets/source-image-cleanup.ts` (deletion is iOS-only) and
-  `src/components/KeyboardAvoidingView.tsx`.
-- If a difference is large enough to warrant separate files, use
-  `<name>.ios.ts` / `<name>.android.ts`. Never add a `.web.ts` variant — see
-  [Supported Platforms](#supported-platforms).
-
-## Error Handling
-
-`src/app/_layout.tsx` re-exports `AppErrorBoundary` as the named `ErrorBoundary`
-export that expo-router looks for, which wraps every screen. Without it a render
-exception reaches React's root handler, `ExceptionsManager` treats it as fatal,
-and a release build shows a white screen.
-
-- The fallback renders **outside every provider** — expo-router replaces the
-  subtree, so `I18nProvider`, `LocaleContext` and `SafeAreaProvider` are all
-  gone by then. It therefore resolves its copy straight from `@/i18n/resources`
-  (the i18next instance is created inside the provider via `createInstance()`,
-  not as a module singleton, so `useTranslation` there would render raw keys),
-  and uses fixed padding instead of safe-area insets. Keep it that way: every
-  dependency it takes is another way for it to fail alongside what it is
-  catching.
-- It shows the error message, selectable, rather than only offering Retry. A
-  crash caused by unreadable stored data recurs the instant `retry` remounts, so
-  a lone Retry button is a loop with no exit.
-- There is deliberately **no third-party crash reporter**. Account balances and
-  the account-number last four are exactly the kind of data a default Sentry
-  install ships in console breadcrumbs, native crashes bypass the JS
-  `beforeSend` filter entirely, and the README promises this data stays on the
-  device. App Store Connect and Play Console already provide native crash
-  reports at no privacy cost. Revisit only alongside an explicit change to that
-  promise.
+`src/app/_layout.tsx` re-exports `AppErrorBoundary` as the `ErrorBoundary`
+export expo-router looks for. The fallback renders OUTSIDE every provider —
+it resolves its copy straight from `@/i18n/resources` and uses fixed
+padding, because `I18nProvider` and `SafeAreaProvider` are gone by then;
+keep it that way, since every dependency it takes is another way for it to
+fail alongside what it is catching. It shows the error message selectable
+rather than offering only Retry (a crash from unreadable stored data recurs
+the instant retry remounts). There is deliberately no third-party crash
+reporter: account balances and last fours are exactly what a default
+Sentry install ships in breadcrumbs, and the README promises this data
+stays on the device.
 
 ## Storage
 
-- Use `src/storage/kv-store` for all key/value persistence. Namespace keys
-  with the `whole.` prefix.
-- Wrap a batch of dependent writes in `withTransaction` so the commit is
-  all-or-nothing (the kv and net-worth-history migrations use this to keep
-  data and migration marker atomic).
+All key/value persistence goes through `src/storage/kv-store`, keys
+prefixed `whole.`; wrap a batch of dependent writes in `withTransaction` so
+the commit is all-or-nothing.
 
 ## Internationalization
 
-All user-visible copy goes through i18next — `src/i18n/locales/en.ts` and
-`zh-Hans.ts` stay synchronized (every new key is added to both) — while native
-permission copy is build-time config in `config/locales/*.json`.
+Every user-visible string goes through i18next; `src/i18n/locales/en.ts`
+and `zh-Hans.ts` stay in lockstep (the type system forces new keys into
+both). Native permission copy is build-time config in
+`config/locales/*.json`, and the iOS photo-usage strings in `app.json` must
+stay identical across `expo-image-picker` and `expo-media-library`. Format
+money through `useAppLocale().formatCurrency` — the explicit symbol table
+exists because Hermes' `Intl` currency-symbol resolution is unreliable.
+Follow the terminology guide in `src/i18n/README.md`; in particular
+**account screenshot** / 账户截图 (never "bank screenshot"), and an
+institution is a bank, a crypto exchange, or a broker — never narrow the
+term.
 
-- Use semantic translation keys through `useTranslation()`; do not embed
-  user-facing copy directly in UI code.
-- Format money through `useAppLocale().formatCurrency`. Do not hand-build
-  currency strings — the explicit symbol table exists because Hermes' `Intl`
-  currency-symbol resolution is unreliable.
-- Follow the terminology guide in [`src/i18n/README.md`](./src/i18n/README.md).
-  The canonical term is **account screenshot** in English and **账户截图** in
-  Simplified Chinese — not "bank screenshot" or "银行截图", because Whole
-  supports financial accounts beyond banks.
+## Money & caching
 
-## Money & Currency Conversion
+Convert amounts through `convertCurrency` — per-account direct conversion,
+no pivot currency. A rate of `0` means "no data": return `null` for an
+unavailable conversion so callers can skip the account, never `0`.
 
-- Convert amounts through `convertCurrency` in
-  `src/features/assets/currency-conversion.ts`. Do not re-implement the
-  cross-rate math; per-account direct conversion avoids accumulating
-  rounding error through a pivot currency.
-- A rate of `0` means "no data". Return `null` for unavailable conversions
-  so callers can skip the account — never substitute `0`, which would
-  understate totals and distort percentages.
-
-### Caching is TanStack Query's, not ours
-
-The exchange-rate fetch is the app's **only** network call. Its caching used to
-be hand-written — an in-memory memo, a persisted copy, a 6h TTL, a `force` flag,
-and a four-level fallback — which is a query cache reimplemented by hand. That
-is now `@tanstack/react-query`, configured in
-`src/lib/query-client.ts` and used through
-`src/features/assets/exchange-rates-query.ts`.
-
-- `exchangeRatesQueryOptions(base)` is the whole contract. The base is part of
-  the query key, not an argument the fetcher closes over — that is what makes a
-  base change fetch its own entry instead of serving the previous base's rates
-  under the new one. Refreshing is
-  `refetchQueries({ queryKey: [exchangeRatesQueryPrefix] })`, which is why the
-  prefix is exported separately: passing the key _builder_ by mistake
-  type-checks and silently matches nothing.
-- The home screen never stages the load by hand. Accounts and rates are separate
-  queries, so the local read renders as soon as it lands and the network one
-  follows on its own — see `features/home/use-asset-accounts.ts`.
-- **Validate what comes out of the cache.** `fetchQuery` returns a cached entry
-  without calling `queryFn` while it is fresh, so a snapshot rehydrated from
-  disk is handed back having never passed through the fetcher. The eviction
-  therefore lives in the persister's `deserialize` in `query-client.ts` — the
-  only place it can be caught — not in the query module. Skipping it is how a
-  corrupt snapshot turns into NaN totals instead of a "—".
-- **Four query options are deliberately non-default**, and each default fails
-  silently rather than loudly. `gcTime`/`maxAge` are `Infinity` (the persister's
-  `maxAge` is a whole-snapshot timestamp, not a per-query TTL — on expiry it
-  discards the ENTIRE cache); `shouldDehydrateQuery` persists any query holding
-  data, not just successful ones (the default erases the last good rates from
-  disk on the first write after a failed refresh); `networkMode: "always"` keeps
-  local-data queries off the online gate; `retry: 0` keeps the home screen's
-  total from waiting on backoff. The reasoning is written out in
-  `query-client.ts` — read it before changing any of them.
-- The net-worth snapshot chain **is** a query
-  (`net-worth-snapshots-query.ts`), keyed on the `dataUpdatedAt` of accounts and
-  rates so the dependency ordering is the cache's job rather than a hand-staged
-  effect. It is the one query that WRITES, and that is only safe because all
-  three writes are idempotent by construction: `reconcileNetWorthFlows` diffs
-  rather than appends, `recordNetWorthSnapshot` replaces today's sample, and
-  `migrateSnapshots` is guarded by its own version marker. A query may be
-  retried, refetched on mount, and refetched on focus — so that idempotence is
-  load-bearing. Check it before changing any of the three.
-
-**Accounts are also in the cache, for one specific reason** —
-`src/features/assets/accounts-query.ts`. They are NOT server state: they live in
-local sqlite and `asset-repository` is still their owner and only writer. What
-the cache buys is `cancelQueries`: a delete can state that any read still in
-flight describes a world that no longer exists. That rule used to be three
-hand-written copies of capture-the-ref-before-the-await / compare-after, and
-getting it wrong resurrected a deleted account.
-
-- Every write goes through `accounts-query.ts`, which cancels the in-flight read
-  **before** the repository write and commits the result after. The `await` on
-  `cancelQueries` is load-bearing — without it the cancellation races the write
-  it is meant to precede.
-- Accounts are **never persisted** by the query persister. The repository's
-  versioned envelope is the disk format; a second copy would be a second source
-  of truth, written on a different schedule, and a cold start would flash the
-  older one.
-- `asset-repository`'s `mutate` lock **stays**. The add and edit screens write
-  directly, without passing through any hook, so ordering has to live at the
-  storage layer. A mutation scope would not cover them (and `onMutate` does not
-  participate in scope serialization anyway).
-- Screens that write must `invalidateQueries({ queryKey: accountsQueryKey })`
-  after a successful save, so the home screen never renders a frame of the
-  pre-save list.
-- Report a load error only when there is nothing to show
-  (`isError && data === undefined`). Bare `isError` would replace a perfectly
-  good list with an error card because a background re-read failed.
+The exchange-rate fetch is the app's only network call, and its caching is
+TanStack Query's (`src/lib/query-client.ts`): **read that file's comments
+before changing any of its four non-default options, the persister's
+`deserialize` eviction, or the base-currency keying** — each default fails
+silently rather than loudly. The net-worth snapshot chain is itself a query
+whose three writes are idempotent by construction (it may be retried,
+refetched on mount, and refetched on focus) — check that before changing
+any of them. Accounts sit in the query cache for one reason —
+`cancelQueries` — and are never persisted by the persister (the
+repository's versioned envelope is the disk format); `asset-repository`'s
+`mutate` lock stays, because the add and edit screens write directly.
+Every account write goes through `accounts-query.ts`, which cancels the
+in-flight read BEFORE the repository write (the `await` on `cancelQueries`
+is load-bearing), then `invalidateQueries({ queryKey: accountsQueryKey })`
+after a save so the home screen never renders a frame of the pre-save list.
+Report a load error only when there is nothing to show
+(`isError && data === undefined`).
 
 ## Negative balances
 
-**A balance can be negative, and the sign is load-bearing.** A credit card's
-balance is what you owe; net worth is assets minus liabilities, so the debt has
-to survive the whole chain — recognizer, form, storage, total — in order to be
-subtracted. It once did not: the form's input schema rejected negatives, so a
-correctly recognized `-4,766.92` was silently dropped on the way to storage.
-
-- `balanceInputSchema` (in `@whole/ocr`, imported from there by
-  `features/accounts/balance-rows.ts`)
-  accepts negatives and zero, and rejects blank/non-numeric entries. Do not
-  reintroduce a `.nonnegative()` anywhere on the balance path.
-- The balance field uses `SIGNED_DECIMAL_KEYBOARD`, not `decimal-pad` — iOS's
-  decimal pad has no minus key, which made a negative balance untypeable.
-- `formatCurrency` puts the sign outside the symbol (`-S$4,766.92`).
-- The home screen's composition bar **excludes** negative kinds: a negative
-  slice is meaningless there, and leaving it in the denominator pushes the other
-  kinds past 100%. Net worth still counts them.
-- Card issuers differ on how they print the debt — some show what you SPENT as
-  a positive ("您花了 4,766.92"), others print it already signed
-  ("-1,745.52SGD"). `debtMarkers` in `@whole/ocr` covers both. A card printing a
-  bare positive with no such label is genuinely ambiguous (debt or overpayment
-  credit), so the recognizer reports what the screen shows and the user fixes
-  the sign — which is what the editable draft is for.
+A balance can be negative, and the sign is load-bearing: a credit card's
+balance is what you owe, and it must survive recognizer → form → storage →
+total to be subtracted (a schema once rejected negatives, silently dropping
+a correctly recognized `-4,766.92`). `balanceInputSchema` accepts negatives
+(never reintroduce `.nonnegative()` on the balance path); the balance field
+uses `SIGNED_DECIMAL_KEYBOARD` (iOS's decimal pad has no minus key);
+`formatCurrency` puts the sign outside the symbol; the home composition bar
+EXCLUDES negative kinds while net worth counts them; `debtMarkers` in
+`@whole/ocr` covers both card-printing conventions. A bare positive under
+no debt label is genuinely ambiguous — the recognizer reports what the
+screen shows and the user fixes the sign in the editable draft.
 
 ## Validation
 
-Use zod for all runtime validation of forms, JSON payloads, and object
-shapes. Do not hand-write `if`/`else` conditional checks to validate data.
-
-- Model every form, parsed JSON, or externally sourced object as a zod
-  schema and validate it with `safeParse`/`parse`.
-- Express type, required-field, and value-range rules in the schema rather
-  than scattering `if`/`else` guards.
-- Share one schema between form validation and runtime guards so "what is a
-  valid X" is defined once — see `userNameSchema` in
-  `src/features/user/user-store.ts`.
-- Derive TypeScript types from the schema with `z.infer` instead of
-  maintaining a parallel interface.
+Runtime validation is zod (`safeParse` on a schema), never hand-written
+`if`/`else` guards; share one schema between form validation and runtime
+guards, and derive types with `z.infer`.
 
 ## OCR Recognition
 
-Recognition is a **hybrid**, and the split is the whole design: a deterministic
-rule pipeline reads the STRUCTURE (accounts, balances, currencies, debt signs,
-mechanical last fours), and one call to the bundled on-device model annotates
-the SEMANTICS rules cannot know (the institution when no brand is on screen, an
-account kind no keyword covers, the home currency a domestic app means by a bare
-number). Measured: a model doing the whole job scored 0–71% per field, with
-account grouping the dominant failure, while the engine passes 17/17 — see
-[`docs/ocr-redesign.md`](./docs/ocr-redesign.md).
+Recognition is a **hybrid**, and the split is the whole design: a
+deterministic rule pipeline reads the STRUCTURE (accounts, balances,
+currencies, debt signs, mechanical last fours), and one call to the bundled
+on-device model annotates the SEMANTICS rules cannot know. Both halves live
+in `@whole/ocr` (pure TypeScript, one dependency, the model call injected
+as a `RunModel` parameter so the package never touches a runtime); four
+app-side adapters sit around it (`recognition/ocr-engine.ts`,
+`on-device-runner.ts`, `model-recognition.ts`,
+`screenshot-recognition.ts`), with the weights and llama context one layer
+further out in `features/on-device-model/`. See
+[`docs/ocr-redesign.md`](./docs/ocr-redesign.md) for the measured rationale
+and [`packages/ocr/README.md`](./packages/ocr/README.md) for the package.
 
-Both halves of the loop live in the workspace package
-[`@whole/ocr`](./packages/ocr/README.md) — pure TypeScript, one dependency
-(zod), no React Native or Expo. The model CALL is an injected parameter
-(`RunModel`), so the package never touches a runtime. Four app-side modules sit
-around it: `recognition/ocr-engine.ts` adapts the native OCR output into the
-blocks the package consumes, `recognition/on-device-runner.ts` answers the
-injected call, `recognition/model-recognition.ts` is the entry point and its
-failure taxonomy, and `recognition/screenshot-recognition.ts` chains the two.
-The weights and the llama context live one layer further out, in
-`features/on-device-model/`.
-
-It is a **standalone recognition module**, decoupled from the account form. Its
-goal: given any account screenshot, correctly recognize the account name,
-per-currency balances, account-number last four, the currencies, and the
-institution. An institution is a bank, a crypto exchange, or a broker — the
-detection layer (`institutions/config.ts` / `institutions/detect.ts`) and the
-`institutionNames` message catalog cover all three, so never narrow the term to
-"bank" in code, comments, or copy.
-
-- **The recognition contract is owned by the package.** Currencies, asset
-  kinds, institution ids, the last-four pattern, and the `blocks.json` /
-  `expected.json` fixture shapes are defined in `@whole/ocr`'s `contract/` and
-  re-exported by `src/features/assets/currencies.ts` and
-  `account-appearance.ts`. App modules keep their existing import paths; the
-  definition stays shared so the recognizer can never read a currency the app
-  can't store. Add a currency or kind in the package, not in the app.
-  `contract/` depends on nothing else in the package — `engine/` and
-  `institutions/` build on it, never the reverse — so a consumer that only
-  needs the vocabulary doesn't drag in the rule tables.
-
-- **Recognize everything visible; the form filters, the recognizer does not.**
-  When the OCR output carries something the form does not yet support — a
-  currency the form's schema rejects, or an institution not yet wired into
-  detection — the form omits it instead of the recognizer suppressing it.
-  Dropping recognition to match the form means a future form expansion (a new
-  currency, a new institution) still needs extra OCR work; keeping recognition
-  complete means only the form has to change.
-- **Unsupported fields are dropped at fill time, not at recognition.** A
-  currency the form cannot store yet is ignored when pre-filling, with the
-  same logic used for zero-balance accounts — recognize it faithfully, then
-  decide at fill time. The recognizer still extracts it so a future form can
-  pick it up without rework.
-- **Accuracy is the first priority.** The eval harness (`packages/ocr-eval`)
-  gates the parser against gold `expected.json` so a regression in what the
-  recognizer extracts is caught even when the form would currently discard it.
+- The recognition **contract** (currencies, asset kinds, institution ids,
+  the last-four pattern, fixture shapes) is owned by the package's
+  `contract/` and re-exported by the app. Add a currency or kind in the
+  package, not the app.
+- **Recognize everything visible; the form filters, the recognizer does
+  not.** A currency or institution the form cannot store yet is dropped at
+  fill time, not at recognition — so a future form expansion needs no
+  extra OCR work. The eval harness still gates the parser on everything it
+  extracts.
+- **Accuracy is the first priority.**
 
 # Documentation
 
-## Language & Translations
+English is the default for all documentation and doc comments. When a
+Chinese version exists, follow the `README.md` / `README.zh-Hans.md`
+pattern: English is the source of truth, both files carry the
+language-switch links, and the pair updates together in the same change
+with semantically equivalent content. The product slogan is brand copy and
+stays exactly `Your whole financial life, in one place.` in both versions
+unless explicitly approved otherwise.
 
-English is the default for all documentation and doc comments. When a Chinese
-version is required, apply the `README.md` / `README.zh-Hans.md` pattern to
-every README pair: English is the source of truth, both files carry the
-language-switch links at the top, and the pair updates together in the same
-change with semantically equivalent content. The product slogan is brand copy
-and stays exactly `Your whole financial life, in one place.` in both versions
-unless the user explicitly approves a localized one.
-
-## Punctuation
-
-Do not mix Chinese and English punctuation in any documentation. Chinese text
-uses full-width punctuation (`，`、`。`、`：`、`（）`, and `“”` for double
-quotes), English text uses half-width punctuation (`,`, `.`, `:`, `()`, and
-`"`) — keep each language's punctuation consistent within its own text. Never
-use half-width straight quotes in Chinese prose; use `“”` instead. Code blocks
-and inline code keep their own ASCII punctuation untouched.
+Punctuation: Chinese text uses full-width punctuation (`，`、`。`、`：`、
+`（）`, `“”` for quotes), English uses half-width — keep each language
+consistent within its own text; never half-width straight quotes in Chinese
+prose. Code blocks and inline code keep ASCII punctuation.
