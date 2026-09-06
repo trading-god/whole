@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
-import type { OcrTextBlock } from "@whole/ocr";
+import type { OcrTextBlock, RunModel } from "@whole/ocr";
 
 import {
+  EngineNotReadyError,
   RecognitionUnsupportedError,
   recognizeAccountFromScreenshot,
 } from "@/features/recognition/screenshot-recognition";
 import type { ModelRecognitionResult } from "@/features/recognition/model-recognition";
+import { runOnDeviceModel } from "@/features/recognition/on-device-runner";
 
 const mockIsOcrSupported = jest.fn<() => boolean>();
 const mockRecognizeTextOnDevice = jest.fn<() => Promise<unknown>>();
@@ -13,9 +15,16 @@ const mockNormalizeOcrResult = jest.fn<() => OcrTextBlock[]>();
 const mockRenderAsync =
   jest.fn<() => Promise<{ width: number; height: number }>>();
 const mockRecognizeAccountsWithModel =
-  jest.fn<(blocks: OcrTextBlock[]) => Promise<unknown>>();
+  jest.fn<(blocks: OcrTextBlock[], runModel: RunModel) => Promise<unknown>>();
 const mockPrewarm = jest.fn();
 const mockReleaseOnDeviceContext = jest.fn<() => Promise<void>>();
+const mockLoadEngine =
+  jest.fn<
+    (fallback: "on-device" | "remote") => Promise<"on-device" | "remote">
+  >();
+const mockModelPresence = jest.fn<() => { status: string }>();
+const mockCreateRemoteRunModel = jest.fn<() => Promise<RunModel | null>>();
+const mockRunOnDeviceModel = jest.fn<(attempt: unknown) => Promise<string>>();
 
 jest.mock("@/features/recognition/ocr-engine", () => ({
   isOcrSupported: () => mockIsOcrSupported(),
@@ -35,8 +44,25 @@ jest.mock("@/features/on-device-model/model-context", () => ({
 }));
 
 jest.mock("@/features/recognition/model-recognition", () => ({
-  recognizeAccountsWithModel: (blocks: OcrTextBlock[]) =>
-    mockRecognizeAccountsWithModel(blocks),
+  recognizeAccountsWithModel: (blocks: OcrTextBlock[], runModel: RunModel) =>
+    mockRecognizeAccountsWithModel(blocks, runModel),
+}));
+
+jest.mock("@/features/recognition/engine-store", () => ({
+  loadRecognitionEngine: (fallback: "on-device" | "remote") =>
+    mockLoadEngine(fallback),
+}));
+
+jest.mock("@/features/on-device-model/model-download", () => ({
+  modelPresence: () => mockModelPresence(),
+}));
+
+jest.mock("@/features/recognition/remote-runner", () => ({
+  createRemoteRunModel: () => mockCreateRemoteRunModel(),
+}));
+
+jest.mock("@/features/recognition/on-device-runner", () => ({
+  runOnDeviceModel: (attempt: unknown) => mockRunOnDeviceModel(attempt),
 }));
 
 const BLOCKS: OcrTextBlock[] = [
@@ -54,6 +80,8 @@ const RECOGNIZED: ModelRecognitionResult = {
 beforeEach(() => {
   jest.resetAllMocks();
   mockIsOcrSupported.mockReturnValue(true);
+  mockLoadEngine.mockResolvedValue("on-device");
+  mockModelPresence.mockReturnValue({ status: "present" });
   mockRecognizeTextOnDevice.mockResolvedValue({ blocks: [] });
   mockNormalizeOcrResult.mockReturnValue(BLOCKS);
   mockRenderAsync.mockResolvedValue({ width: 1206, height: 2622 });
@@ -62,11 +90,30 @@ beforeEach(() => {
 });
 
 describe("recognizeAccountFromScreenshot", () => {
-  it("hands the normalized blocks to the model pipeline", async () => {
+  it("hands the normalized blocks and the local runner to the model pipeline", async () => {
     const result = await recognizeAccountFromScreenshot("file://shot.png");
 
-    expect(mockRecognizeAccountsWithModel).toHaveBeenCalledWith(BLOCKS);
+    expect(mockRecognizeAccountsWithModel).toHaveBeenCalledWith(
+      BLOCKS,
+      runOnDeviceModel,
+    );
     expect(result).toEqual(RECOGNIZED);
+  });
+
+  it("hands the remote runner to the pipeline when the remote engine is chosen", async () => {
+    const remoteRunner = async () => "{}";
+    mockLoadEngine.mockResolvedValue("remote");
+    mockCreateRemoteRunModel.mockResolvedValue(remoteRunner);
+
+    await recognizeAccountFromScreenshot("file://shot.png");
+
+    expect(mockRecognizeAccountsWithModel).toHaveBeenCalledWith(
+      BLOCKS,
+      remoteRunner,
+    );
+    // Nothing local was warmed: a remote turn has no context, and a prewarmed
+    // one beside it would park gigabytes nobody asked for.
+    expect(mockPrewarm).not.toHaveBeenCalled();
   });
 
   // Every reason the pipeline can decline reaches the screen unchanged, because
@@ -120,6 +167,30 @@ describe("recognizeAccountFromScreenshot", () => {
     // And nothing loaded three gigabytes of weights for a recognition that
     // could never run.
     expect(mockPrewarm).not.toHaveBeenCalled();
+  });
+
+  describe("the engine gate", () => {
+    it("refuses a recognition whose local model is not downloaded", async () => {
+      mockModelPresence.mockReturnValue({ status: "absent" });
+
+      await expect(
+        recognizeAccountFromScreenshot("file://shot.png"),
+      ).rejects.toBeInstanceOf(EngineNotReadyError);
+      // The gate runs BEFORE the OCR pass: reading text the engine will never
+      // annotate spends the longest wait on a dead end.
+      expect(mockRecognizeTextOnDevice).not.toHaveBeenCalled();
+      expect(mockPrewarm).not.toHaveBeenCalled();
+    });
+
+    it("refuses a recognition whose remote engine has no config", async () => {
+      mockLoadEngine.mockResolvedValue("remote");
+      mockCreateRemoteRunModel.mockResolvedValue(null);
+
+      await expect(
+        recognizeAccountFromScreenshot("file://shot.png"),
+      ).rejects.toBeInstanceOf(EngineNotReadyError);
+      expect(mockRecognizeTextOnDevice).not.toHaveBeenCalled();
+    });
   });
 
   describe("image dimensions", () => {

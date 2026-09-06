@@ -142,6 +142,43 @@ export const zhHansMessages = {
       testFailure:
         "本机模型未能通过验证。请重启应用；若仍不行，请清理内存和存储空间。",
     },
+    engine: {
+      title: "识别引擎",
+      // 选择本身：两条有名字的路线，各自的代价写在说明里——本地是存储和离线，
+      // 云端是联网和数据出设备。让用户看着代价做决定。
+      onDevice: "本机模型",
+      onDeviceHint: "{{size}}，可离线使用，数据不离开手机",
+      remote: "云端模型服务",
+      remoteHint: "效果更强，需要联网——截图上的文字会发送到你配置的服务",
+      download: "下载",
+      downloading: "正在下载…",
+      downloadFailed: "下载未完成。请检查网络后重试——已下载的部分会保留。",
+      downloaded: "已下载",
+      downloadHint: "占用约 {{size}} 存储空间，建议在 Wi-Fi 下下载。",
+      deleteModel: "删除模型",
+      deleteModelHint: "释放 {{size}}。删除后识别功能关闭，需重新下载。",
+      notDownloaded: "未下载",
+      partialDownload: "已下载一部分（{{size}} / {{total}}）",
+      baseUrl: "服务地址",
+      baseUrlHint: "服务商的 https:// 地址，例如 https://api.deepseek.com/v1",
+      model: "模型",
+      modelHint: "服务商提供的模型名称，例如 deepseek-chat",
+      apiKey: "API 密钥",
+      apiKeyHint: "仅保存在这台手机上，保存后不再显示",
+      save: "保存服务",
+      testing: "正在测试…",
+      testPassed: "服务可用",
+      testFailure: "服务没有响应。请检查地址、模型名称和 API 密钥。",
+      clear: "移除服务",
+      remotePrivacy:
+        "使用云端服务时，Whole 从截图中读出的文字会发送到你配置的服务——截图本身不会发送。使用本机模型时，数据不会离开手机。",
+    },
+    engineSetup: {
+      title: "识别功能已关闭",
+      notReady:
+        "请先在设置中选择一种引擎：下载本机模型（离线、隐私），或配置云端服务（需要联网）。",
+      goToSettings: "打开设置",
+    },
   },
   accountScreenshot: {
     uploadScreenshot: "上传账户截图",
@@ -162,6 +199,8 @@ export const zhHansMessages = {
       "这张截图里没有找到账户。换一张能看清账户名称和余额的截图，或手动填写信息。",
     modelLoadFailed:
       "本机模型无法加载，它本该补上的信息这次缺失了。请核对已填入的内容，然后重启应用；若仍不行，请清理内存和存储空间。",
+    remoteFailed:
+      "云端服务无法访问。请到设置中检查服务地址、API 密钥和模型名称——其余内容已在本机读出。",
     modelUnusable: "模型没能读完这张截图。请核对已填入的内容，并补齐其余部分。",
     modelInterrupted:
       "本机模型运行中断，它本该补上的信息这次缺失了。请核对已填入的内容，并补齐其余部分。",

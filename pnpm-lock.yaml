@@ -7,7 +7,7 @@ settings:
 patchedDependencies:
   expo-media-viewer@0.7.2: b826b67076e450345523e64de3143dc66fc35617a246c2cdec53d7c744bcf47b
   expo-mlkit-ocr@0.2.7: f2635951d94ea819c7c2330422a3be4018b15f99eaea804b7bde7bfcb6f773cc
-  llama.rn@0.12.9: ead5d706e41cbef8d03f54c1ce333f23dc1c5e182884469e5b19b5deeede1457
+  llama.rn@0.12.9: bf0884847689c93a55248afe6f3d1147952ac1acb84f99562ca8f3000f7f3a11
 
 importers:
 
@@ -99,7 +99,7 @@ importers:
         version: 26.4.2(typescript@6.0.3)
       llama.rn:
         specifier: 0.12.9
-        version: 0.12.9(patch_hash=ead5d706e41cbef8d03f54c1ce333f23dc1c5e182884469e5b19b5deeede1457)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/jest-preset@0.86.3(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.3(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
+        version: 0.12.9(patch_hash=bf0884847689c93a55248afe6f3d1147952ac1acb84f99562ca8f3000f7f3a11)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/jest-preset@0.86.3(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.3(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
       lucide-react-native:
         specifier: ^1.31.0
         version: 1.41.0(react-native-svg@15.15.4(react-native@0.86.3(@babel/core@7.29.7)(@react-native/jest-preset@0.86.3(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.3(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3))(react-native@0.86.3(@babel/core@7.29.7)(@react-native/jest-preset@0.86.3(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.3(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
@@ -11043,7 +11043,7 @@ snapshots:
 
   lines-and-columns@1.2.4: {}
 
-  llama.rn@0.12.9(patch_hash=ead5d706e41cbef8d03f54c1ce333f23dc1c5e182884469e5b19b5deeede1457)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/jest-preset@0.86.3(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.3(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3):
+  llama.rn@0.12.9(patch_hash=bf0884847689c93a55248afe6f3d1147952ac1acb84f99562ca8f3000f7f3a11)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/jest-preset@0.86.3(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.3(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3):
     dependencies:
       react: 19.2.3
       react-native: 0.86.3(@babel/core@7.29.7)(@react-native/jest-preset@0.86.3(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.3(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3)

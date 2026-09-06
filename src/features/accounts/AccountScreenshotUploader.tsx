@@ -1,4 +1,5 @@
 import * as ImagePicker from "expo-image-picker";
+import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -9,6 +10,7 @@ import {
   View,
 } from "react-native";
 
+import { Button } from "@/components/Button";
 import { Icon } from "@/components/Icon";
 import { IconButton } from "@/components/IconButton";
 import { PrivacyNote } from "@/components/PrivacyNote";
@@ -19,6 +21,7 @@ import {
 } from "@/features/recognition/recognition-issue";
 import {
   type RecognizedAccount,
+  EngineNotReadyError,
   RecognitionUnsupportedError,
   recognizeAccountFromScreenshot,
 } from "@/features/recognition/screenshot-recognition";
@@ -76,11 +79,17 @@ const SCREENSHOT_CARD_HEIGHT = 220;
 // rather than Alert.alert, so the reason stays anchored to the screenshot slot
 // that failed instead of vanishing on dismiss.
 // `RecognitionIssue` covers every way the recognition pipeline can decline —
-// each with its own next step for the user, which is why they are not one
-// state. The two added here are this component's own: the picker failing, and
-// hardware that cannot run OCR at all.
+// each with its own next step for the user, which why they are not one
+// state. The three added here are this component's own: the picker failing,
+// hardware that cannot run OCR at all, and the chosen engine not being set up
+// (no model downloaded, no service configured) — the last one carries a way
+// OUT, not just a reason.
 type UploadIssue =
-  RecognitionIssue | "noMatchingAccount" | "pickerFailed" | "ocrUnsupported";
+  | RecognitionIssue
+  | "noMatchingAccount"
+  | "pickerFailed"
+  | "ocrUnsupported"
+  | "engineNotReady";
 
 const ISSUE_MESSAGE_KEY = {
   recognitionFailed: "accountScreenshot.recognitionFailed",
@@ -88,9 +97,11 @@ const ISSUE_MESSAGE_KEY = {
   modelLoadFailed: "accountScreenshot.modelLoadFailed",
   modelUnusable: "accountScreenshot.modelUnusable",
   modelInterrupted: "accountScreenshot.modelInterrupted",
+  remoteFailed: "accountScreenshot.remoteFailed",
   noMatchingAccount: "accountScreenshot.noMatchingAccount",
   pickerFailed: "accountScreenshot.pickerErrorMessage",
   ocrUnsupported: "accountScreenshot.ocrUnsupported",
+  engineNotReady: "settings.engineSetup.notReady",
 } as const satisfies Record<UploadIssue, string>;
 
 // Screenshot picker + on-device OCR recognition + preview card, shared by the
@@ -107,6 +118,7 @@ export function AccountScreenshotUploader({
   compact = false,
 }: AccountScreenshotUploaderProps) {
   const { t } = useTranslation();
+  const router = useRouter();
   const [isRecognizing, setIsRecognizing] = useState(false);
   // Mirrors the local flag out to the parent. An effect rather than a call
   // beside each `setIsRecognizing`, so the two can never disagree about
@@ -187,13 +199,17 @@ export function AccountScreenshotUploader({
       declined = outcome === "declined";
       applied = outcome === true;
     } catch (error) {
-      // The recognizer gates unsupported hardware itself and throws this typed
-      // error so we can tell "this device can't do OCR" from "OCR ran but
-      // failed", instead of collapsing both into `recognitionFailed`.
-      failure =
-        error instanceof RecognitionUnsupportedError
-          ? "ocrUnsupported"
-          : "recognitionFailed";
+      // The recognizer gates unsupported hardware itself and throws a typed
+      // error so we can tell "this device can't do OCR" (and, for the engine
+      // not being set up, offer the way to Settings) from "OCR ran but
+      // failed", instead of collapsing all of them into `recognitionFailed`.
+      if (error instanceof EngineNotReadyError) {
+        failure = "engineNotReady";
+      } else if (error instanceof RecognitionUnsupportedError) {
+        failure = "ocrUnsupported";
+      } else {
+        failure = "recognitionFailed";
+      }
     }
     if (!isMountedRef.current) {
       return;
@@ -375,6 +391,20 @@ export function AccountScreenshotUploader({
           <Text accessibilityLiveRegion="polite" style={screenStyles.errorHint}>
             {t(ISSUE_MESSAGE_KEY[issue])}
           </Text>
+          {issue === "engineNotReady" ? (
+            // The way out, not just the reason: the engine being unset up is
+            // the one failure whose fix lives on another screen, so the
+            // button goes where the reason is (AGENTS.md: an inline hint
+            // anchored to what failed, not a dismissable alert).
+            <Button
+              size="xs"
+              variant="ghost"
+              fullWidth={false}
+              onPress={() => void router.push("/settings")}
+            >
+              {t("settings.engineSetup.goToSettings")}
+            </Button>
+          ) : null}
         </View>
       ) : null}
       <PrivacyNote message={t("accountScreenshot.screenshotPrivacy")} />

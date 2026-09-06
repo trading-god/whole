@@ -25,7 +25,7 @@ const mockCompletion =
   >();
 const mockInitLlama =
   jest.fn<(params: Record<string, unknown>) => Promise<unknown>>();
-const mockResolveBundledModelPath = jest.fn<() => Promise<string>>();
+const mockResolveBundledModelPath = jest.fn<() => string>();
 const mockInstallJsi = jest.fn<() => Promise<void>>();
 
 jest.mock("llama.rn", () => ({
@@ -57,7 +57,6 @@ jest.mock("react-native/Libraries/AppState/AppState", () => ({
 
 jest.mock("@/features/on-device-model/model-source", () => ({
   resolveBundledModelPath: () => mockResolveBundledModelPath(),
-  canLoadBundledModelDirectly: () => true,
 }));
 
 const contextInstance = () => ({
@@ -91,9 +90,7 @@ beforeEach(() => {
   jest.resetModules();
   jest.clearAllMocks();
   jest.useFakeTimers();
-  mockResolveBundledModelPath.mockResolvedValue(
-    "file:///docs/models/model.gguf",
-  );
+  mockResolveBundledModelPath.mockReturnValue("file:///docs/models/model.gguf");
   mockInstallJsi.mockResolvedValue(undefined);
   mockInitLlama.mockImplementation(async () => contextInstance());
   mockCompletion.mockResolvedValue({ content: "ok" });
@@ -203,9 +200,9 @@ describe("the context lease", () => {
   });
 
   it("wraps a failed path resolution as an on-device model error", async () => {
-    mockResolveBundledModelPath.mockRejectedValue(
-      new Error("copy is not the expected size"),
-    );
+    mockResolveBundledModelPath.mockImplementation(() => {
+      throw new Error("copy is not the expected size");
+    });
 
     await expect(complete()).rejects.toThrow(/copy is not the expected size/);
     expect(mockInitLlama).not.toHaveBeenCalled();

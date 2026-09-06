@@ -29,10 +29,7 @@ import {
   OnDeviceModelError,
   errorMessage,
 } from "@/features/on-device-model/model-error";
-import {
-  canLoadBundledModelDirectly,
-  resolveBundledModelPath,
-} from "@/features/on-device-model/model-source";
+import { resolveBundledModelPath } from "@/features/on-device-model/model-source";
 
 // ── Context singleton ──────────────────────────────────────────────────────
 
@@ -116,22 +113,18 @@ function ensureContext(): Promise<LlamaContext> {
     watchAppStateForRelease();
     const load = (async () => {
       try {
-        // The JSI install first: on Android, the patched llama.rn module
-        // extracts the bundled shards into filesDir inside `install()`, and
-        // the filesDir path `resolveBundledModelPath` returns does not exist
-        // until that has run.
         await ensureJsiInstalled();
         // Swallowed: a release that FAILED is not this load's problem, and
         // rethrowing it here would report a perfectly loadable model as
         // unloadable. The wait is only for the memory to come back.
         await priorRelease?.catch(() => {});
-        const modelPath = await resolveBundledModelPath();
+        const modelPath = resolveBundledModelPath();
         return await initLlama({
           model: modelPath,
-          // iOS: the model ships as an Xcode resource; llama.rn resolves the
-          // name against the main bundle natively. Android: the path is already
-          // a filesystem path (filesDir), and the flag is ignored there.
-          is_model_asset: canLoadBundledModelDirectly(),
+          // A downloaded filesDir path on both platforms; the flag is llama.rn's
+          // NSBundle asset lookup, which no longer applies — the weights are not
+          // bundle resources.
+          is_model_asset: false,
           n_ctx: ANNOTATION_INFERENCE.contextWindow,
           // All layers on the accelerator. Metal takes the whole model; on
           // Android (CPU in v1) the engine clamps this to what it can use.

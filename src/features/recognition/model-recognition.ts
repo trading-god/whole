@@ -2,35 +2,44 @@ import {
   type OcrTextBlock,
   type RecognizedAccount,
   type ResolvedRecognition,
+  type RunModel,
   parseOcrBlocks,
   recognizeWithModel,
 } from "@whole/ocr";
 
 import { releaseOnDeviceContext } from "@/features/on-device-model/model-context";
 import { OnDeviceModelError } from "@/features/on-device-model/model-error";
+import { RemoteModelError } from "@/features/recognition/remote-model-error";
 import { runOnDeviceModel } from "@/features/recognition/on-device-runner";
 
 // The app-facing entry point: a screenshot's OCR blocks in, recognized accounts
 // out — or a reason why not.
 //
-// Recognition runs entirely on this device: the engine reads the structure and
-// the bundled model annotates the semantics, so there is nothing to configure
-// and nothing to consent to. What CAN go wrong is the device — and the causes
-// below are kept apart because each asks something different of the user;
+// Recognition runs as a hybrid: the engine reads the structure on this device
+// and the annotation turn adds what rules cannot know — from the downloaded
+// local model, or from the user's own remote endpoint. What CAN go wrong is
+// the device, the endpoint, or the model — and the causes below are kept
+// apart because each asks something different of the user;
 // `recognition-issue.ts` is where that argument is written down.
 
 /** Why a recognition could not happen, in terms a screen can act on. */
 export type RecognitionFailureCause =
-  /** The model never produced an answer holding the annotation contract. */
-  | "invalid-output"
   /**
-   * The model could not run on this device: the weights are not extracted
-   * yet, the context would not load, or a completion could not finish. The
-   * advice is one message because the user's move is the same for all three —
-   * restart (the extraction only re-runs on a fresh launch), then free up
-   * memory and storage if it recurs.
+   * The local model could not run on this device: the weights are missing,
+   * the context would not load, or a completion could not finish. The advice
+   * is one message because the user's move is the same for all three —
+   * re-download, or free up memory.
    */
   | "load-failed"
+  /**
+   * The remote endpoint failed: unreachable, unauthorized (401/403 — check
+   * the API key), not found (404 — check the base URL), rate-limited (429),
+   * or it answered nothing usable. Kept apart from `load-failed` because the
+   * advice is the opposite of "restart the app": it names the setting to fix.
+   */
+  | "remote-failed"
+  /** The model never produced an answer holding the annotation contract. */
+  | "invalid-output"
   | "unknown";
 
 /**
@@ -66,19 +75,22 @@ function engineOnly(blocks: OcrTextBlock[]): RecognizedAccount[] {
 
 export async function recognizeAccountsWithModel(
   blocks: OcrTextBlock[],
+  runModel: RunModel,
 ): Promise<ModelRecognitionResult> {
   try {
     // The context stays warm behind its idle timer after the recognition ends
     // (`completeOnDevice` owns the release), so the next screenshot skips the
-    // multi-second load. Nothing here needs tearing down on the way out.
-    const outcome = await recognizeWithModel(blocks, runOnDeviceModel);
+    // multi-second load. Nothing here needs tearing down on the way out — but
+    // only the on-device engine prewarmed one, so only it needs releasing.
+    const outcome = await recognizeWithModel(blocks, runModel);
 
     // `attempts: 0` means the engine grouped nothing, so the model was never
-    // asked — and the prewarm that ran beside the OCR pass is holding a context
-    // nobody now wants. Freed straight away rather than left to the idle timer:
-    // the point of prewarming is to be ready for a recognition that is coming,
-    // and this one is over.
-    if (outcome.attempts === 0) {
+    // asked — and a prewarm from the on-device engine is holding a context
+    // nobody now wants. Freed straight away rather than left to the idle
+    // timer: the point of prewarming is to be ready for a recognition that is
+    // coming, and this one is over. (A remote engine has no context; the
+    // release is a no-op.)
+    if (outcome.attempts === 0 && runModel === runOnDeviceModel) {
       void releaseOnDeviceContext().catch(() => {});
     }
 
@@ -92,7 +104,12 @@ export async function recognizeAccountsWithModel(
   } catch (error) {
     return {
       status: "failed",
-      cause: error instanceof OnDeviceModelError ? "load-failed" : "unknown",
+      cause:
+        error instanceof OnDeviceModelError
+          ? "load-failed"
+          : error instanceof RemoteModelError
+            ? "remote-failed"
+            : "unknown",
       accounts: engineOnly(blocks),
     };
   }

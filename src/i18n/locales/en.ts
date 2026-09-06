@@ -167,6 +167,59 @@ export const enMessages = {
       testFailure:
         "The on-device model couldn't be verified. Restart the app, and free up memory and storage if it happens again.",
     },
+    engine: {
+      title: "Recognition engine",
+      // The choice itself: two named routes, each with its cost in the label —
+      // storage and offline for the local one, network and data-leaving for the
+      // remote one. The user decides with the trade visible.
+      onDevice: "On-device model",
+      onDeviceHint: "{{size}}, works offline, nothing leaves this phone",
+      remote: "Cloud model service",
+      remoteHint:
+        "Stronger results, needs internet — the screenshot's text is sent to your service",
+      // The local engine's download flow. "Download" is one word for one
+      // action, reused everywhere the action appears.
+      download: "Download",
+      downloading: "Downloading…",
+      downloadFailed:
+        "The download didn't finish. Check your connection and try again — completed parts are kept.",
+      downloaded: "Downloaded",
+      downloadHint:
+        "Uses about {{size}} of storage. A Wi-Fi connection is recommended.",
+      deleteModel: "Delete model",
+      deleteModelHint:
+        "Frees {{size}}. Recognition switches off until you download it again.",
+      notDownloaded: "Not downloaded",
+      partialDownload: "Partially downloaded ({{size}} of {{total}})",
+      // The remote engine's form. Labels say what to paste, in the words a
+      // provider's console uses.
+      baseUrl: "Base URL",
+      baseUrlHint:
+        "Your provider's https:// address, e.g. https://api.deepseek.com/v1",
+      model: "Model",
+      modelHint: "The model name your provider serves, e.g. deepseek-chat",
+      apiKey: "API key",
+      apiKeyHint: "Stored only on this phone, never shown again after saving",
+      save: "Save service",
+      testing: "Testing…",
+      testPassed: "The service responded",
+      testFailure:
+        "The service didn't respond. Check the address, the model name, and the API key.",
+      clear: "Remove service",
+      // The opt-in, stated plainly once. This is the sentence the whole
+      // remote engine's privacy posture hangs on.
+      remotePrivacy:
+        "With a cloud service, the text Whole reads off your screenshots is sent to the service you configured — never the screenshots themselves. With the on-device model, nothing leaves this phone.",
+    },
+    // Shown by the screenshot uploader when the chosen engine isn't ready:
+    // recognition is off until the model is downloaded or the service is
+    // configured, and the user needs to be sent to the right screen.
+    engineSetup: {
+      title: "Recognition is off",
+      notReady:
+        "Choose an engine in Settings first: download the on-device model (offline, private) or configure a cloud service (needs internet).",
+      goToSettings: "Open Settings",
+    },
   },
   accountScreenshot: {
     uploadScreenshot: "Upload account screenshot",
@@ -193,6 +246,8 @@ export const enMessages = {
       "No accounts were found on this screenshot. Try one that shows the account name and balance, or fill in the details manually.",
     modelLoadFailed:
       "The on-device model couldn't load, so anything it would have added is missing. Check what was filled in, then restart the app — and free up memory and storage if it happens again.",
+    remoteFailed:
+      "The cloud service couldn't be reached. Check the address, the API key, and the model name in Settings — the rest was read on this phone.",
     modelUnusable:
       "The model couldn't finish reading this screenshot. Check what was filled in and complete the rest.",
     modelInterrupted:

@@ -7,13 +7,15 @@
 //     → recognizeAccountsWithModel(...)     engine structure + model annotation
 //     → ModelRecognitionResult              accounts, or a reason there are none
 //
-// Every step runs on this device — the OCR pass, the rules engine, and the
-// bundled model that annotates what rules cannot know. Nothing leaves the
-// phone: no endpoint, no consent, no network call at all.
+// The OCR pass and the rule engine always run on this device. The annotation
+// turn runs wherever the user pointed it: the downloaded local model (nothing
+// leaves the phone) or their own remote endpoint (the screenshot's TEXT
+// travels to a service they chose and configured — never the image itself).
 //
-// The return type is a RESULT, not a list, so the caller can tell the ways this
-// can end apart — see `recognition-issue.ts` for why that distinction earns its
-// keep.
+// Thrown before any of that when the chosen engine is not ready — the model is
+// not downloaded, or the endpoint is not configured — so the caller can offer
+// the fix (download it, configure it) instead of a spinner that ends in an
+// error the user can act on.
 import { ImageManipulator } from "expo-image-manipulator";
 
 import {
@@ -21,6 +23,8 @@ import {
   normalizeOcrResult,
   recognizeTextOnDevice,
 } from "@/features/recognition/ocr-engine";
+import { loadRecognitionEngine } from "@/features/recognition/engine-store";
+import { modelPresence } from "@/features/on-device-model/model-download";
 import {
   prewarmOnDeviceContext,
   releaseOnDeviceContext,
@@ -29,6 +33,8 @@ import {
   type ModelRecognitionResult,
   recognizeAccountsWithModel,
 } from "@/features/recognition/model-recognition";
+import { createRemoteRunModel } from "@/features/recognition/remote-runner";
+import { runOnDeviceModel } from "@/features/recognition/on-device-runner";
 
 export type { RecognizedAccount } from "@whole/ocr";
 
@@ -44,6 +50,32 @@ export class RecognitionUnsupportedError extends Error {
     super("On-device OCR is not supported on this device");
     this.name = "RecognitionUnsupportedError";
   }
+}
+
+// Thrown when the chosen recognition engine has no model to run — the local
+// weights are not downloaded, or the remote endpoint is not configured.
+// Callers surface this as "set the engine up first" with a path to Settings,
+// which is a different screen from "recognition failed".
+export class EngineNotReadyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EngineNotReadyError";
+  }
+}
+
+/**
+ * Resolves the `RunModel` the recognition should use.
+ *
+ * `null` means the CHOSEN engine is not ready — not that nothing exists. The
+ * caller turns that into `EngineNotReadyError` at the public boundary, keeping
+ * one typed error for "fix your setup" however the setup is incomplete.
+ */
+async function resolveRunModel() {
+  const engine = await loadRecognitionEngine("on-device");
+  if (engine === "on-device") {
+    return modelPresence().status === "present" ? runOnDeviceModel : null;
+  }
+  return createRemoteRunModel();
 }
 
 // Recognizes account information from a screenshot. `imageWidth`/`imageHeight`
@@ -66,21 +98,26 @@ export async function recognizeAccountFromScreenshot(
   if (!isOcrSupported()) {
     throw new RecognitionUnsupportedError();
   }
-  // The model context depends on nothing in this function, and loading it is
+  // Engine gate, BEFORE the OCR pass: recognizing text the engine will never
+  // get to annotate spends the user's longest wait on a dead end. The uploader
+  // shows the reason and the way to Settings instead.
+  const runModel = await resolveRunModel();
+  if (runModel === null) {
+    throw new EngineNotReadyError(
+      "The recognition engine is not ready. Open Settings to download the model or configure a service.",
+    );
+  }
+  // The on-device context depends on nothing in this function, and loading it is
   // seconds of CPU (longer on a phone with no Metal). Started here, it warms
   // while the OCR pass runs instead of after it — on a cold start that is the
-  // single largest slice of the user's visible "recognizing" wait. Past the
-  // capability gate, because a device that cannot OCR will never ask for it.
+  // single largest slice of the user's visible "recognizing" wait.
   //
-  // It is started before the screen is known to hold any account, which is the
-  // price of the overlap: only the blocks can say, and they do not exist yet.
-  // Every way it turns out wasted is bounded: a screen the engine groups
-  // nothing on releases the context immediately
-  // (`recognizeAccountsWithModel`), an OCR pass that throws releases it below,
-  // and a load that fails is swallowed, so the "no accounts on this
-  // screenshot" verdict still reaches the user instead of a memory warning
-  // about a model that was never needed.
-  prewarmOnDeviceContext();
+  // Only when the local engine is the one running: a remote turn has nothing
+  // to warm, and a prewarmed local context beside a remote recognition would
+  // park gigabytes nobody asked for.
+  if (runModel === runOnDeviceModel) {
+    prewarmOnDeviceContext();
+  }
   // The OCR pass is the slow step; the dimension read (native `renderAsync` on
   // the same uri when the caller didn't already know the size) is cheap and
   // overlaps with it, shaving user-visible "recognizing" latency.
@@ -104,5 +141,5 @@ export async function recognizeAccountFromScreenshot(
     throw error;
   }
   const blocks = normalizeOcrResult(native, dims.width, dims.height);
-  return recognizeAccountsWithModel(blocks);
+  return recognizeAccountsWithModel(blocks, runModel);
 }

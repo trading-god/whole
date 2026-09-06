@@ -88,8 +88,7 @@
           "forceCxx20": true,
           "enableOpenCLAndHexagon": true
         }
-      ],
-      "./plugins/with-whole-model"
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

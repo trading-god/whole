@@ -46,6 +46,7 @@ export const vitestOwnedSources = [
   "src/features/on-device-model/format-bytes.ts",
   "src/features/on-device-model/on-device-catalog.ts",
   "src/features/onboarding/onboarding-store.ts",
+  "src/features/recognition/engine-store.ts",
   "src/features/recognition/recognition-issue.ts",
   "src/features/user/user-store.ts",
   "src/i18n/locales/en.ts",
