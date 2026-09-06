@@ -1,6 +1,8 @@
-// `brand` is the canonical brand color. The splash wordmark baked by
-// `scripts/generate-app-icons.mjs` mirrors it — regenerate the icons
-// (`pnpm generate:icons`) when this value changes.
+// `brand` is the canonical brand color. The splash wordmark (BrandSplash.tsx)
+// reads it live, but the icon artwork is baked from
+// `assets/branding/whole-logo.svg`, which hard-codes the same hex — so a
+// change here means editing that SVG too and regenerating the icons
+// (`pnpm generate:icons`).
 export const COLORS = {
   background: "#F4F6F2",
   card: "#FFFFFF",

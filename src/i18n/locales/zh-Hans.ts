@@ -1,6 +1,10 @@
 export const zhHansMessages = {
   common: {
     wordmark: "WHOLE",
+    // 启动屏品牌 slogan：两个语言保持同一句英文原文，slogan 是品牌文案，
+    // 任何语言都不翻译（见 AGENTS.md）。
+    sloganLine1: "Your whole financial life,",
+    sloganLine2: "in one place.",
     addAccount: "添加账户",
     backToAssetOverview: "返回资产总览",
     cancel: "取消",

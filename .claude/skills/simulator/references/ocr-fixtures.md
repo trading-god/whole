@@ -8,7 +8,8 @@ parser change can be checked end to end without touching the simulator by hand.
 
 ## Load screenshots into the photo library
 
-agent-device has no photo-library command; this is `simctl`:
+agent-device has no photo-library command; on iOS this is `simctl` (Android
+is `adb push` — see the end of this section):
 
 ```bash
 xcrun simctl addmedia booted packages/ocr-eval/samples/ocbc-overview/screenshot.png
@@ -40,6 +41,18 @@ bank overviews, and the grid's first cell is often a _different_ OCBC screenshot
 (the `ocbc-partial-overview` one, balance 6,674.51). Tapping it silently yields a
 plausible-looking recognition for the wrong fixture — the failure mode here is a
 confident wrong answer, not an error.
+
+On Android the import is a push plus a media-scan broadcast instead:
+
+```bash
+adb push packages/ocr-eval/samples/ocbc-overview/screenshot.png /sdcard/Pictures/
+adb shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE \
+  -d file:///sdcard/Pictures/screenshot.png
+```
+
+The picker-forensics above (Photos.sqlite, md5, off-screen thumbnails) were
+worked out on iOS and read iOS-only state; the Android picker has not been
+walked end to end the same way, so read its snapshot before trusting it.
 
 ## Drive the flow
 

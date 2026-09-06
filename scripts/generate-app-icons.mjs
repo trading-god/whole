@@ -49,7 +49,7 @@ const androidAdaptiveIcons = [
 ];
 
 // Transparent (when `background` is null) or solid-fill RGBA canvas. Shared by
-// `renderIcon` and `renderSplashIcon` so the create-config lives in one place.
+// every job below so the create-config lives in one place.
 function createCanvas(size, background) {
   return sharp({
     create: {
@@ -69,8 +69,8 @@ async function writePng(image, output) {
 }
 
 // Rasterizes an SVG to a square PNG buffer at `size`, preserving aspect ratio
-// (`fit: "contain"` never crops the artwork). Shared by `renderIcon` (artwork)
-// and `renderSplashIcon` (logo) so the rasterize params live in one place.
+// (`fit: "contain"` never crops the artwork). Every job rasterizes through
+// this one place.
 function rasterizeSvg(svg, size) {
   return sharp(Buffer.from(svg))
     .resize(size, size, { fit: "contain" })
@@ -99,51 +99,31 @@ async function renderIcon({
   await writePng(image, output);
 }
 
-// Splash icon composites the logo with the WHOLE wordmark and slogan so the
-// native launch screen reads as a complete brand mark (logo-only felt sparse).
-// Drawn on a transparent 1024² canvas; the launch screen `backgroundColor`
-// fills behind it. Text is baked as bitmap, so the slogan stays in the
-// canonical English brand copy (AGENTS.md) and the wordmark treatment mirrors
-// `screenStyles.wordmark` — brand color, extrabold, wide tracking scaled to
-// the baked font size.
-async function renderSplashIcon({ output, size }) {
-  const logoSize = Math.round(size * 0.47);
-  const fontFamily = "Helvetica Neue, Helvetica, Arial, sans-serif";
-  const wordmarkSize = Math.round(size * 0.082);
-  const wordmarkTracking = Math.round(size * 0.0137);
-  const sloganSize = Math.round(size * 0.04);
-  const cx = size / 2;
-
-  const textSvg = `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
-<text x="${cx}" y="${Math.round(size * 0.73)}" font-family="${fontFamily}" font-size="${wordmarkSize}" font-weight="800" letter-spacing="${wordmarkTracking}" fill="#098765" text-anchor="middle">WHOLE</text>
-<text x="${cx}" y="${Math.round(size * 0.8)}" font-family="${fontFamily}" font-size="${sloganSize}" font-weight="500" fill="#14231D" text-anchor="middle">Your whole financial life,</text>
-<text x="${cx}" y="${Math.round(size * 0.845)}" font-family="${fontFamily}" font-size="${sloganSize}" font-weight="500" fill="#14231D" text-anchor="middle">in one place.</text>
-</svg>`;
-
-  // Logo and wordmark are independent pipelines — rasterize them in parallel
-  // rather than awaiting one before starting the other.
-  const [logo, textImage] = await Promise.all([
-    rasterizeSvg(sourceSvg, logoSize),
-    sharp(Buffer.from(textSvg)).png().toBuffer(),
-  ]);
-
-  const logoLeft = Math.round((size - logoSize) / 2);
-  const logoTop = Math.round(size * 0.14);
-
-  const image = createCanvas(size).composite([
-    { input: logo, left: logoLeft, top: logoTop },
-    { input: textImage },
-  ]);
-
-  await writePng(image, output);
-}
+// The splash asset on BOTH platforms is the logo alone, full-bleed on a
+// transparent 1024² canvas (`scale: 1, background: null` — full-size artwork
+// on a transparent canvas, no flatten). The wordmark and slogan are NOT
+// baked: they are rendered by the JS-side BrandSplash overlay
+// (src/components/BrandSplash.tsx) so copy lives in i18n and stays editable
+// without regenerating assets.
+//
+// Android 12+ shows `windowSplashScreenAnimatedIcon` through a circular mask
+// (a 288dp canvas of which only the central 192dp-diameter circle is visible).
+// Per Expo's splash guidance the image is drawn at `imageWidth: 192` — the
+// safe-circle diameter, the largest size that is never cropped. That same 192
+// is BrandSplash's LOGO_SIZE: matching the native size is what makes the
+// native→JS handoff seamless (a guard test in BrandSplash.test.tsx pins the
+// two together). iOS shows the same image unmasked at the same width.
 
 const jobs = [
-  // Expo/EAS consumes these four master assets.
+  // Expo/EAS consumes these four master assets. The splash logo is the plain
+  // logo at scale 1 on transparency — see the comment block above for why the
+  // splash is the logo alone.
   renderIcon({ output: "assets/images/icon.png", size: 1024, scale: 0.8 }),
-  renderSplashIcon({
-    output: "assets/images/splash-icon.png",
+  renderIcon({
+    output: "assets/images/logo.png",
     size: 1024,
+    scale: 1,
+    background: null,
   }),
   renderIcon({
     output: "assets/images/android-icon-foreground.png",

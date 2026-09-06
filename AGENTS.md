@@ -99,8 +99,27 @@ capability.
 
 The source logo is `assets/branding/whole-logo.svg`; regenerate platform
 assets with `pnpm generate:icons`. Generated files under `assets/app-icons/`
-are not edited by hand. `COLORS.brand` is the canonical brand color and the
-splash wordmark mirrors it — regenerate the icons when it changes.
+are not edited by hand. `COLORS.brand` is the canonical brand color; the icon
+artwork bakes the same hex from the SVG, and the JS splash wordmark reads the
+token live — a brand-color change means editing the SVG and regenerating.
+
+The splash is one mechanism on both platforms: the native splash shows the
+logo ALONE (`assets/images/logo.png`, `imageWidth: 192`), and the wordmark +
+slogan are rendered by the JS overlay `src/components/BrandSplash.tsx`, which
+mounts beneath the native splash on the first React frame and takes over at
+`SplashScreen.hideAsync()` — fading the text in, holding the lockup, and
+fading out to the app. Copy comes from i18n (`common.sloganLine1/2` — fixed
+English in both locales, it is brand copy per the Documentation section), so
+slogan changes need no asset regeneration. The reason it is split this way is
+Android 12+: `windowSplashScreenAnimatedIcon` is shown through a circular mask
+(288dp canvas, only the central 192dp-diameter circle visible), which a
+logo+wordmark+slogan lockup cannot survive — the original baked lockup had its
+logo crown and both slogan lines cropped away. iOS matches the split for
+parity rather than need; `app.json`'s `imageWidth` and BrandSplash's
+`LOGO_SIZE` must stay equal (192, the safe-circle diameter) — that equality is
+what makes the native→JS handoff seamless, and a guard test in
+`BrandSplash.test.tsx` pins the two together so a drift fails CI rather than
+shipping a visible seam.
 
 # Code Quality
 

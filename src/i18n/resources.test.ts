@@ -1,6 +1,19 @@
 import { describe, expect, it } from "vitest";
 
-import { pickAppLocale, resolveAppLocale } from "@/i18n/resources";
+import { pickAppLocale, resolveAppLocale, resources } from "@/i18n/resources";
+
+const BRAND_SLOGAN = "Your whole financial life, in one place.";
+
+describe("brand copy", () => {
+  it.each(Object.values(resources))(
+    "keeps the fixed English slogan exact in every locale",
+    ({ translation }) => {
+      expect(
+        `${translation.common.sloganLine1} ${translation.common.sloganLine2}`,
+      ).toBe(BRAND_SLOGAN);
+    },
+  );
+});
 
 describe("resolveAppLocale", () => {
   it("maps zh to the Simplified Chinese catalog", () => {

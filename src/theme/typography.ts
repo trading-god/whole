@@ -37,6 +37,8 @@ export const FONT_SIZE = {
   title: 20,
   // Greeting, not-found title.
   heading: 24,
+  // Launch-screen brand wordmark.
+  brand: 26,
   // Total-balance hero figure.
   display: 34,
 } as const;
@@ -78,6 +80,8 @@ export const LETTER_SPACING = {
   code: 2,
   // 12pt brand wordmark.
   wordmark: 2.2,
+  // 26pt launch-screen brand wordmark.
+  brand: 4,
 } as const;
 
 // Every figure in a column of money — account balances, group totals, the

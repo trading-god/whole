@@ -4,6 +4,10 @@ import type { MessageShape } from "@/i18n/schema";
 export const enMessages = {
   common: {
     wordmark: "WHOLE",
+    // Launch-screen brand slogan. Fixed English in BOTH locales: the slogan is
+    // brand copy that stays verbatim in every language (AGENTS.md).
+    sloganLine1: "Your whole financial life,",
+    sloganLine2: "in one place.",
     addAccount: "Add account",
     backToAssetOverview: "Back to asset overview",
     cancel: "Cancel",
