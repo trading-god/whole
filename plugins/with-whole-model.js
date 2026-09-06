@@ -31,7 +31,7 @@ const {
   withDangerousMod,
   withXcodeProject,
   createRunOncePlugin,
-} = require("@expo/config-plugins");
+} = require("expo/config-plugins");
 
 const SHARDS_DIR = "assets/models";
 
