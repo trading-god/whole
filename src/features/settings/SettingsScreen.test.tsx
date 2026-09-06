@@ -3,18 +3,22 @@ import { fireEvent, screen, waitFor } from "@testing-library/react-native";
 
 import { SettingsScreen } from "@/features/settings/SettingsScreen";
 import { renderWithProviders } from "@/test-support/render";
-import { BUNDLED_MODEL } from "@/features/on-device-model/on-device-catalog";
+import { onDeviceModel } from "@/features/on-device-model/on-device-catalog";
 import { formatBytes } from "@/features/on-device-model/format-bytes";
 
+const E2B = onDeviceModel("gemma-4-e2b");
+const E4B = onDeviceModel("gemma-4-e4b");
+
 const mockVerify = jest.fn<() => Promise<void>>();
-const mockModelPresence = jest.fn<() => { status: string }>();
+const mockModelPresence = jest.fn<(id?: unknown) => { status: string }>();
 const mockDownloadModel =
   jest.fn<
     (
+      id: unknown,
       onProgress: (progress: { fraction: number; sizeBytes: number }) => void,
     ) => Promise<void>
   >();
-const mockDeleteModel = jest.fn<() => void>();
+const mockDeleteModel = jest.fn<(id: unknown) => void>();
 const mockLoadEngine = jest.fn<() => Promise<"on-device" | "remote">>();
 const mockSaveEngine =
   jest.fn<(engine: "on-device" | "remote") => Promise<void>>();
@@ -32,11 +36,22 @@ jest.mock("@/features/on-device-model/model-context", () => ({
 // SecureStore-backed config (remote-model-config-store). The remote runner is
 // mocked for the service Test button.
 jest.mock("@/features/on-device-model/model-download", () => ({
-  modelPresence: () => mockModelPresence(),
+  modelPresence: (id: unknown) => mockModelPresence(id),
   downloadModel: (
+    id: unknown,
     onProgress: (progress: { fraction: number; sizeBytes: number }) => void,
-  ) => mockDownloadModel(onProgress),
-  deleteModel: () => mockDeleteModel(),
+  ) => mockDownloadModel(id, onProgress),
+  deleteModel: (id: unknown) => mockDeleteModel(id),
+}));
+
+const mockLoadOnDeviceModelId =
+  jest.fn<() => Promise<"gemma-4-e2b" | "gemma-4-e4b">>();
+const mockSaveOnDeviceModelId =
+  jest.fn<(id: "gemma-4-e2b" | "gemma-4-e4b") => Promise<void>>();
+jest.mock("@/features/on-device-model/on-device-model-store", () => ({
+  loadOnDeviceModelId: () => mockLoadOnDeviceModelId(),
+  saveOnDeviceModelId: (id: "gemma-4-e2b" | "gemma-4-e4b") =>
+    mockSaveOnDeviceModelId(id),
 }));
 
 jest.mock("@/features/recognition/engine-store", () => ({
@@ -96,6 +111,8 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockVerify.mockResolvedValue(undefined);
   mockModelPresence.mockReturnValue({ status: "present" });
+  mockLoadOnDeviceModelId.mockResolvedValue("gemma-4-e2b");
+  mockSaveOnDeviceModelId.mockResolvedValue(undefined);
   mockDownloadModel.mockResolvedValue(undefined);
   mockLoadEngine.mockResolvedValue("on-device");
   mockSaveEngine.mockResolvedValue(undefined);
@@ -115,30 +132,60 @@ describe("SettingsScreen", () => {
   });
 
   describe("the recognition engine section", () => {
-    it("shows both engines with their costs, the local one selected by default", async () => {
+    it("shows both engines, the local one selected by default", async () => {
       await renderWithProviders(<SettingsScreen />);
 
       expect(screen.getByText("On-device model")).toBeTruthy();
-      // The size rides in the hint: a user weighing the storage cost sees the
-      // number where the choice is made.
-      expect(
-        screen.getByText(
-          `${formatBytes(BUNDLED_MODEL.sizeBytes)}, works offline, nothing leaves this phone`,
-        ),
-      ).toBeTruthy();
       expect(screen.getByText("Cloud model service")).toBeTruthy();
       expect(screen.getByText(/Stronger results/)).toBeTruthy();
     });
 
-    it("shows the download offer when the model is absent", async () => {
+    it("lists both models with their storage and memory costs", async () => {
+      await renderWithProviders(<SettingsScreen />);
+
+      // The E2B/E4B choice turns on these two numbers for the device, so
+      // each row states them: the download's bill and the running bill.
+      expect(screen.getByText("Gemma 4 E2B")).toBeTruthy();
+      expect(screen.getByText("Gemma 4 E4B")).toBeTruthy();
+      expect(
+        screen.getByText(
+          `${formatBytes(E2B.sizeBytes)} storage · about ${formatBytes(E2B.ramBytes)} memory to run`,
+        ),
+      ).toBeTruthy();
+      expect(
+        screen.getByText(
+          `${formatBytes(E4B.sizeBytes)} storage · about ${formatBytes(E4B.ramBytes)} memory to run`,
+        ),
+      ).toBeTruthy();
+    });
+
+    it("switches the selected model when the other row's radio is chosen", async () => {
+      await renderWithProviders(<SettingsScreen />);
+
+      await fireEvent.press(screen.getByText("Gemma 4 E4B"));
+
+      expect(mockSaveOnDeviceModelId).toHaveBeenCalledWith("gemma-4-e4b");
+    });
+
+    it("shows the download offer when the selected model is absent", async () => {
       mockModelPresence.mockReturnValue({ status: "absent" });
 
       await renderWithProviders(<SettingsScreen />);
 
-      expect(screen.getByText("Download")).toBeTruthy();
-      expect(
-        screen.getByText(/A Wi-Fi connection is recommended/),
-      ).toBeTruthy();
+      // Both models are absent: both rows offer their download.
+      expect(screen.getAllByText("Download")).toHaveLength(2);
+    });
+
+    it("offers a download per model row, the other model's presence notwithstanding", async () => {
+      // E4B on disk, E2B not: the E2B row still offers its download — and
+      // the E4B row does not.
+      mockModelPresence.mockImplementation((id) =>
+        id === "gemma-4-e4b" ? { status: "present" } : { status: "absent" },
+      );
+
+      await renderWithProviders(<SettingsScreen />);
+
+      expect(screen.getAllByText("Download")).toHaveLength(1);
     });
 
     it("runs a download to completion and lands on the downloaded state", async () => {
@@ -151,12 +198,14 @@ describe("SettingsScreen", () => {
 
       await renderWithProviders(<SettingsScreen />);
 
-      await press("Download");
+      await fireEvent.press(screen.getAllByText("Download")[0]);
 
+      // The downloaded state: the row swaps its download button for the
+      // Test button, which only a present model offers.
       await waitFor(() => {
-        expect(screen.getByText("Downloaded")).toBeTruthy();
+        expect(mockDownloadModel).toHaveBeenCalledTimes(1);
+        expect(screen.getByText("Test")).toBeTruthy();
       });
-      expect(mockDownloadModel).toHaveBeenCalledTimes(1);
     });
 
     it("reports a failed download with the retry copy", async () => {
@@ -165,7 +214,7 @@ describe("SettingsScreen", () => {
 
       await renderWithProviders(<SettingsScreen />);
 
-      await press("Download");
+      await fireEvent.press(screen.getAllByText("Download")[0]);
 
       await waitFor(() => {
         expect(screen.getByText(/The download didn't finish/)).toBeTruthy();
@@ -212,9 +261,6 @@ describe("SettingsScreen", () => {
       await press("Delete model");
 
       expect(mockDeleteModel).toHaveBeenCalledTimes(1);
-      await waitFor(() => {
-        expect(screen.getByText("Download")).toBeTruthy();
-      });
     });
 
     it("switches engines when the remote card is chosen", async () => {

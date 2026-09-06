@@ -186,11 +186,14 @@ export const enMessages = {
       downloaded: "Downloaded",
       downloadHint:
         "Uses about {{size}} of storage. A Wi-Fi connection is recommended.",
+      // One model row's cost line — both bills, storage and memory, because
+      // they are what the E2B/E4B choice actually turns on for the device.
+      modelCosts: "{{size}} storage · about {{ram}} memory to run",
       deleteModel: "Delete model",
       deleteModelHint:
         "Frees {{size}}. Recognition switches off until you download it again.",
       notDownloaded: "Not downloaded",
-      partialDownload: "Partially downloaded ({{size}} of {{total}})",
+      partialDownload: "{{size}} of {{total}}",
       // The remote engine's form. Labels say what to paste, in the words a
       // provider's console uses.
       baseUrl: "Base URL",

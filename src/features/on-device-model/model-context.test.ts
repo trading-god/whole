@@ -56,7 +56,7 @@ jest.mock("react-native/Libraries/AppState/AppState", () => ({
 }));
 
 jest.mock("@/features/on-device-model/model-source", () => ({
-  resolveBundledModelPath: () => mockResolveBundledModelPath(),
+  resolveOnDeviceModelPath: () => mockResolveBundledModelPath(),
 }));
 
 const contextInstance = () => ({
@@ -83,6 +83,8 @@ const complete = () => contextModule.completeOnDevice({ prompt: "hi" });
 const releaseOnDeviceContext = () => contextModule.releaseOnDeviceContext();
 const prewarmOnDeviceContext = () => contextModule.prewarmOnDeviceContext();
 const verifyOnDeviceModel = () => contextModule.verifyOnDeviceModel();
+const selectOnDeviceModel = (id: "gemma-4-e2b" | "gemma-4-e4b") =>
+  contextModule.selectOnDeviceModel(id);
 
 // Fake timers, so the idle release is asserted rather than waited a minute for.
 // `jest.getTimerCount()` is what "is a release armed?" reads as here.
@@ -513,6 +515,53 @@ describe("releaseOnDeviceContext", () => {
   it("is a no-op with nothing loaded", async () => {
     await expect(releaseOnDeviceContext()).resolves.toBeUndefined();
     expect(mockRelease).not.toHaveBeenCalled();
+  });
+});
+
+describe("selectOnDeviceModel", () => {
+  it("releases the current context and loads the new weights on the next use", async () => {
+    await complete();
+
+    await selectOnDeviceModel("gemma-4-e4b");
+
+    // The E2B context is useless for running E4B, and holding both is the
+    // memory crunch the lifecycle exists to avoid — so the switch frees it.
+    expect(mockRelease).toHaveBeenCalledTimes(1);
+
+    // The next completion loads fresh (a second init), pointed at the NEW
+    // model's path.
+    mockInitLlama.mockClear();
+    await complete();
+    expect(mockInitLlama).toHaveBeenCalledTimes(1);
+    expect(mockResolveBundledModelPath).toHaveReturnedWith(
+      "file:///docs/models/model.gguf",
+    );
+  });
+
+  it("is a no-op when the id is already current", async () => {
+    await complete();
+
+    await selectOnDeviceModel("gemma-4-e2b");
+
+    expect(mockRelease).not.toHaveBeenCalled();
+  });
+
+  it("does not free a context a completion is still running on", async () => {
+    let settleCompletion: (() => void) | null = null;
+    mockCompletion.mockReturnValue(
+      new Promise((resolve) => {
+        settleCompletion = () => resolve({ content: "ok" });
+      }),
+    );
+    const running = complete();
+    const swap = selectOnDeviceModel("gemma-4-e4b");
+    await swap;
+
+    // Lease-aware like every release: the running completion finishes on
+    // the old model, and nothing is freed under it.
+    expect(mockRelease).not.toHaveBeenCalled();
+    (settleCompletion ?? (() => {}))();
+    await running;
   });
 });
 

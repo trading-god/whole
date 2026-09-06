@@ -1,18 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { Button } from "@/components/Button";
 import { FormField } from "@/components/FormField";
 import { formatBytes } from "@/features/on-device-model/format-bytes";
-import { BUNDLED_MODEL } from "@/features/on-device-model/on-device-catalog";
+import {
+  type OnDeviceModel,
+  type OnDeviceModelId,
+  ON_DEVICE_MODELS,
+} from "@/features/on-device-model/on-device-catalog";
 import {
   deleteModel,
   downloadModel,
   modelPresence,
 } from "@/features/on-device-model/model-download";
-import { bundledModelStorageBytes } from "@/features/on-device-model/model-source";
 import { verifyOnDeviceModel } from "@/features/on-device-model/model-context";
+import {
+  loadOnDeviceModelId,
+  saveOnDeviceModelId,
+} from "@/features/on-device-model/on-device-model-store";
 import {
   DownloadByteReadout,
   DownloadProgressBar,
@@ -33,6 +40,7 @@ import {
 } from "@/features/recognition/remote-model-config-store";
 import { createRemoteRunModel } from "@/features/recognition/remote-runner";
 import { COLORS } from "@/theme/colors";
+import { PRESSED_OPACITY_SURFACE } from "@/theme/interaction";
 import { TONES } from "@/theme/tones";
 import { RADIUS } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
@@ -43,10 +51,14 @@ import { FONT_SIZE, LINE_HEIGHT } from "@/theme/typography";
 // TWO engines behind one choice — the downloaded on-device model, or the
 // user's own OpenAI-compatible endpoint — each with its configuration living
 // INSIDE its card (radio-card pattern: select to expand, one engine's config
-// never crowds the other's). The section owns no engine state of its own:
-// everything renders from the three real sources (engine preference in
-// kv-store, model files on disk, remote config in SecureStore), so the card
-// and the recognition gate cannot disagree.
+// never crowds the other's). The on-device card holds a second choice of the
+// same shape: WHICH model, each row carrying its storage and memory costs so
+// the user weighs device fit, not just accuracy.
+//
+// The section owns no engine state of its own: everything renders from the
+// real sources (engine and model preferences in kv-store, model files on
+// disk, remote config in SecureStore), so the card and the recognition gate
+// cannot disagree.
 
 type RemoteTestPhase = "idle" | "testing" | "passed" | "failed";
 
@@ -76,9 +88,7 @@ export function RecognitionEngineSection() {
       <EngineOptionCard
         selected={engine === "on-device"}
         title={t("settings.engine.onDevice")}
-        hint={t("settings.engine.onDeviceHint", {
-          size: formatBytes(bundledModelStorageBytes()),
-        })}
+        hint={t("settings.engine.onDeviceHint")}
         onSelect={() => chooseEngine("on-device")}
         testID="engine-on-device-card"
       >
@@ -101,14 +111,60 @@ export function RecognitionEngineSection() {
 // ── The on-device engine's configuration ─────────────────────────────────
 
 function OnDeviceEngineConfig() {
+  // The selected model, from the same store the recognition gate reads.
+  const [modelId, setModelId] = useState<OnDeviceModelId>("gemma-4-e2b");
+  useEffect(() => {
+    let stale = false;
+    void loadOnDeviceModelId().then((stored) => {
+      if (!stale) {
+        setModelId(stored);
+      }
+    });
+    return () => {
+      stale = true;
+    };
+  }, []);
+
+  const chooseModel = useCallback((next: OnDeviceModelId) => {
+    setModelId(next);
+    void saveOnDeviceModelId(next).catch(() => {});
+  }, []);
+
+  return (
+    <View style={styles.configStack}>
+      {ON_DEVICE_MODELS.map((model) => (
+        <ModelRow
+          key={model.id}
+          model={model}
+          selected={modelId === model.id}
+          onSelect={() => chooseModel(model.id)}
+        />
+      ))}
+    </View>
+  );
+}
+
+// One model row: radio select + the cost lines + the download lifecycle.
+//
+// Costs are stated in the row itself — storage (the download's bill) and
+// memory (the running bill) — because the user weighing E2B vs E4B on a
+// mid-range phone is weighing exactly these two numbers, and the model's
+// accuracy edge is useless advice to someone whose device cannot hold it.
+function ModelRow({
+  model,
+  selected,
+  onSelect,
+}: {
+  model: OnDeviceModel;
+  selected: boolean;
+  onSelect: () => void;
+}) {
   const { t } = useTranslation();
 
-  // The model's state on disk. `modelPresence` is the truth — re-read after
-  // every download/delete because those are the only writers.
-  const [presence, setPresence] = useState(() => modelPresence());
+  const [presence, setPresence] = useState(() => modelPresence(model.id));
   const refreshPresence = useCallback(() => {
-    setPresence(modelPresence());
-  }, []);
+    setPresence(modelPresence(model.id));
+  }, [model.id]);
 
   const [downloadPhase, setDownloadPhase] = useState<
     "idle" | "downloading" | "failed"
@@ -116,10 +172,6 @@ function OnDeviceEngineConfig() {
   const [downloadFraction, setDownloadFraction] = useState(0);
   const [downloadError, setDownloadError] = useState(false);
 
-  // The settings screen's Test button over the downloaded weights.
-  const [testPhase, setTestPhase] = useState<
-    "idle" | "testing" | "passed" | "failed"
-  >("idle");
   const isMountedRef = useRef(true);
   useEffect(() => {
     isMountedRef.current = true;
@@ -132,11 +184,9 @@ function OnDeviceEngineConfig() {
     setDownloadPhase("downloading");
     setDownloadError(false);
     setDownloadFraction(
-      presence.status === "partial"
-        ? presence.sizeBytes / BUNDLED_MODEL.sizeBytes
-        : 0,
+      presence.status === "partial" ? presence.sizeBytes / model.sizeBytes : 0,
     );
-    void downloadModel(({ fraction }) => {
+    void downloadModel(model.id, ({ fraction }) => {
       if (isMountedRef.current) {
         setDownloadFraction(fraction);
       }
@@ -149,21 +199,145 @@ function OnDeviceEngineConfig() {
       })
       .catch(() => {
         // The technical reason stays out of the UI — localized copy only
-        // (AGENTS.md), and the recovery does not depend on which shard or
-        // which byte range failed: retry the download.
+        // (AGENTS.md), and the recovery does not depend on which byte range
+        // failed: retry the download.
         if (isMountedRef.current) {
           setDownloadPhase("failed");
           setDownloadError(true);
           refreshPresence();
         }
       });
-  }, [presence, refreshPresence]);
+  }, [model.id, model.sizeBytes, presence, refreshPresence]);
 
   const deleteWeights = useCallback(() => {
-    deleteModel();
+    deleteModel(model.id);
     refreshPresence();
-  }, [refreshPresence]);
+  }, [model.id, refreshPresence]);
 
+  // A download of the unselected model still matters — the row keeps its
+  // own lifecycle regardless of selection.
+  if (downloadPhase === "downloading") {
+    return (
+      <View style={styles.modelRow} testID={`model-row-${model.id}`}>
+        <PressableRow
+          selected={selected}
+          onSelect={onSelect}
+          name={model.name}
+        />
+        <View style={styles.configStack}>
+          <DownloadProgressBar fraction={downloadFraction} />
+          <DownloadByteReadout
+            sizeBytes={Math.round(downloadFraction * model.sizeBytes)}
+            totalBytes={model.sizeBytes}
+          />
+          <Text style={styles.hint}>{t("settings.engine.downloading")}</Text>
+        </View>
+      </View>
+    );
+  }
+
+  if (presence.status === "present") {
+    return (
+      <View style={styles.modelRow} testID={`model-row-${model.id}`}>
+        <PressableRow
+          selected={selected}
+          onSelect={onSelect}
+          name={model.name}
+        />
+        <View style={styles.costLine}>
+          <Text style={styles.statusLine}>
+            {t("settings.engine.modelCosts", {
+              size: formatBytes(model.sizeBytes),
+              ram: formatBytes(model.ramBytes),
+            })}
+          </Text>
+        </View>
+        {selected ? (
+          <View style={styles.modelActions}>
+            <ModelTestButton />
+            <Button
+              size="xs"
+              variant="ghost"
+              fullWidth={false}
+              onPress={deleteWeights}
+            >
+              {t("settings.engine.deleteModel")}
+            </Button>
+          </View>
+        ) : null}
+      </View>
+    );
+  }
+
+  // Absent or partial: the download offer, with what it costs stated up
+  // front. A failed pass re-offers the download — bytes already on disk are
+  // kept, so the retry resumes rather than restarts.
+  return (
+    <View style={styles.modelRow} testID={`model-row-${model.id}`}>
+      <PressableRow selected={selected} onSelect={onSelect} name={model.name} />
+      <Text style={styles.costLine}>
+        {t("settings.engine.modelCosts", {
+          size: formatBytes(model.sizeBytes),
+          ram: formatBytes(model.ramBytes),
+        })}
+      </Text>
+      {downloadError ? (
+        <Text style={styles.downloadError}>
+          {t("settings.engine.downloadFailed")}
+        </Text>
+      ) : null}
+      <Button size="sm" variant="primary" onPress={startDownload}>
+        {t("settings.engine.download")}
+      </Button>
+    </View>
+  );
+}
+
+// The select-able head of a model row: the radio and the name. Pressing it
+// selects the model; the download lifecycle below it is NOT part of the
+// target, so tapping Download does not also flip the selection.
+function PressableRow({
+  selected,
+  onSelect,
+  name,
+}: {
+  selected: boolean;
+  onSelect: () => void;
+  name: string;
+}) {
+  return (
+    <Pressable
+      accessibilityLabel={name}
+      accessibilityRole="radio"
+      accessibilityState={{ selected }}
+      onPress={onSelect}
+      style={({ pressed }) => [
+        styles.modelSelectRow,
+        pressed && styles.pressed,
+      ]}
+    >
+      <View style={styles.radioRing}>
+        {selected ? <View style={styles.radioDot} /> : null}
+      </View>
+      <Text style={styles.modelName}>{name}</Text>
+    </Pressable>
+  );
+}
+
+// The Test button for the SELECTED model — the context it probes is the
+// one bound to the current model id, so only the selected row offers it.
+function ModelTestButton() {
+  const { t } = useTranslation();
+  const [testPhase, setTestPhase] = useState<
+    "idle" | "testing" | "passed" | "failed"
+  >("idle");
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
   const test = useCallback(() => {
     setTestPhase("testing");
     void verifyOnDeviceModel()
@@ -179,83 +353,28 @@ function OnDeviceEngineConfig() {
       });
   }, []);
 
-  if (downloadPhase === "downloading") {
-    return (
-      <View style={styles.configStack} testID="engine-download-progress">
-        <DownloadProgressBar fraction={downloadFraction} />
-        <View style={styles.downloadRow}>
-          <DownloadByteReadout
-            sizeBytes={Math.round(downloadFraction * BUNDLED_MODEL.sizeBytes)}
-          />
-        </View>
-        <Text style={styles.hint}>{t("settings.engine.downloading")}</Text>
-      </View>
-    );
-  }
-
-  if (presence.status === "present") {
-    return (
-      <View style={styles.configStack}>
-        <Text style={styles.statusLine}>
-          {t("settings.engine.downloaded", {
-            size: formatBytes(BUNDLED_MODEL.sizeBytes),
-          })}
-        </Text>
-        <View style={styles.testRow}>
-          <Button
-            size="sm"
-            variant="outline"
-            fullWidth={false}
-            disabled={testPhase === "testing"}
-            loading={testPhase === "testing"}
-            onPress={test}
-          >
-            {t("settings.onDevice.test")}
-          </Button>
-          {testPhase === "passed" ? (
-            <Text style={[styles.verdict, styles.verdictPassed]}>
-              {t("settings.onDevice.testPassed")}
-            </Text>
-          ) : null}
-          {testPhase === "failed" ? (
-            <Text style={[styles.verdict, styles.verdictFailed]}>
-              {t("settings.onDevice.testFailure")}
-            </Text>
-          ) : null}
-        </View>
-        <Button
-          size="sm"
-          variant="ghost"
-          fullWidth={false}
-          onPress={deleteWeights}
-        >
-          {t("settings.engine.deleteModel")}
-        </Button>
-      </View>
-    );
-  }
-
-  // Absent or partial: the download offer, with what it costs stated up
-  // front. A failed pass re-offers the download — the shards already on
-  // disk are kept, so the retry resumes rather than restarts.
   return (
-    <View style={styles.configStack}>
-      {presence.status === "partial" ? (
-        <DownloadByteReadout sizeBytes={presence.sizeBytes} />
-      ) : null}
-      {downloadError ? (
-        <Text style={styles.downloadError}>
-          {t("settings.engine.downloadFailed")}
+    <View style={styles.testRow}>
+      <Button
+        size="sm"
+        variant="outline"
+        fullWidth={false}
+        disabled={testPhase === "testing"}
+        loading={testPhase === "testing"}
+        onPress={test}
+      >
+        {t("settings.onDevice.test")}
+      </Button>
+      {testPhase === "passed" ? (
+        <Text style={[styles.verdict, styles.verdictPassed]}>
+          {t("settings.onDevice.testPassed")}
         </Text>
       ) : null}
-      <Text style={styles.hint}>
-        {t("settings.engine.downloadHint", {
-          size: formatBytes(BUNDLED_MODEL.sizeBytes),
-        })}
-      </Text>
-      <Button size="sm" variant="primary" onPress={startDownload}>
-        {t("settings.engine.download")}
-      </Button>
+      {testPhase === "failed" ? (
+        <Text style={[styles.verdict, styles.verdictFailed]}>
+          {t("settings.onDevice.testFailure")}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -420,6 +539,43 @@ const styles = StyleSheet.create({
   configStack: {
     gap: SPACING.md,
   },
+  modelRow: {
+    gap: SPACING.sm,
+  },
+  modelSelectRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: SPACING.md,
+  },
+  pressed: {
+    opacity: PRESSED_OPACITY_SURFACE,
+  },
+  modelName: {
+    color: COLORS.ink,
+    fontSize: FONT_SIZE.bodySm,
+    fontWeight: "600",
+  },
+  radioRing: {
+    alignItems: "center",
+    borderColor: COLORS.outlineBorder,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    height: 16,
+    justifyContent: "center",
+    width: 16,
+  },
+  radioDot: {
+    backgroundColor: COLORS.brand,
+    borderRadius: 4,
+    height: 8,
+    width: 8,
+  },
+  costLine: {
+    color: COLORS.muted,
+    fontSize: FONT_SIZE.micro,
+    lineHeight: LINE_HEIGHT.tight,
+    paddingLeft: SPACING.md + 16 + SPACING.md,
+  },
   statusLine: {
     color: COLORS.muted,
     fontSize: FONT_SIZE.micro,
@@ -435,9 +591,17 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZE.micro,
     lineHeight: LINE_HEIGHT.tight,
   },
+  modelActions: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: SPACING.md,
+    paddingLeft: SPACING.md + 16 + SPACING.md,
+  },
   testRow: {
     alignItems: "center",
     flexDirection: "row",
+    flex: 1,
+    flexWrap: "wrap",
     gap: SPACING.md,
   },
   verdict: {
@@ -453,12 +617,6 @@ const styles = StyleSheet.create({
   verdictFailed: {
     color: COLORS.danger,
     fontWeight: "600",
-  },
-  downloadRow: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: SPACING.md,
-    justifyContent: "space-between",
   },
   noticeCard: {
     borderRadius: RADIUS.xs,

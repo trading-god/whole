@@ -319,13 +319,20 @@ Settings (radio-card section, `recognition/RecognitionEngineSection.tsx`):
 
 - **On-device** (`on-device-runner.ts`): the local llama.cpp context over
   the Gemma weights, grammar-constrained. The weights are NOT bundled —
-  `model-download.ts` downloads them on demand into
-  `document/whole_models/` (the `ggml-org/gemma-4-E2B-it-GGUF` release,
-  per-shard, size-verified, resumable across shards) because a 3.1 GB
-  bundle blew both Play's 150 MB base-APK cap and any reasonable iOS
-  download. Presence on disk is the truth (`modelPresence()`), never a
-  stored flag. `assets/models/` (Git LFS) stays in the repo for the eval
-  harness and local dev.
+  `model-download.ts` downloads them on demand because a 3 GB+ bundle blew
+  both Play's 150 MB base-APK cap and any reasonable iOS download. The
+  catalog (`on-device-catalog.ts`) lists TWO models the user picks between,
+  smallest-first: Gemma 4 E2B and E4B, unsloth's single-file Q4_K_M quants
+  (the ggml-org repos carry no Q4_K_M), each row in the settings section
+  stating its storage AND RAM cost — the numbers the E2B/E4B choice turns
+  on for the device. Each model lands under `document/whole_models/<id>/`
+  (its own directory, so two downloads never fight over file names),
+  size-verified, presence on disk is the truth (`modelPresence(id)`), never
+  a stored flag. The selected model is `on-device-model-store.ts`
+  (kv-store, E2B default); `selectOnDeviceModel` in `model-context.ts`
+  releases the context on a switch so two models are never warm at once.
+  `assets/models/` (Git LFS, the old E2B split) stays in the repo for the
+  eval harness and local dev.
 - **Remote** (`remote-runner.ts`): the user's own OpenAI-compatible
   endpoint (base URL + model + API key; key in `expo-secure-store`, the
   rest in kv-store — `remote-model-config-store.ts`). No GBNF exists over
@@ -334,8 +341,9 @@ Settings (radio-card section, `recognition/RecognitionEngineSection.tsx`):
   backstop. Config must be `https://` (ATS allows no cleartext).
 
 `engine-store.ts` holds the choice (kv-store, `"on-device"` default).
-`screenshot-recognition.ts` gates on the CHOSEN engine being ready and
-throws `EngineNotReadyError` (uploader shows the reason + a way to
+`screenshot-recognition.ts` gates on the CHOSEN engine being ready — the
+SELECTED model's presence, not any model's — and throws
+`EngineNotReadyError` (uploader shows the reason + a way to
 Settings); `remote-failed` is a failure cause of its own so a 401's advice
 is "check the key", never the on-device "restart the app". The remote
 engine sends the screenshot's TEXT (never the image) to a service the user

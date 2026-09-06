@@ -22,7 +22,7 @@ const mockLoadEngine =
   jest.fn<
     (fallback: "on-device" | "remote") => Promise<"on-device" | "remote">
   >();
-const mockModelPresence = jest.fn<() => { status: string }>();
+const mockModelPresence = jest.fn<(id?: unknown) => { status: string }>();
 const mockCreateRemoteRunModel = jest.fn<() => Promise<RunModel | null>>();
 const mockRunOnDeviceModel = jest.fn<(attempt: unknown) => Promise<string>>();
 
@@ -54,7 +54,13 @@ jest.mock("@/features/recognition/engine-store", () => ({
 }));
 
 jest.mock("@/features/on-device-model/model-download", () => ({
-  modelPresence: () => mockModelPresence(),
+  modelPresence: (id: unknown) => mockModelPresence(id),
+}));
+
+const mockLoadOnDeviceModelId =
+  jest.fn<() => Promise<"gemma-4-e2b" | "gemma-4-e4b">>();
+jest.mock("@/features/on-device-model/on-device-model-store", () => ({
+  loadOnDeviceModelId: () => mockLoadOnDeviceModelId(),
 }));
 
 jest.mock("@/features/recognition/remote-runner", () => ({
@@ -81,6 +87,7 @@ beforeEach(() => {
   jest.resetAllMocks();
   mockIsOcrSupported.mockReturnValue(true);
   mockLoadEngine.mockResolvedValue("on-device");
+  mockLoadOnDeviceModelId.mockResolvedValue("gemma-4-e2b");
   mockModelPresence.mockReturnValue({ status: "present" });
   mockRecognizeTextOnDevice.mockResolvedValue({ blocks: [] });
   mockNormalizeOcrResult.mockReturnValue(BLOCKS);
@@ -170,8 +177,12 @@ describe("recognizeAccountFromScreenshot", () => {
   });
 
   describe("the engine gate", () => {
-    it("refuses a recognition whose local model is not downloaded", async () => {
-      mockModelPresence.mockReturnValue({ status: "absent" });
+    it("refuses a recognition whose selected model is not downloaded", async () => {
+      // The OTHER model being on disk must not satisfy the gate: the
+      // recognition runs whichever model the user pointed at.
+      mockModelPresence.mockImplementation((id) =>
+        id === "gemma-4-e4b" ? { status: "present" } : { status: "absent" },
+      );
 
       await expect(
         recognizeAccountFromScreenshot("file://shot.png"),

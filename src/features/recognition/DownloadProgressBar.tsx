@@ -3,7 +3,6 @@ import { Animated, StyleSheet, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 
 import { formatBytes } from "@/features/on-device-model/format-bytes";
-import { BUNDLED_MODEL } from "@/features/on-device-model/on-device-catalog";
 import { COLORS } from "@/theme/colors";
 import { RADIUS } from "@/theme/sizes";
 import { FONT_SIZE, LINE_HEIGHT } from "@/theme/typography";
@@ -13,7 +12,7 @@ import { FONT_SIZE, LINE_HEIGHT } from "@/theme/typography";
 // one motion this flow needs, and the one that answers the user's "is it
 // moving?" glance.
 type DownloadProgressBarProps = {
-  /** 0..1 across the whole model. */
+  /** 0..1 across the whole file. */
   fraction: number;
 };
 
@@ -53,14 +52,20 @@ export function DownloadProgressBar({ fraction }: DownloadProgressBarProps) {
   );
 }
 
-/** The byte readout beside the bar: "1.5 GB of 3.1 GB" via the partial copy. */
-export function DownloadByteReadout({ sizeBytes }: { sizeBytes: number }) {
+/** The byte readout beside the bar: "{{size}} of {{total}}" via the partial copy. */
+export function DownloadByteReadout({
+  sizeBytes,
+  totalBytes,
+}: {
+  sizeBytes: number;
+  totalBytes: number;
+}) {
   const { t } = useTranslation();
   return (
     <Text style={styles.readout}>
       {t("settings.engine.partialDownload", {
         size: formatBytes(sizeBytes),
-        total: formatBytes(BUNDLED_MODEL.sizeBytes),
+        total: formatBytes(totalBytes),
       })}
     </Text>
   );

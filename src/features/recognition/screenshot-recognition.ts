@@ -25,6 +25,7 @@ import {
 } from "@/features/recognition/ocr-engine";
 import { loadRecognitionEngine } from "@/features/recognition/engine-store";
 import { modelPresence } from "@/features/on-device-model/model-download";
+import { loadOnDeviceModelId } from "@/features/on-device-model/on-device-model-store";
 import {
   prewarmOnDeviceContext,
   releaseOnDeviceContext,
@@ -73,7 +74,13 @@ export class EngineNotReadyError extends Error {
 async function resolveRunModel() {
   const engine = await loadRecognitionEngine("on-device");
   if (engine === "on-device") {
-    return modelPresence().status === "present" ? runOnDeviceModel : null;
+    // The SELECTED model's presence, not any model's: two models can be on
+    // disk and the choice still matters — the recognition runs whichever the
+    // user pointed at.
+    const modelId = await loadOnDeviceModelId();
+    return modelPresence(modelId).status === "present"
+      ? runOnDeviceModel
+      : null;
   }
   return createRemoteRunModel();
 }

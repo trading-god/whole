@@ -1,40 +1,40 @@
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
 
-import { BUNDLED_MODEL } from "@/features/on-device-model/on-device-catalog";
 import {
-  bundledModelStorageBytes,
-  resolveBundledModelPath,
-} from "@/features/on-device-model/model-source";
+  ON_DEVICE_MODELS,
+  onDeviceModel,
+} from "@/features/on-device-model/on-device-catalog";
+import { resolveOnDeviceModelPath } from "@/features/on-device-model/model-source";
 
 // expo-file-system is the single native seam; the fake below keeps the real
 // constructor's joining semantics (a directory as a uri, then path segments)
-// so the tests assert the ACTUAL directory name, not one invented here.
+// so the tests assert the ACTUAL directory names, not ones invented here.
 const mockFile = {
   exists: false,
-  // Keyed by file name so a test can make ONE shard wrong; anything absent
-  // from the map reports nothing (a missing file).
-  sizes: new Map<string, number>(),
-  deleted: [] as string[],
+  size: 0,
 };
 
 jest.mock("expo-file-system", () => {
   class FakeFile {
     private readonly segments: string[];
-    constructor(...segments: (string | { uri: string })[]) {
+    constructor(
+      ...segments: (
+        | string
+        | { uri: string }
+        | { files?: unknown; create?: unknown; delete?: unknown }
+      )[]
+    ) {
       this.segments = segments.map((segment) =>
-        typeof segment === "string" ? segment : segment.uri,
+        typeof segment === "string"
+          ? segment
+          : (segment as { uri: string }).uri,
       );
     }
     get exists(): boolean {
       return mockFile.exists;
     }
     get size(): number {
-      // Seeded per test from the catalog; a factory may not reach a
-      // non-`mock`-prefixed binding, so the sizes arrive through `mockFile`.
-      return mockFile.sizes.get(this.segments[this.segments.length - 1]) ?? 0;
-    }
-    delete(): void {
-      mockFile.deleted.push(this.segments[this.segments.length - 1]);
+      return mockFile.size;
     }
     get uri(): string {
       return this.segments.join("/");
@@ -49,48 +49,66 @@ jest.mock("expo-file-system", () => {
 beforeEach(() => {
   jest.clearAllMocks();
   mockFile.exists = false;
-  // Every shard healthy by default; a test that wants a corrupt or missing
-  // one deletes/overwrites its entry.
-  mockFile.sizes = new Map(
-    BUNDLED_MODEL.shards.map((shard) => [shard.fileName, shard.sizeBytes]),
-  );
-  mockFile.deleted = [];
+  mockFile.size = 0;
 });
 
-describe("bundledModelStorageBytes", () => {
-  it("reports one copy — the same number on both platforms", () => {
-    // The weights are downloaded to filesDir and read in place; the bundled
-    // era's Android double copy (APK + extraction) is gone, which is the whole
-    // point of the download flow.
-    expect(bundledModelStorageBytes()).toBe(BUNDLED_MODEL.sizeBytes);
+describe("resolveOnDeviceModelPath", () => {
+  it("hands over the model's file path when it is present at the right size", () => {
+    const model = onDeviceModel("gemma-4-e4b");
+    mockFile.exists = true;
+    mockFile.size = model.sizeBytes;
+
+    // The REAL layout — the model's own directory (its id) under the model
+    // root, named by the catalog; a rename anywhere must fail this test
+    // rather than silently diverge from `model-download.ts`.
+    expect(resolveOnDeviceModelPath("gemma-4-e4b")).toBe(
+      `file:///docs/whole_models/${model.id}/${model.fileName}`,
+    );
+  });
+
+  it("refuses to proceed when the file is missing", () => {
+    mockFile.exists = false;
+
+    expect(() => resolveOnDeviceModelPath("gemma-4-e2b")).toThrow(
+      /not downloaded/,
+    );
+  });
+
+  it("refuses to proceed when the file is the wrong size", () => {
+    mockFile.exists = true;
+    mockFile.size = 12;
+
+    // A truncated file would fail deep inside the loader with a message
+    // about GGUF headers; this says what the user can act on.
+    expect(() => resolveOnDeviceModelPath("gemma-4-e2b")).toThrow(
+      /not downloaded/,
+    );
+  });
+
+  it("names the model in the error", () => {
+    mockFile.exists = false;
+
+    expect(() => resolveOnDeviceModelPath("gemma-4-e4b")).toThrow(
+      /Gemma 4 E4B/,
+    );
   });
 });
 
-describe("resolveBundledModelPath", () => {
-  it("hands over the first shard's filesDir path when every shard is present", () => {
-    mockFile.exists = true;
-
-    const path = resolveBundledModelPath();
-
-    // The REAL directory name — `model-download.ts` writes into
-    // `whole_models`, and nothing re-declares it; a rename here must fail this
-    // test rather than silently diverge.
-    expect(path).toBe(`file:///docs/whole_models/${BUNDLED_MODEL.fileName}`);
+describe("the catalog", () => {
+  it("lists the models smallest-first with the E2B default", () => {
+    const [first, second] = ON_DEVICE_MODELS;
+    expect(first.id).toBe("gemma-4-e2b");
+    expect(second.id).toBe("gemma-4-e4b");
+    expect(first.sizeBytes).toBeLessThan(second.sizeBytes);
   });
 
-  it("refuses to proceed when a shard is missing", () => {
-    mockFile.exists = true;
-    mockFile.sizes.delete(BUNDLED_MODEL.shards[2].fileName);
-
-    expect(() => resolveBundledModelPath()).toThrow(/not downloaded/);
-  });
-
-  it("refuses to proceed when a shard is the wrong size", () => {
-    mockFile.exists = true;
-    mockFile.sizes.set(BUNDLED_MODEL.shards[1].fileName, 12);
-
-    // A truncated file would fail deep inside the loader with a message about
-    // GGUF headers; this says what the user can act on.
-    expect(() => resolveBundledModelPath()).toThrow(/not downloaded/);
+  it("carries the RAM demand distinct from the file size", () => {
+    // The two numbers answer different questions — "do I have disk" and
+    // "can my device hold it running" — and both ride the catalog so the
+    // UI states them from one source.
+    for (const model of ON_DEVICE_MODELS) {
+      expect(model.ramBytes).toBeGreaterThan(0);
+      expect(model.ramBytes).not.toBe(model.sizeBytes);
+    }
   });
 });

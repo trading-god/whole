@@ -155,10 +155,13 @@ export const zhHansMessages = {
       downloadFailed: "下载未完成。请检查网络后重试——已下载的部分会保留。",
       downloaded: "已下载",
       downloadHint: "占用约 {{size}} 存储空间，建议在 Wi-Fi 下下载。",
+      // 单个模型行的成本行——存储和内存两笔账都在，因为 E2B/E4B 的选择
+      // 对设备而言正是取决于这两个数字。
+      modelCosts: "{{size}} 存储 · 运行时约需 {{ram}} 内存",
       deleteModel: "删除模型",
       deleteModelHint: "释放 {{size}}。删除后识别功能关闭，需重新下载。",
       notDownloaded: "未下载",
-      partialDownload: "已下载一部分（{{size}} / {{total}}）",
+      partialDownload: "{{size}} / {{total}}",
       baseUrl: "服务地址",
       baseUrlHint: "服务商的 https:// 地址，例如 https://api.deepseek.com/v1",
       model: "模型",

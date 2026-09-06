@@ -1,16 +1,25 @@
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
 
-import { BUNDLED_MODEL } from "@/features/on-device-model/on-device-catalog";
+import {
+  DEFAULT_ON_DEVICE_MODEL,
+  ON_DEVICE_MODELS,
+  onDeviceModel,
+} from "@/features/on-device-model/on-device-catalog";
 import {
   deleteModel,
   downloadModel,
+  modelDirectory,
+  downloadedModelIds,
+  modelFile,
   modelPresence,
 } from "@/features/on-device-model/model-download";
 
 // expo-file-system is the single seam, faked inside the jest.mock factory
 // (class bindings outside it are not initialized when the factory runs).
 // The fake's state lives in these mock-prefixed bindings so tests can stage
-// per-file state from outside.
+// per-file state from outside. The fake File keys on the LAST constructor
+// segment, and the fake Directory on the second-to-last (…/<modelId>), which
+// is exactly the real layout: document/whole_models/<modelId>/<fileName>.
 const mockFiles = new Map<
   string,
   { exists: boolean; size: number; deleted: boolean }
@@ -31,13 +40,9 @@ jest.mock("expo-file-system", () => {
         | { files?: unknown; create?: unknown; delete?: unknown }
       )[]
     ) {
-      // The real constructor joins a directory (as a uri) with path segments;
-      // the LAST segment is the file name every member here keys on.
       const last = segments[segments.length - 1];
       this.name = typeof last === "string" ? last : "";
     }
-    // A File built from the download's outcome, so `move` and `size` behave
-    // as the real returned File does.
     static fromDownload(name: string, size: number): MockFile {
       mockFiles.set(name, { exists: true, size, deleted: false });
       return new MockFile(name);
@@ -58,7 +63,7 @@ jest.mock("expo-file-system", () => {
       }
     }
     get uri(): string {
-      return `file:///docs/whole_models/${this.name}`;
+      return `file:///docs/whole_models/<model>/${this.name}`;
     }
     move(destination: MockFile): Promise<void> {
       const partial = mockFiles.get(this.name);
@@ -78,6 +83,8 @@ jest.mock("expo-file-system", () => {
         | { files?: unknown; create?: unknown; delete?: unknown }
       )[]
     ) {
+      // The model id: the segment AFTER the root directory name, i.e. the
+      // last one when the constructor is (Paths.document, root, modelId).
       const last = segments[segments.length - 1];
       this.name = typeof last === "string" ? last : "";
     }
@@ -108,21 +115,20 @@ beforeEach(() => {
   mockDirectories.clear();
   mockDownloadShouldFail = false;
   mockDownloadedSize = null;
-  // The download lands a `.part` the runner moves into place; a test that
-  // wants a truncated or failing download overrides these. Size is per shard,
-  // taken from the catalog by the `.part` name.
+  // The download lands a `.part` the caller moves into place; a test that
+  // wants a truncated or failing download overrides these. Size is per
+  // MODEL, taken from the catalog by the `.part` name.
   mockDownloads.mockImplementation(
     async (_url: string, destination: string) => {
       if (mockDownloadShouldFail) {
         throw new Error("network");
       }
-      const shardName = destination.replace(/\.part$/, "");
-      const shard = BUNDLED_MODEL.shards.find(
-        (candidate) => candidate.fileName === shardName,
+      const fileName = destination.replace(/\.part$/, "");
+      const model = ON_DEVICE_MODELS.find(
+        (candidate) => candidate.fileName === fileName,
       );
-      const size = mockDownloadedSize ?? shard?.sizeBytes ?? 0;
-      // The REAL return shape: a File (here the mocked class, via a static the
-      // factory can reach), so the caller's `move`/`size` calls work.
+      const size = mockDownloadedSize ?? model?.sizeBytes ?? 0;
+      // The REAL return shape: a File, so the caller's `move`/`size` calls work.
       const { File } = jest.requireMock("expo-file-system") as {
         File: { fromDownload: (name: string, size: number) => unknown };
       };
@@ -131,77 +137,99 @@ beforeEach(() => {
   );
 });
 
-describe("modelPresence", () => {
-  it("reports absent when nothing is on disk", () => {
-    expect(modelPresence()).toEqual({ status: "absent" });
+describe("the model layout", () => {
+  it("gives each model its own directory under the model root", () => {
+    // The directory name is the model id: two downloaded models never fight
+    // over file names, and deleting one leaves the other whole.
+    for (const model of ON_DEVICE_MODELS) {
+      expect(modelDirectory(model.id)).toBeTruthy();
+    }
   });
 
-  it("reports present when every shard is there at the right size", () => {
-    for (const shard of BUNDLED_MODEL.shards) {
-      stage(shard.fileName, shard.sizeBytes);
-    }
+  it("names the model's file after the catalog's fileName", () => {
+    expect(modelFile(DEFAULT_ON_DEVICE_MODEL.id).uri).toContain(
+      DEFAULT_ON_DEVICE_MODEL.fileName,
+    );
+  });
+});
 
-    expect(modelPresence()).toEqual({
+describe("modelPresence", () => {
+  it("reports absent when nothing is on disk", () => {
+    expect(modelPresence("gemma-4-e2b")).toEqual({ status: "absent" });
+  });
+
+  it("reports present when the file is there at the right size", () => {
+    const model = onDeviceModel("gemma-4-e2b");
+    stage(model.fileName, model.sizeBytes);
+
+    expect(modelPresence("gemma-4-e2b")).toEqual({
       status: "present",
-      sizeBytes: BUNDLED_MODEL.sizeBytes,
+      sizeBytes: model.sizeBytes,
     });
   });
 
-  it("reports partial when one shard is missing, counting only whole shards", () => {
-    const [first, ...rest] = BUNDLED_MODEL.shards;
-    stage(first.fileName, first.sizeBytes);
-    for (const shard of rest.slice(0, -1)) {
-      stage(shard.fileName, shard.sizeBytes);
-    }
+  it("deletes a wrong-sized file so the next download retries it", () => {
+    const model = onDeviceModel("gemma-4-e4b");
+    stage(model.fileName, 12);
 
-    const presence = modelPresence();
-    expect(presence.status).toBe("partial");
-    // The LAST shard's bytes are absent from the count: a missing shard is
-    // not progress toward downloaded.
-    expect(presence.status === "partial" && presence.sizeBytes).toBe(
-      BUNDLED_MODEL.sizeBytes - BUNDLED_MODEL.shards[2].sizeBytes,
-    );
+    const presence = modelPresence("gemma-4-e4b");
+
+    expect(presence).toEqual({ status: "partial", sizeBytes: 12 });
+    expect(mockFiles.get(model.fileName)?.deleted).toBe(true);
   });
 
-  it("deletes a wrong-sized shard so the next download retries it", () => {
-    for (const shard of BUNDLED_MODEL.shards) {
-      stage(shard.fileName, shard.sizeBytes);
-    }
-    const truncated = BUNDLED_MODEL.shards[1].fileName;
-    mockFiles.set(truncated, { exists: true, size: 12, deleted: false });
+  it("keeps the two models' presence independent", () => {
+    const e2b = onDeviceModel("gemma-4-e2b");
+    stage(e2b.fileName, e2b.sizeBytes);
 
-    const presence = modelPresence();
+    expect(modelPresence("gemma-4-e2b").status).toBe("present");
+    expect(modelPresence("gemma-4-e4b").status).toBe("absent");
+  });
+});
 
-    expect(presence.status).toBe("partial");
-    expect(mockFiles.get(truncated)?.deleted).toBe(true);
+describe("downloadedModelIds", () => {
+  it("lists only the models whose file is on disk", () => {
+    const e4b = onDeviceModel("gemma-4-e4b");
+    stage(e4b.fileName, e4b.sizeBytes);
+
+    expect(downloadedModelIds()).toEqual(["gemma-4-e4b"]);
   });
 });
 
 describe("downloadModel", () => {
-  it("downloads every missing shard and reports progress across the whole set", async () => {
+  it("downloads the model's file and reports progress to exactly 1", async () => {
+    const model = onDeviceModel("gemma-4-e2b");
     const progress: number[] = [];
-    // First shard already complete: a resumed download starts from its
-    // bytes, not from zero.
-    stage(BUNDLED_MODEL.shards[0].fileName, BUNDLED_MODEL.shards[0].sizeBytes);
 
-    await downloadModel(({ fraction }) => progress.push(fraction));
+    await downloadModel("gemma-4-e2b", ({ fraction }) =>
+      progress.push(fraction),
+    );
 
-    // Both remaining shards landed…
-    for (const shard of BUNDLED_MODEL.shards) {
-      expect(mockFiles.get(shard.fileName)?.exists).toBe(true);
-    }
-    // …the final progress tick is exactly 1, and no tick ever claims more.
+    expect(mockFiles.get(model.fileName)?.exists).toBe(true);
+    // The final tick is exactly 1, and no tick ever claims more.
     expect(progress[progress.length - 1]).toBe(1);
     for (const fraction of progress) {
       expect(fraction).toBeLessThanOrEqual(1);
     }
+    expect(modelPresence("gemma-4-e2b").status).toBe("present");
   });
 
-  it("throws when a download fails mid-set", async () => {
+  it("downloads from the catalog's URL", async () => {
+    await downloadModel("gemma-4-e4b", () => {
+      // progress ignored
+    });
+
+    expect(mockDownloads).toHaveBeenCalledWith(
+      onDeviceModel("gemma-4-e4b").url,
+      expect.any(String),
+    );
+  });
+
+  it("throws when the download fails", async () => {
     mockDownloadShouldFail = true;
 
     await expect(
-      downloadModel(() => {
+      downloadModel("gemma-4-e2b", () => {
         // progress ignored
       }),
     ).rejects.toThrow("network");
@@ -211,50 +239,43 @@ describe("downloadModel", () => {
     mockDownloadedSize = 999;
 
     await expect(
-      downloadModel(() => {
+      downloadModel("gemma-4-e2b", () => {
         // progress ignored
       }),
     ).rejects.toThrow(/expected/);
 
-    // The `.part` was cleaned up: a retry does not start out of disk.
-    expect(
-      [...mockFiles.values()].some(
-        (entry) => entry.exists && entry.deleted !== undefined,
-      ),
-    ).toBe(false);
-    expect(
-      [...mockFiles.keys()].filter((name) => name.endsWith(".part")).length,
-    ).toBeGreaterThan(0);
-    // And nothing was moved into place: the shards' final names never exist.
-    expect(modelPresence().status).toBe("absent");
+    // The `.part` is gone and nothing was moved into place.
+    expect(modelPresence("gemma-4-e2b").status).toBe("absent");
   });
 
-  it("removes a stale .part before downloading into it", async () => {
-    const partName = `${BUNDLED_MODEL.shards[0].fileName}.part`;
-    stage(partName, 5);
+  it("removes a stale .part and a wrong-sized file before downloading", async () => {
+    const model = onDeviceModel("gemma-4-e2b");
+    stage(model.fileName, 5); // wrong-sized leftover
+    stage(`${model.fileName}.part`, 7); // stale partial
 
-    await downloadModel(() => {
+    await downloadModel("gemma-4-e2b", () => {
       // progress ignored
     });
 
-    // `downloadFileAsync` was called (it would reject over an existing file)
-    // and the model is complete.
+    // `downloadFileAsync` ran (it would reject over an existing file) and
+    // the model is complete.
     expect(mockDownloads).toHaveBeenCalled();
-    expect(modelPresence().status).toBe("present");
+    expect(modelPresence("gemma-4-e2b").status).toBe("present");
   });
 });
 
 describe("deleteModel", () => {
-  it("removes the model directory", () => {
-    mockDirectories.add("whole_models");
-    stage(BUNDLED_MODEL.shards[0].fileName, BUNDLED_MODEL.shards[0].sizeBytes);
+  it("removes the model's directory", () => {
+    const model = onDeviceModel("gemma-4-e2b");
+    mockDirectories.add(model.id);
+    stage(model.fileName, model.sizeBytes);
 
-    deleteModel();
+    deleteModel("gemma-4-e2b");
 
-    expect(mockDirectories.has("whole_models")).toBe(false);
+    expect(mockDirectories.has(model.id)).toBe(false);
   });
 
   it("is a no-op when the model is absent", () => {
-    expect(() => deleteModel()).not.toThrow();
+    expect(() => deleteModel("gemma-4-e4b")).not.toThrow();
   });
 });
