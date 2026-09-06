@@ -132,3 +132,17 @@ index 407a62cb99c211778fcb4b946ff9b75764d3b8fb..00000000000000000000000000000000
      try {
        boolean loaded = RNLlama.loadNative(context);
        if (!loaded) {
+diff --git a/package.json b/package.json
+index 0d3c493..d8d5dc7 100644
+--- a/package.json
++++ b/package.json
+@@ -76,6 +76,9 @@
+   "publishConfig": {
+     "registry": "https://registry.npmjs.org/"
+   },
++  "dependencies": {
++    "@expo/config-plugins": ">=54.0.2"
++  },
+   "devDependencies": {
+     "@commitlint/config-conventional": "^17.0.2",
+     "@evilmartians/lefthook": "^1.2.2",
