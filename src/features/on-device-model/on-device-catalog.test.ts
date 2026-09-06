@@ -1,78 +1,67 @@
-import { readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-
 import { describe, expect, it } from "vitest";
 
-import { BUNDLED_MODEL } from "@/features/on-device-model/on-device-catalog";
+import {
+  DEFAULT_ON_DEVICE_MODEL,
+  ON_DEVICE_MODELS,
+  onDeviceModel,
+} from "@/features/on-device-model/on-device-catalog";
 
 // The catalog is a constant; the assertions pin the invariants its consumers
-// rely on — the settings card formats the size, and the prebuild plugin copies
-// every shard into both native bundles.
-// An LFS pointer is a few lines of text; a shard is gigabytes. Nothing in
-// between exists, so the threshold does not need to be precise.
-const LFS_POINTER_MAX_BYTES = 4096;
-
-function shardsOnDisk(): { name: string; size: number }[] {
-  const dir = fileURLToPath(new URL("../../../assets/models", import.meta.url));
-  return readdirSync(dir)
-    .filter((name) => name.endsWith(".gguf"))
-    .sort()
-    .map((name) => ({ name, size: statSync(join(dir, name)).size }));
-}
-
-describe("BUNDLED_MODEL", () => {
-  it("points the runtime at the first shard", () => {
-    // llama.cpp resolves a split model's siblings from the FIRST shard's name,
-    // so the path handed to the runtime has to be that one and no other.
-    expect(BUNDLED_MODEL.fileName).toBe(BUNDLED_MODEL.shards[0]?.fileName);
+// rely on — the downloader's URL and size check, the presence gate, and the
+// settings screen's cost lines all read from here.
+describe("ON_DEVICE_MODELS", () => {
+  it("lists the E2B and the E4B, smallest first", () => {
+    expect(ON_DEVICE_MODELS.map((model) => model.id)).toEqual([
+      "gemma-4-e2b",
+      "gemma-4-e4b",
+    ]);
+    expect(DEFAULT_ON_DEVICE_MODEL.id).toBe("gemma-4-e2b");
   });
 
-  it("keeps every shard under the 2 GiB zip64 line", () => {
-    // The split exists for two reasons (see the catalog): Android's APK is a
-    // zip, where sub-2-GiB members stay clear of zip64 edge cases on older
-    // extractors, and llama.cpp loads split models from the FIRST shard's
-    // name. One shard over the line reintroduces exactly the zip64 edge cases
-    // the split was bought to avoid.
-    for (const shard of BUNDLED_MODEL.shards) {
-      expect(shard.sizeBytes).toBeLessThan(2 ** 31);
+  it("gives each model a distinct id, file, and directory-safe name", () => {
+    // The id is the kv-store value AND the disk directory name; two models
+    // sharing any of these would overwrite each other's weights.
+    const ids = new Set(ON_DEVICE_MODELS.map((model) => model.id));
+    const files = new Set(ON_DEVICE_MODELS.map((model) => model.fileName));
+    expect(ids.size).toBe(ON_DEVICE_MODELS.length);
+    expect(files.size).toBe(ON_DEVICE_MODELS.length);
+  });
+
+  it("declares exact byte counts for both models", () => {
+    // `sizeBytes` is not decoration: the presence check DELETES a file whose
+    // size does not match, so a stale number would make every download land
+    // and be thrown away again. Pinned to the unsloth release's actual
+    // content lengths.
+    const e2b = onDeviceModel("gemma-4-e2b");
+    const e4b = onDeviceModel("gemma-4-e4b");
+    expect(e2b.sizeBytes).toBe(3_106_738_272);
+    expect(e4b.sizeBytes).toBe(4_977_171_584);
+  });
+
+  it("serves each model from its own unsloth repo path", () => {
+    // The URL is the downloader's whole request; the name inside it is the
+    // file the byte count above was measured against.
+    for (const model of ON_DEVICE_MODELS) {
+      expect(model.url).toMatch(
+        /^https:\/\/huggingface\.co\/unsloth\/gemma-4-E[24]B-it-GGUF\/resolve\/main\//,
+      );
+      expect(model.url.endsWith(model.fileName)).toBe(true);
     }
   });
 
-  it("sizes the model as the sum of its shards", () => {
-    const total = BUNDLED_MODEL.shards.reduce(
-      (sum, shard) => sum + shard.sizeBytes,
-      0,
-    );
-    expect(BUNDLED_MODEL.sizeBytes).toBe(total);
-    expect(BUNDLED_MODEL.sizeBytes).toBeGreaterThan(3_000_000_000);
-  });
-
-  it("names exactly the shards the prebuild plugin bundles", () => {
-    // The plugin derives its file list from assets/models/ at prebuild; the
-    // catalog declares the same set for the app. Nothing at build time ties
-    // them together, so this pins the NAMES: a new quant dropped into the
-    // directory without a catalog update fails here instead of at first load
-    // on device. CI checkouts hold LFS pointers, not weights — the names are
-    // identical either way, and names are all this asserts.
-    expect(shardsOnDisk().map(({ name }) => name)).toEqual(
-      BUNDLED_MODEL.shards.map((shard) => shard.fileName),
-    );
-  });
-
-  it("declares each shard's real size wherever the weights are present", () => {
-    // `sizeBytes` is not decoration: on Android `resolveBundledModelPath`
-    // DELETES an extracted shard whose size does not match, so a stale number
-    // would make every launch extract three gigabytes and throw them away
-    // again. Skipped where the checkout holds LFS pointers (CI), asserted
-    // everywhere the weights actually are — which includes any machine that
-    // can build the app.
-    const onDisk = shardsOnDisk();
-    if (onDisk.every(({ size }) => size < LFS_POINTER_MAX_BYTES)) {
-      return;
+  it("states a RAM demand larger than a small phone holds", () => {
+    // The RAM line exists to warn a user whose device cannot run the model;
+    // a number in the megabytes would read as a copy error and understate
+    // the demand.
+    for (const model of ON_DEVICE_MODELS) {
+      expect(model.ramBytes).toBeGreaterThan(2_000_000_000);
     }
-    expect(onDisk.map(({ size }) => size)).toEqual(
-      BUNDLED_MODEL.shards.map((shard) => shard.sizeBytes),
-    );
+  });
+
+  it("falls back to the default for an unknown id", () => {
+    // `onDeviceModel` never throws: a stored preference naming a model a
+    // later catalog removed degrades to the default rather than crashing a
+    // launch. The cast is the test's point — the type does not allow it.
+    expect(onDeviceModel("gone" as never)).toBe(DEFAULT_ON_DEVICE_MODEL);
   });
 });

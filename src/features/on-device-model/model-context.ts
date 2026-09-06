@@ -1,7 +1,7 @@
-// The llama.cpp context over the bundled model weights: load, keep warm, free.
+// The llama.cpp context over the on-device model weights: load, keep warm, free.
 //
-// The context is expensive to build (seconds, and ~2–3 GB of RAM) but cheap to
-// keep warm, and a recognition may take up to three attempts against it. So
+// The context is expensive to build (seconds, and gigabytes of RAM) but cheap
+// to keep warm, and a recognition may take up to three attempts against it. So
 // the context is a module-level singleton, created on first use and held
 // behind an idle-release timer: it is freed only after the timer has run out
 // unused, so consecutive recognitions skip the init cost while a forgotten
@@ -11,6 +11,12 @@
 // "Eventually" is why there are TWO paths to a release: the idle timer only
 // runs while the app is in the foreground, so backgrounding frees the context
 // as well.
+//
+// The singleton is bound to ONE model at a time — the id in
+// `contextModelId`. `selectOnDeviceModel` swaps it: a model switch releases
+// the old context (the E2B context is useless for running E4B, and holding
+// both is exactly the memory crunch the lifecycle exists to avoid) and the
+// next completion loads the new weights.
 //
 // It lives in the on-device-model feature (not recognition) because it is the
 // weights' lifecycle, not the recognizer's: the settings screen's Test button
@@ -30,9 +36,12 @@ import {
   errorMessage,
 } from "@/features/on-device-model/model-error";
 import {
-  canLoadBundledModelDirectly,
-  resolveBundledModelPath,
-} from "@/features/on-device-model/model-source";
+  DEFAULT_ON_DEVICE_MODEL,
+  type OnDeviceModelId,
+  onDeviceModel,
+} from "@/features/on-device-model/on-device-catalog";
+import { loadOnDeviceModelId } from "@/features/on-device-model/on-device-model-store";
+import { resolveOnDeviceModelPath } from "@/features/on-device-model/model-source";
 
 // ── Context singleton ──────────────────────────────────────────────────────
 
@@ -102,8 +111,25 @@ let completionQueue: Promise<unknown> = Promise.resolve();
 
 let contextPromise: Promise<LlamaContext> | null = null;
 // The release in progress, if any: a load starting inside its window awaits it
-// rather than building a second ~3 GB context beside one still being freed.
+// rather than building a second multi-gigabyte context beside one still being
+// freed.
 let releasing: Promise<void> | null = null;
+
+// Which model the singleton context is (being) built over. Read at LOAD
+// time, never after: a completion in flight keeps its context whatever this
+// says now, and the next load reads whatever this says then. Null until the
+// first load or selection — and on a cold module the first load resolves it
+// from the STORED preference (the same value the recognition gate and the
+// settings rows read), so a relaunch honors a stored non-default selection
+// instead of silently falling back to the default model.
+let contextModelId: OnDeviceModelId | null = null;
+
+// Which model the context the singleton CURRENTLY holds was built over.
+// `contextModelId` moves the moment a selection changes; this moves only when
+// a load binds — the gap between the two is "a switch is pending", which is
+// what tells the lease below to free the old context rather than arm the
+// idle timer on it (see `withOnDeviceContext`).
+let contextBoundModelId: OnDeviceModelId | null = null;
 
 function ensureContext(): Promise<LlamaContext> {
   if (contextPromise === null) {
@@ -114,24 +140,44 @@ function ensureContext(): Promise<LlamaContext> {
     // so the two would wait on each other and neither would ever settle.
     const priorRelease = releasing;
     watchAppStateForRelease();
+    // Same capture discipline: the id this load binds to, read before any
+    // await, so a `selectOnDeviceModel` landing mid-load cannot rewrite the
+    // goalposts under a load already running. Null (nothing selected this
+    // session) means the STORED preference — resolved inside the body, where
+    // the async read lives — and the load CLAIMS the resolved id, so a later
+    // select of a different model releases this context rather than assuming
+    // none.
+    const claimed = contextModelId;
+    let modelId: OnDeviceModelId = claimed ?? DEFAULT_ON_DEVICE_MODEL.id;
     const load = (async () => {
       try {
-        // The JSI install first: on Android, the patched llama.rn module
-        // extracts the bundled shards into filesDir inside `install()`, and
-        // the filesDir path `resolveBundledModelPath` returns does not exist
-        // until that has run.
         await ensureJsiInstalled();
         // Swallowed: a release that FAILED is not this load's problem, and
         // rethrowing it here would report a perfectly loadable model as
         // unloadable. The wait is only for the memory to come back.
         await priorRelease?.catch(() => {});
-        const modelPath = await resolveBundledModelPath();
+        if (claimed === null) {
+          modelId = await loadOnDeviceModelId();
+        }
+        // Claim only when nobody selected meanwhile. A `selectOnDeviceModel`
+        // that landed while the store read was in flight already recorded its
+        // id — and its release decision was made against a null `previous`,
+        // so no release is coming from it. Overwriting the id here would
+        // drop that selection; leaving it makes the lease's exit see the
+        // divergence (`contextBoundModelId !== contextModelId`) and free this
+        // wrong-model context the moment the in-flight use ends, so the next
+        // load binds to what was selected.
+        if (contextModelId === null || contextModelId === claimed) {
+          contextModelId = modelId;
+        }
+        contextBoundModelId = modelId;
+        const modelPath = resolveOnDeviceModelPath(modelId);
         return await initLlama({
           model: modelPath,
-          // iOS: the model ships as an Xcode resource; llama.rn resolves the
-          // name against the main bundle natively. Android: the path is already
-          // a filesystem path (filesDir), and the flag is ignored there.
-          is_model_asset: canLoadBundledModelDirectly(),
+          // A downloaded filesDir path on both platforms; the flag is llama.rn's
+          // NSBundle asset lookup, which no longer applies — the weights are not
+          // bundle resources.
+          is_model_asset: false,
           n_ctx: ANNOTATION_INFERENCE.contextWindow,
           // All layers on the accelerator. Metal takes the whole model; on
           // Android (CPU in v1) the engine clamps this to what it can use.
@@ -143,7 +189,7 @@ function ensureContext(): Promise<LlamaContext> {
         throw error instanceof OnDeviceModelError
           ? error
           : new OnDeviceModelError(
-              `the model context would not load: ${errorMessage(error)}`,
+              `the ${onDeviceModel(modelId).name} context would not load: ${errorMessage(error)}`,
             );
       }
     })();
@@ -253,12 +299,46 @@ export async function releaseOnDeviceContext(): Promise<void> {
   } finally {
     // Only if no LATER release has taken the slot. Clearing unconditionally
     // would drop a newer release's guard while it is still freeing, and the
-    // next load would then build a second ~3 GB context beside it — the exact
-    // thing `releasing` exists to prevent.
+    // next load would then build a second multi-gigabyte context beside it —
+    // the exact thing `releasing` exists to prevent.
     if (releasing === thisRelease) {
       releasing = null;
     }
   }
+}
+
+/**
+ * Points the context at a different model, releasing whatever is loaded.
+ *
+ * Called by the settings screen when the user switches models (and by nobody
+ * else). A no-op when the id is already current — including when a load of it
+ * is still running. When it changes, the current context is released exactly
+ * as the idle timer would, and the NEXT completion loads the new weights:
+ * releasing here rather than loading keeps the swap O(1) for the caller and
+ * means a switched-away model is never sitting warm beside a load of the new
+ * one — the memory crunch this lifecycle exists to avoid.
+ *
+ * Lease-aware like every release: a recognition still running on the old
+ * model finishes on it. A switch that lands while a lease is open cannot
+ * release (nothing may be freed under a running completion), so the lease's
+ * exit re-issues the release — the swap takes effect on the first load after
+ * the in-flight completion ends, never a minute later.
+ */
+export async function selectOnDeviceModel(id: OnDeviceModelId): Promise<void> {
+  // A null `contextModelId` means nothing is loaded or selected yet —
+  // selecting anything then just records the choice (the next load resolves
+  // it, from the store if nothing else), with no context to release. Same for
+  // re-selecting the current model, including while a load of it is still
+  // running.
+  const previous = contextModelId;
+  contextModelId = id;
+  if (previous === null || previous === id) {
+    return;
+  }
+  await releaseOnDeviceContext().catch(() => {
+    // The release's own failure handling (restore-or-drop) already ran; the
+    // swap itself is not undone by a context that would not free.
+  });
 }
 
 // ── Idle release ───────────────────────────────────────────────────────────
@@ -339,6 +419,17 @@ async function withOnDeviceContext<T>(
       // up to three times, and a flag the first attempt consumed would leave
       // the later ones rebuilding the context and then arming that dead timer.
       void releaseOnDeviceContext().catch(() => {});
+    } else if (
+      contextBoundModelId !== null &&
+      contextBoundModelId !== contextModelId
+    ) {
+      // A model switch landed while this lease was open — its release was a
+      // no-op (leases > 0), so the OLD model's context is still the singleton
+      // while `contextModelId` names the new one. Arming the idle timer would
+      // serve the old weights for another minute to every completion that
+      // arrives; releasing here makes the next load read the new selection,
+      // which is what the switch promised.
+      void releaseOnDeviceContext().catch(() => {});
     } else {
       armIdleRelease();
     }
@@ -374,7 +465,7 @@ export async function completeOnDevice(params: CompletionParams) {
 }
 
 /**
- * Loads the bundled model and runs a one-token completion against it.
+ * Loads the selected model and runs a one-token completion against it.
  *
  * The settings screen's Test button: it catches an unloadable model — an
  * out-of-memory device, a corrupted file — before the user spends a

@@ -25,8 +25,10 @@ const mockCompletion =
   >();
 const mockInitLlama =
   jest.fn<(params: Record<string, unknown>) => Promise<unknown>>();
-const mockResolveBundledModelPath = jest.fn<() => Promise<string>>();
+const mockResolveOnDeviceModelPath = jest.fn<(id: string) => string>();
 const mockInstallJsi = jest.fn<() => Promise<void>>();
+const mockLoadOnDeviceModelId =
+  jest.fn<() => Promise<"gemma-4-e2b" | "gemma-4-e4b">>();
 
 jest.mock("llama.rn", () => ({
   initLlama: (params: Record<string, unknown>) => mockInitLlama(params),
@@ -56,8 +58,14 @@ jest.mock("react-native/Libraries/AppState/AppState", () => ({
 }));
 
 jest.mock("@/features/on-device-model/model-source", () => ({
-  resolveBundledModelPath: () => mockResolveBundledModelPath(),
-  canLoadBundledModelDirectly: () => true,
+  resolveOnDeviceModelPath: (id: string) => mockResolveOnDeviceModelPath(id),
+}));
+
+// The stored model preference is the third seam: a cold module resolves its
+// first load's model id from it (see `ensureContext`), so the suite controls
+// what the store would say rather than letting it reach kv-store.
+jest.mock("@/features/on-device-model/on-device-model-store", () => ({
+  loadOnDeviceModelId: () => mockLoadOnDeviceModelId(),
 }));
 
 const contextInstance = () => ({
@@ -84,6 +92,8 @@ const complete = () => contextModule.completeOnDevice({ prompt: "hi" });
 const releaseOnDeviceContext = () => contextModule.releaseOnDeviceContext();
 const prewarmOnDeviceContext = () => contextModule.prewarmOnDeviceContext();
 const verifyOnDeviceModel = () => contextModule.verifyOnDeviceModel();
+const selectOnDeviceModel = (id: "gemma-4-e2b" | "gemma-4-e4b") =>
+  contextModule.selectOnDeviceModel(id);
 
 // Fake timers, so the idle release is asserted rather than waited a minute for.
 // `jest.getTimerCount()` is what "is a release armed?" reads as here.
@@ -91,10 +101,11 @@ beforeEach(() => {
   jest.resetModules();
   jest.clearAllMocks();
   jest.useFakeTimers();
-  mockResolveBundledModelPath.mockResolvedValue(
-    "file:///docs/models/model.gguf",
+  mockResolveOnDeviceModelPath.mockImplementation(
+    () => "file:///docs/models/model.gguf",
   );
   mockInstallJsi.mockResolvedValue(undefined);
+  mockLoadOnDeviceModelId.mockResolvedValue("gemma-4-e2b");
   mockInitLlama.mockImplementation(async () => contextInstance());
   mockCompletion.mockResolvedValue({ content: "ok" });
   mockRelease.mockResolvedValue(undefined);
@@ -186,8 +197,20 @@ describe("the context lease", () => {
     // (path missing → throw → install never reached).
     expect(mockInstallJsi).toHaveBeenCalledTimes(1);
     expect(mockInstallJsi.mock.invocationCallOrder[0]).toBeLessThan(
-      mockResolveBundledModelPath.mock.invocationCallOrder[0],
+      mockResolveOnDeviceModelPath.mock.invocationCallOrder[0],
     );
+  });
+
+  it("binds a cold context to the STORED model, not the default", async () => {
+    // A relaunch never runs `selectOnDeviceModel` (only a settings tap does),
+    // so the first load's id has to come from the persisted preference —
+    // otherwise a stored E4B selection loads E2B while the recognition gate
+    // checked E4B's presence.
+    mockLoadOnDeviceModelId.mockResolvedValue("gemma-4-e4b");
+
+    await complete();
+
+    expect(mockResolveOnDeviceModelPath).toHaveBeenCalledWith("gemma-4-e4b");
   });
 
   it("cancels the armed idle release for the duration of a use", async () => {
@@ -203,9 +226,9 @@ describe("the context lease", () => {
   });
 
   it("wraps a failed path resolution as an on-device model error", async () => {
-    mockResolveBundledModelPath.mockRejectedValue(
-      new Error("copy is not the expected size"),
-    );
+    mockResolveOnDeviceModelPath.mockImplementation(() => {
+      throw new Error("copy is not the expected size");
+    });
 
     await expect(complete()).rejects.toThrow(/copy is not the expected size/);
     expect(mockInitLlama).not.toHaveBeenCalled();
@@ -516,6 +539,59 @@ describe("releaseOnDeviceContext", () => {
   it("is a no-op with nothing loaded", async () => {
     await expect(releaseOnDeviceContext()).resolves.toBeUndefined();
     expect(mockRelease).not.toHaveBeenCalled();
+  });
+});
+
+describe("selectOnDeviceModel", () => {
+  it("releases the current context and loads the new weights on the next use", async () => {
+    await complete();
+
+    await selectOnDeviceModel("gemma-4-e4b");
+
+    // The E2B context is useless for running E4B, and holding both is the
+    // memory crunch the lifecycle exists to avoid — so the switch frees it.
+    expect(mockRelease).toHaveBeenCalledTimes(1);
+
+    // The next completion loads fresh (a second init), pointed at the NEW
+    // model's path.
+    mockInitLlama.mockClear();
+    mockResolveOnDeviceModelPath.mockClear();
+    await complete();
+    expect(mockInitLlama).toHaveBeenCalledTimes(1);
+    expect(mockResolveOnDeviceModelPath).toHaveBeenCalledWith("gemma-4-e4b");
+  });
+
+  it("is a no-op when the id is already current", async () => {
+    await complete();
+
+    await selectOnDeviceModel("gemma-4-e2b");
+
+    expect(mockRelease).not.toHaveBeenCalled();
+  });
+
+  it("does not free a context a completion is still running on", async () => {
+    let settleCompletion: (() => void) | null = null;
+    mockCompletion.mockReturnValue(
+      new Promise((resolve) => {
+        settleCompletion = () => resolve({ content: "ok" });
+      }),
+    );
+    const running = complete();
+    const swap = selectOnDeviceModel("gemma-4-e4b");
+    await swap;
+
+    // Lease-aware like every release: the running completion finishes on
+    // the old model, and nothing is freed under it.
+    expect(mockRelease).not.toHaveBeenCalled();
+    (settleCompletion ?? (() => {}))();
+    await running;
+    // The lease's exit re-issues the release the switch asked for: without
+    // it the OLD model's context would serve the idle window while the
+    // store, the settings rows, and the recognition gate all name the new
+    // one.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mockRelease).toHaveBeenCalledTimes(1);
   });
 });
 

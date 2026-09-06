@@ -1,5 +1,5 @@
 import Constants from "expo-constants";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { Linking, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -17,19 +17,14 @@ import {
   loadDisplayCurrency,
   saveDisplayCurrency,
 } from "@/features/assets/display-currency-store";
-import { verifyOnDeviceModel } from "@/features/on-device-model/model-context";
+import { RecognitionEngineSection } from "@/features/recognition/RecognitionEngineSection";
 import { useAppLocale } from "@/i18n";
 import { useStoredPreference } from "@/storage/use-stored-preference";
 import { COLORS } from "@/theme/colors";
 import { MIN_INTERACTIVE_SIZE } from "@/theme/layout";
 import { cardSurface, screenStyles } from "@/theme/screen-styles";
-import { RADIUS } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
-import { TONES } from "@/theme/tones";
 import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT } from "@/theme/typography";
-import { formatBytes } from "@/features/on-device-model/format-bytes";
-import { bundledModelStorageBytes } from "@/features/on-device-model/model-source";
-import { BUNDLED_MODEL } from "@/features/on-device-model/on-device-catalog";
 
 // What the settings screen has to say.
 //
@@ -37,30 +32,12 @@ import { BUNDLED_MODEL } from "@/features/on-device-model/on-device-catalog";
 // — the currency everything is converted into — which used to live only in a
 // small trigger on the home card, where nobody looking for a setting would
 // look. LANGUAGE follows the system, and says so rather than hiding the fact.
-// RECOGNITION runs on the bundled model, entirely on this device, so there is
-// nothing to configure; what is left is the two things a user can act on: SEE
-// what the phone is carrying (which model, how much storage it takes) and TEST
-// that it loads and runs, before spending a screenshot finding out. ABOUT is
-// the version.
-//
-// The Test button keeps its label. The verdict is a line of text beside it: a
-// button that turns green and reads "Working" for a moment looks like a
-// switch, and the moment it turns back the verdict is gone. A line stays until
-// the next test replaces it.
-
-type TestPhase = "idle" | "testing" | "passed" | "failed";
-
-// The label under the Test button for each settled phase; `null` while there
-// is nothing to say.
-const VERDICT_KEY = {
-  idle: null,
-  testing: "settings.onDevice.testing",
-  passed: "settings.onDevice.testPassed",
-  failed: "settings.onDevice.testFailure",
-} as const satisfies Record<TestPhase, string | null>;
+// RECOGNITION is the engine choice: which model annotates a screenshot — the
+// downloaded on-device one, or the user's own cloud service — with each
+// engine's configuration living inside its card (see
+// RecognitionEngineSection). ABOUT is the version.
 
 const APP_VERSION = Constants.expoConfig?.version ?? "";
-
 export function SettingsScreen() {
   const { t } = useTranslation();
   const { languageTag } = useAppLocale();
@@ -81,45 +58,6 @@ export function SettingsScreen() {
   const currencyOptions: PickerOption<Currency>[] = orderedDisplayCurrencies(
     defaultDisplayCurrency,
   ).map((currency) => ({ value: currency, label: currency }));
-
-  const [testPhase, setTestPhase] = useState<TestPhase>("idle");
-
-  // Loading the model takes seconds, so a test can outlive the screen: the user
-  // taps Test and navigates straight back. The state updates are gated on
-  // this — without it the settled verdict calls `setTestPhase` on a component
-  // that is gone.
-  const isMountedRef = useRef(true);
-  useEffect(() => {
-    // Set on every run, not just the first: StrictMode mounts, unmounts and
-    // mounts again, and a ref left `false` by that first cleanup would skip
-    // every branch below for the life of the screen — the Test button would
-    // spin forever with no verdict.
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
-
-  const test = useCallback(() => {
-    setTestPhase("testing");
-
-    void verifyOnDeviceModel()
-      .then(() => {
-        if (isMountedRef.current) {
-          setTestPhase("passed");
-        }
-      })
-      .catch(() => {
-        // The technical reason stays out of the UI — localized copy only
-        // (AGENTS.md: all user-visible copy goes through i18next), and the
-        // advice does not depend on which stage failed.
-        if (isMountedRef.current) {
-          setTestPhase("failed");
-        }
-      });
-  }, []);
-
-  const verdictKey = VERDICT_KEY[testPhase];
 
   return (
     <SafeAreaView style={screenStyles.safeArea}>
@@ -169,51 +107,10 @@ export function SettingsScreen() {
           </View>
         </View>
 
-        <SectionHeader title={t("settings.onDevice.title")} />
+        <SectionHeader title={t("settings.engine.title")} />
         <View style={styles.card}>
-          <Text style={styles.body}>
-            {t("settings.onDevice.description", {
-              model: BUNDLED_MODEL.name,
-              size: formatBytes(bundledModelStorageBytes()),
-            })}
-          </Text>
-          <View
-            testID="on-device-notice"
-            style={[
-              styles.noticeCard,
-              {
-                backgroundColor: TONES.safe.surface,
-                borderColor: TONES.safe.border,
-              },
-            ]}
-          >
-            <Text style={[styles.notice, { color: TONES.safe.ink }]}>
-              {t("settings.onDevice.privacyNotice")}
-            </Text>
-          </View>
-          <View style={styles.testRow}>
-            <Button
-              size="sm"
-              variant="outline"
-              fullWidth={false}
-              disabled={testPhase === "testing"}
-              loading={testPhase === "testing"}
-              onPress={test}
-            >
-              {t("settings.onDevice.test")}
-            </Button>
-            {verdictKey === null ? null : (
-              <Text
-                accessibilityLiveRegion="polite"
-                style={[
-                  styles.verdict,
-                  testPhase === "passed" && styles.verdictPassed,
-                  testPhase === "failed" && styles.verdictFailed,
-                ]}
-              >
-                {t(verdictKey)}
-              </Text>
-            )}
+          <View style={styles.engineArea}>
+            <RecognitionEngineSection />
           </View>
         </View>
 
@@ -234,6 +131,9 @@ const styles = StyleSheet.create({
   card: {
     ...cardSurface,
     paddingHorizontal: SPACING.lg,
+  },
+  engineArea: {
+    paddingVertical: SPACING.md,
   },
   row: {
     alignItems: "center",
@@ -257,46 +157,5 @@ const styles = StyleSheet.create({
     color: COLORS.muted,
     fontSize: FONT_SIZE.micro,
     lineHeight: LINE_HEIGHT.tight,
-  },
-  body: {
-    color: COLORS.ink,
-    fontSize: FONT_SIZE.bodySm,
-    lineHeight: LINE_HEIGHT.body,
-    paddingTop: SPACING.md,
-  },
-  noticeCard: {
-    // The shared card surface, repainted by the tone: the tone owns the fill
-    // and the border colour, `cardSurface` owns the hairline. The radius is
-    // the smallest on the scale — this panel is nested inside a card, so it
-    // has to read as the inner shape.
-    ...cardSurface,
-    borderRadius: RADIUS.xs,
-    marginVertical: SPACING.md,
-    paddingHorizontal: SPACING.sm,
-  },
-  notice: {
-    fontSize: FONT_SIZE.bodySm,
-    lineHeight: LINE_HEIGHT.body,
-    paddingVertical: SPACING.sm,
-  },
-  testRow: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: SPACING.md,
-    paddingBottom: SPACING.md,
-  },
-  verdict: {
-    color: COLORS.muted,
-    flex: 1,
-    fontSize: FONT_SIZE.bodySm,
-    lineHeight: LINE_HEIGHT.body,
-  },
-  verdictPassed: {
-    color: COLORS.brand,
-    fontWeight: FONT_WEIGHT.semibold,
-  },
-  verdictFailed: {
-    color: COLORS.danger,
-    fontWeight: FONT_WEIGHT.semibold,
   },
 });

@@ -3,6 +3,8 @@ import type { OcrTextBlock } from "@whole/ocr";
 
 import { recognizeAccountsWithModel } from "@/features/recognition/model-recognition";
 import { OnDeviceModelError } from "@/features/on-device-model/model-error";
+import { RemoteModelError } from "@/features/recognition/remote-model-error";
+import { runOnDeviceModel } from "@/features/recognition/on-device-runner";
 
 const mockRunModel = jest.fn<(attempt: unknown) => Promise<string>>();
 
@@ -51,7 +53,7 @@ beforeEach(() => {
 
 describe("recognizeAccountsWithModel", () => {
   it("recognizes the accounts through the bundled model", async () => {
-    const result = await recognizeAccountsWithModel(BLOCKS);
+    const result = await recognizeAccountsWithModel(BLOCKS, runOnDeviceModel);
 
     expect(result.status).toBe("recognized");
     expect(
@@ -78,7 +80,7 @@ describe("recognizeAccountsWithModel", () => {
       },
     ];
 
-    const result = await recognizeAccountsWithModel(empty);
+    const result = await recognizeAccountsWithModel(empty, runOnDeviceModel);
 
     expect(result).toEqual({
       status: "recognized",
@@ -89,7 +91,7 @@ describe("recognizeAccountsWithModel", () => {
   });
 
   it("keeps the context warm when the model was actually asked", async () => {
-    await recognizeAccountsWithModel(BLOCKS);
+    await recognizeAccountsWithModel(BLOCKS, runOnDeviceModel);
 
     // The next screenshot should skip the multi-second load.
     expect(mockRelease).not.toHaveBeenCalled();
@@ -98,7 +100,7 @@ describe("recognizeAccountsWithModel", () => {
   it("reports a model that never held the contract as invalid-output", async () => {
     mockRunModel.mockResolvedValue("not json");
 
-    const result = await recognizeAccountsWithModel(BLOCKS);
+    const result = await recognizeAccountsWithModel(BLOCKS, runOnDeviceModel);
 
     expect(result).toMatchObject({ status: "failed", cause: "invalid-output" });
   });
@@ -110,15 +112,27 @@ describe("recognizeAccountsWithModel", () => {
     // whose advice is "free up memory", which is why one class covers them.
     mockRunModel.mockRejectedValue(new OnDeviceModelError("out of memory"));
 
-    const result = await recognizeAccountsWithModel(BLOCKS);
+    const result = await recognizeAccountsWithModel(BLOCKS, runOnDeviceModel);
 
     expect(result).toMatchObject({ status: "failed", cause: "load-failed" });
+  });
+
+  it("reports a failure of the remote endpoint as remote-failed", async () => {
+    // The REAL error class — `instanceof` is the discriminator, and a
+    // look-alike would read as "unknown". An unreachable endpoint and an
+    // unauthorized one are both configuration problems whose advice names the
+    // setting to fix, which is why one class covers them.
+    mockRunModel.mockRejectedValue(new RemoteModelError("HTTP 401"));
+
+    const result = await recognizeAccountsWithModel(BLOCKS, runOnDeviceModel);
+
+    expect(result).toMatchObject({ status: "failed", cause: "remote-failed" });
   });
 
   it("reports any other thrown error as unknown", async () => {
     mockRunModel.mockRejectedValue(new Error("completion failed"));
 
-    const result = await recognizeAccountsWithModel(BLOCKS);
+    const result = await recognizeAccountsWithModel(BLOCKS, runOnDeviceModel);
 
     expect(result).toMatchObject({ status: "failed", cause: "unknown" });
   });
@@ -139,7 +153,7 @@ describe("recognizeAccountsWithModel", () => {
   ])("still returns the engine's read after %s", async (_name, arrange) => {
     arrange();
 
-    const result = await recognizeAccountsWithModel(BLOCKS);
+    const result = await recognizeAccountsWithModel(BLOCKS, runOnDeviceModel);
 
     expect(result.status).toBe("failed");
     expect(result.status === "failed" && result.accounts).toEqual([

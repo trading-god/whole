@@ -30,6 +30,12 @@ export type RecognitionIssue =
   | "modelUnusable"
   /** The model run broke off for a reason none of the above describes. */
   | "modelInterrupted"
+  /**
+   * The remote endpoint failed — unreachable, unauthorized, rate-limited —
+   * and the fix is a setting, not a retry: check the base URL, the API key,
+   * or wait out the limit in Settings.
+   */
+  | "remoteFailed"
   /** The pipeline ran and the screen simply held no accounts. */
   | "recognitionEmpty"
   /**
@@ -46,6 +52,10 @@ export type RecognitionIssue =
 // test to be unable to reach — see the coverage note in AGENTS.md.
 const ISSUE_BY_CAUSE: Record<RecognitionFailureCause, RecognitionIssue> = {
   "load-failed": "modelLoadFailed",
+  // The user's own endpoint could not be reached or answered with an error.
+  // The advice names the settings to check: unlike a load failure, retrying
+  // without changing anything only spends another minute.
+  "remote-failed": "remoteFailed",
   // The model answered with something that never held the annotation contract
   // on any of three attempts. On device there is no "try another endpoint":
   // the advice is to fill the form in by hand.

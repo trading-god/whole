@@ -46,6 +46,9 @@ type FormFieldProps = {
   trailingLayout?: "inline" | "responsive";
   accessibilityLabel?: string;
   editable?: boolean;
+  // Explanatory copy under the input — what to paste, where the value comes
+  // from. Distinct from `error`: a hint never blocks, it teaches.
+  hint?: string;
   // Shown under the input when what the user typed cannot be used. The form
   // still decides what "valid" means; this is only how the field says so.
   error?: string;
@@ -75,6 +78,7 @@ export function FormField({
   trailingLayout = "inline",
   accessibilityLabel,
   editable,
+  hint,
   error,
   onFocus,
   onBlur,
@@ -136,6 +140,10 @@ export function FormField({
           </View>
         ) : null}
       </View>
+      {hint ? (
+        // The shared field-hint style, the quiet twin of the error hint above.
+        <Text style={screenStyles.fieldHint}>{hint}</Text>
+      ) : null}
       {error ? (
         // The shared inline-error style, so a field's blocking message renders
         // identically to the screen-level ones beside it, and announced like

@@ -1,44 +1,85 @@
-// The single source of truth for the model the app bundles.
+// The catalog of models the on-device engine can run — the single source of
+// truth for what a model IS: which file, how big, where it downloads from,
+// what it demands of the device.
 //
-// Everything that describes the WEIGHTS — which files the native bundles
-// carry, how big each is — is read from here, never re-declared at a call
-// site: the settings card prints this size. How the runtime spends them (the
-// context window, the output ceiling, the temperature) is the recognition
-// turn's contract, not the weights', and lives in `@whole/ocr`'s
-// `ANNOTATION_INFERENCE`.
+// Everything that describes the WEIGHTS is read from here, never re-declared
+// at a call site: the settings screen prints these sizes, the downloader
+// reads these URLs, the presence check reads these byte counts. How the
+// runtime spends them (the context window, the output ceiling, the
+// temperature) is the recognition turn's contract, not the weights', and
+// lives in `@whole/ocr`'s `ANNOTATION_INFERENCE`.
 //
-// The weights ship as a SPLIT GGUF, carried into the native bundles by
-// `plugins/with-whole-model.js` (never through Metro — the JS asset pipeline
-// cannot carry multi-gigabyte files). Two reasons for the split: Android's
-// APK is a zip, where sub-2-GiB members stay clear of zip64 edge cases on
-// older extractors, and llama.cpp loads split models by pointing at the
-// FIRST shard, which finds the rest by the `-00001-of-000NN` naming
-// convention. The engine treats the set as one model.
-const SHARDS = [
+// The files are unsloth's single-file Q4_K_M quants, served from
+// Hugging Face's resolve endpoint — a 302 to a CDN with `Content-Length`
+// and Range support, which is what an honest progress bar and a resumable
+// download need. (The ggml-org repos do not carry Q4_K_M at all; these are
+// the canonical downloadable copies.) HTTPS-only, matching the app's ATS
+// policy.
+//
+// RAM is the honest demand of RUNNING the model, not the file size: the
+// mmap'd weights plus KV cache and compute buffers at the recognition
+// context window. A device short of it does not fail loudly — the OS
+// jetsams the app mid-load — so the number a user weighing the choice
+// needs is stated up front. Measured on the eval devices (see
+// whole-test AVD notes): E2B loads in ~2.7 GB, E4B in ~4.3 GB.
+export type OnDeviceModelId = "gemma-4-e2b" | "gemma-4-e4b";
+
+export type OnDeviceModel = {
+  /** Stable id — the kv-store value and the disk directory name. */
+  id: OnDeviceModelId;
+  /** What the settings screen calls it. */
+  name: string;
+  /** The one file the model is. */
+  fileName: string;
+  /** Exact bytes of the file — the download's and the presence check's truth. */
+  sizeBytes: number;
+  /** Peak memory the recognition context holds, in bytes. */
+  ramBytes: number;
+  /** The download URL. */
+  url: string;
+};
+
+const HF = (repo: string, file: string) =>
+  `https://huggingface.co/${repo}/resolve/main/${file}`;
+
+const MODELS: readonly OnDeviceModel[] = [
   {
-    fileName: "gemma-4-E2B-it-Q4_K_M.gguf-00001-of-00003.gguf",
-    sizeBytes: 43_316_608,
+    id: "gemma-4-e2b",
+    name: "Gemma 4 E2B",
+    fileName: "gemma-4-E2B-it-Q4_K_M.gguf",
+    sizeBytes: 3_106_738_272,
+    ramBytes: 2_700_000_000,
+    url: HF("unsloth/gemma-4-E2B-it-GGUF", "gemma-4-E2B-it-Q4_K_M.gguf"),
   },
   {
-    fileName: "gemma-4-E2B-it-Q4_K_M.gguf-00002-of-00003.gguf",
-    sizeBytes: 1_614_807_232,
-  },
-  {
-    fileName: "gemma-4-E2B-it-Q4_K_M.gguf-00003-of-00003.gguf",
-    sizeBytes: 1_448_614_752,
+    id: "gemma-4-e4b",
+    name: "Gemma 4 E4B",
+    fileName: "gemma-4-E4B-it-Q4_K_M.gguf",
+    sizeBytes: 4_977_171_584,
+    ramBytes: 4_300_000_000,
+    url: HF("unsloth/gemma-4-E4B-it-GGUF", "gemma-4-E4B-it-Q4_K_M.gguf"),
   },
 ] as const;
 
-export const BUNDLED_MODEL = {
-  name: "Gemma 4 E2B",
-  /**
-   * The bundled shards, in load order. The FIRST shard is the path the
-   * runtime is handed (llama.cpp resolves its siblings by name) and the name
-   * of the copy on Android.
-   */
-  shards: SHARDS,
-  /** The first shard, as the runtime sees it. */
-  fileName: SHARDS[0].fileName,
-  /** Exact bytes of the whole model, all shards together. */
-  sizeBytes: SHARDS.reduce((total, shard) => total + shard.sizeBytes, 0),
-} as const;
+/** The smaller model — the default choice when nothing is stored. */
+export const DEFAULT_ON_DEVICE_MODEL = MODELS[0];
+
+const BY_ID = new Map(MODELS.map((model) => [model.id, model]));
+
+/**
+ * Every model id, in catalog order — the store's schema derives from this, so
+ * adding a model to the catalog IS adding it to the schema (no second list to
+ * forget, whose failure would be silent: an unparsed id falls back to E2B).
+ */
+export const ON_DEVICE_MODEL_IDS = MODELS.map((model) => model.id) as [
+  OnDeviceModelId,
+  ...OnDeviceModelId[],
+];
+
+/** Every model, smallest first — the order the settings screen lists them. */
+export const ON_DEVICE_MODELS = MODELS;
+
+/** Resolves an id to its model; the default when the id is unknown. */
+export function onDeviceModel(id: OnDeviceModelId): OnDeviceModel {
+  return BY_ID.get(id) ?? DEFAULT_ON_DEVICE_MODEL;
+}

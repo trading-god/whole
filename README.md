@@ -37,11 +37,13 @@ source screenshot afterward.
   supports it
 - Simplified Chinese and English interfaces
 
-Account recognition runs entirely on device — a screenshot is read by native
-OCR (Apple Vision on iOS, ML Kit on Android), structured by a deterministic
-recognition engine, and annotated by a small language model (Gemma 4) bundled
-with the app. Nothing about your accounts ever leaves the device, and
-recognition works offline.
+Account recognition runs on device — a screenshot is read by native OCR
+(Apple Vision on iOS, ML Kit on Android) and structured by a deterministic
+recognition engine. The one model call that annotates what rules cannot know
+runs on an engine you choose in Settings: a local model (Gemma 4), downloaded
+on demand — it works offline and nothing leaves the phone — or your own cloud
+service, an OpenAI-compatible endpoint you configure, which receives the text
+read off the screenshot, never the image itself.
 
 ## Getting started
 
@@ -49,7 +51,9 @@ recognition works offline.
 
 - Node.js 22.13 or newer
 - pnpm 11.11.0, as pinned in `package.json`
-- Git LFS — the bundled model weights live in `assets/models/` and are ~3 GB
+- Git LFS — `assets/models/` holds the on-device weights (~3 GB) for the
+  recognition evals and local development; the app itself downloads its model
+  on demand
 - An iOS simulator or Android emulator
 
 ### Install
@@ -59,7 +63,9 @@ git lfs pull
 pnpm install
 ```
 
-Without the weights the native build fails at prebuild, naming the directory.
+The weights are only needed by the recognition evals (`WHOLE_GGUF_PATH=…
+pnpm eval:ocr:llama`) and local development of the on-device engine — the app
+downloads its model on demand, from Settings.
 
 ### Run
 
