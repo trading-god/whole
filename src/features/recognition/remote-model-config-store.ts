@@ -1,7 +1,10 @@
-import { z } from "zod";
 import * as SecureStore from "expo-secure-store";
 
-import { getItem, setItem } from "@/storage/kv-store";
+import { readJson, removeItem, setItem } from "@/storage/kv-store";
+import {
+  type RemoteModelConfig,
+  remoteConfigSchema,
+} from "@/features/recognition/remote-config-schema";
 
 // The user's own remote model endpoint — the "bring your own service" engine.
 //
@@ -12,31 +15,12 @@ import { getItem, setItem } from "@/storage/kv-store";
 // The non-secret parts (base URL, model name) are UI state the settings screen
 // re-renders from and live in the ordinary kv-store.
 //
-// The base URL is stored WITHOUT a trailing slash and WITHOUT the
-// `/chat/completions` suffix — the runner appends the path, so a user who
-// pastes either form of the same endpoint ends up with the same request.
-// `https://` required: the app's ATS policy allows no cleartext, and a
-// credential sent over http:// would be readable on the wire. The settings
-// form says this in words; the schema enforces it.
+// The config's shape lives in `remote-config-schema.ts` — the native-free
+// module; import the schema and normalizer from THERE, not from this store.
+// Re-exporting them here would leave two import paths for the same symbols,
+// and a reader could not tell which one is canonical.
 const CONFIG_KEY = "whole.recognition.remote.config";
 const API_KEY_STORE_KEY = "whole.recognition.remote.apiKey";
-
-export const remoteBaseUrlSchema = z
-  .string()
-  .trim()
-  .regex(
-    /^https:\/\/[^\s/]+([^\s]*[^\s/])?$/,
-    "Base URL must be an https:// address",
-  );
-
-export const remoteConfigSchema = z.object({
-  baseUrl: remoteBaseUrlSchema,
-  // Which model the endpoint serves — OpenAI-compatible providers name it
-  // (e.g. "deepseek-chat", "gpt-4o-mini"); the user copies it from their
-  // provider's console.
-  model: z.string().trim().min(1),
-});
-export type RemoteModelConfig = z.infer<typeof remoteConfigSchema>;
 
 /**
  * Loads the endpoint config, with the API key substituted back in.
@@ -49,11 +33,11 @@ export type RemoteModelConfig = z.infer<typeof remoteConfigSchema>;
 export async function loadRemoteModelConfig(): Promise<
   (RemoteModelConfig & { apiKey: string | null }) | null
 > {
-  const raw = await getItem(CONFIG_KEY);
+  const raw = await readJson(CONFIG_KEY);
   if (raw === null) {
     return null;
   }
-  const parsed = remoteConfigSchema.safeParse(JSON.parse(raw) as unknown);
+  const parsed = remoteConfigSchema.safeParse(raw);
   if (!parsed.success) {
     return null;
   }
@@ -76,19 +60,6 @@ export async function saveRemoteModelConfig(
 
 /** Clears both halves — the endpoint AND its credential. */
 export async function clearRemoteModelConfig(): Promise<void> {
-  await setItem(CONFIG_KEY, JSON.stringify(null));
+  await removeItem(CONFIG_KEY);
   await SecureStore.deleteItemAsync(API_KEY_STORE_KEY).catch(() => {});
-}
-
-/** Loads ONLY the stored API key — for the runner, which has the config already. */
-export async function loadRemoteApiKey(): Promise<string | null> {
-  return SecureStore.getItemAsync(API_KEY_STORE_KEY).catch(() => null);
-}
-
-/**
- * Normalizes a pasted base URL: trims, strips trailing slashes, so the runner's
- * path append lands on `…/v1` rather than `…/v1//chat/completions`.
- */
-export function normalizeRemoteBaseUrl(input: string): string {
-  return input.trim().replace(/\/+$/, "");
 }

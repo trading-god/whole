@@ -142,7 +142,7 @@ export function FormField({
       </View>
       {hint ? (
         // The shared field-hint style, the quiet twin of the error hint above.
-        <Text style={[screenStyles.fieldHint, styles.hint]}>{hint}</Text>
+        <Text style={screenStyles.fieldHint}>{hint}</Text>
       ) : null}
       {error ? (
         // The shared inline-error style, so a field's blocking message renders
@@ -164,8 +164,6 @@ const styles = StyleSheet.create({
   error: {
     marginTop: SPACING.xs,
   },
-  // Spacing only — the type and colour come from `screenStyles.fieldHint`.
-  hint: {},
   inputShell: {
     alignItems: "center",
     flexDirection: "row",

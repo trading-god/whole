@@ -75,22 +75,20 @@ export function modelPresence(id: OnDeviceModelId): ModelPresence {
   if (!file.exists) {
     return { status: "absent" };
   }
-  if (file.size === model.sizeBytes) {
-    return { status: "present", sizeBytes: model.sizeBytes };
+  // Read ONCE, before the delete below: `size` is a native stat per access,
+  // and a stat of a deleted file is 0 by the API's contract — so a re-read
+  // would report a partial file's size as nothing, discarding the number the
+  // comparison just measured.
+  const sizeBytes = file.size;
+  if (sizeBytes === model.sizeBytes) {
+    return { status: "present", sizeBytes };
   }
   try {
     file.delete();
   } catch {
     // Reported as partial either way; the next download retries.
   }
-  return { status: "partial", sizeBytes: file.size };
-}
-
-/** Every model whose weights are on disk — what the UI offers to switch among. */
-export function downloadedModelIds(): OnDeviceModelId[] {
-  return (["gemma-4-e2b", "gemma-4-e4b"] as OnDeviceModelId[]).filter(
-    (id) => modelPresence(id).status === "present",
-  );
+  return { status: "partial", sizeBytes };
 }
 
 /** Deletes one model's directory. No-op when absent. */
@@ -100,13 +98,6 @@ export function deleteModel(id: OnDeviceModelId): void {
     dir.delete();
   }
 }
-
-export type DownloadProgress = {
-  /** 0..1 across the whole file. */
-  fraction: number;
-  /** Bytes settled so far. */
-  sizeBytes: number;
-};
 
 /**
  * Downloads the model's weights.
@@ -119,7 +110,7 @@ export type DownloadProgress = {
  */
 export async function downloadModel(
   id: OnDeviceModelId,
-  onProgress: (progress: DownloadProgress) => void,
+  onProgress: (fraction: number) => void,
 ): Promise<void> {
   const model = onDeviceModel(id);
   const dir = modelDirectory(id);
@@ -141,10 +132,7 @@ export async function downloadModel(
 
   const downloaded = await File.downloadFileAsync(model.url, partial, {
     onProgress: ({ bytesWritten }) => {
-      onProgress({
-        fraction: Math.min(bytesWritten, model.sizeBytes) / model.sizeBytes,
-        sizeBytes: Math.min(bytesWritten, model.sizeBytes),
-      });
+      onProgress(Math.min(bytesWritten, model.sizeBytes) / model.sizeBytes);
     },
   });
   const actual = downloaded.size;
@@ -155,6 +143,10 @@ export async function downloadModel(
     );
   }
   // `move`: same directory, so a rename — atomic, no second copy of the file.
-  downloaded.move(destination);
-  onProgress({ fraction: 1, sizeBytes: model.sizeBytes });
+  // Awaited because it crosses the bridge (`File.move` returns a promise): a
+  // download that resolved before the rename landed would have the caller's
+  // presence re-check stat a file that is still named `.part`, and report the
+  // just-downloaded model as absent.
+  await downloaded.move(destination);
+  onProgress(1);
 }

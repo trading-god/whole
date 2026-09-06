@@ -5,11 +5,9 @@ import { createRemoteRunModel } from "@/features/recognition/remote-runner";
 import { RemoteModelError } from "@/features/recognition/remote-model-error";
 
 const mockLoadRemoteModelConfig = jest.fn<() => Promise<unknown>>();
-const mockLoadRemoteApiKey = jest.fn<() => Promise<string | null>>();
 
 jest.mock("@/features/recognition/remote-model-config-store", () => ({
   loadRemoteModelConfig: () => mockLoadRemoteModelConfig(),
-  loadRemoteApiKey: () => mockLoadRemoteApiKey(),
 }));
 
 const CONFIG = {
@@ -25,7 +23,6 @@ const COMPLETION_BODY = {
 beforeEach(() => {
   jest.resetAllMocks();
   mockLoadRemoteModelConfig.mockResolvedValue(CONFIG);
-  mockLoadRemoteApiKey.mockResolvedValue("sk-test");
 });
 
 describe("createRemoteRunModel", () => {
@@ -65,7 +62,16 @@ describe("createRemoteRunModel", () => {
     });
     const body = JSON.parse(init.body as string) as Record<string, unknown>;
     expect(body.model).toBe("deepseek-chat");
-    expect(body.response_format).toMatchObject({ type: "json_schema" });
+    const responseFormat = body.response_format as {
+      json_schema: { name: string; strict?: boolean; schema: unknown };
+    };
+    expect(responseFormat.json_schema.name).toBe("annotation");
+    expect(responseFormat.json_schema.schema).toBeTruthy();
+    // Pinned: `strict: true` demands every property in `required` and
+    // `additionalProperties: false`, which the shared annotation schema (an
+    // optional `alternates`) does not satisfy — a schema-validating provider
+    // answers that request with HTTP 400, every time.
+    expect(responseFormat.json_schema).not.toHaveProperty("strict");
     fetchSpy.mockRestore();
   });
 
@@ -76,10 +82,14 @@ describe("createRemoteRunModel", () => {
   });
 
   it("sends no Authorization header when no key is stored", async () => {
-    // The key lives in its OWN store — the config's `apiKey` is what
-    // `loadRemoteModelConfig` joins in for the SETTINGS screen; the runner
-    // reads the SecureStore side directly.
-    mockLoadRemoteApiKey.mockResolvedValue(null);
+    // The key rides the config join (`loadRemoteModelConfig` substitutes it
+    // back in), so an unreadable key reads as "no key" — the request goes out
+    // unauthenticated and the endpoint's 401 is the diagnosis.
+    mockLoadRemoteModelConfig.mockResolvedValue({
+      baseUrl: "https://api.deepseek.com/v1",
+      model: "deepseek-chat",
+      apiKey: null,
+    });
     const fetchSpy = jest
       .spyOn(global, "fetch")
       .mockResolvedValue(

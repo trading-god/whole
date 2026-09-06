@@ -9,7 +9,6 @@ import {
   deleteModel,
   downloadModel,
   modelDirectory,
-  downloadedModelIds,
   modelFile,
   modelPresence,
 } from "@/features/on-device-model/model-download";
@@ -187,23 +186,12 @@ describe("modelPresence", () => {
   });
 });
 
-describe("downloadedModelIds", () => {
-  it("lists only the models whose file is on disk", () => {
-    const e4b = onDeviceModel("gemma-4-e4b");
-    stage(e4b.fileName, e4b.sizeBytes);
-
-    expect(downloadedModelIds()).toEqual(["gemma-4-e4b"]);
-  });
-});
-
 describe("downloadModel", () => {
   it("downloads the model's file and reports progress to exactly 1", async () => {
     const model = onDeviceModel("gemma-4-e2b");
     const progress: number[] = [];
 
-    await downloadModel("gemma-4-e2b", ({ fraction }) =>
-      progress.push(fraction),
-    );
+    await downloadModel("gemma-4-e2b", (fraction) => progress.push(fraction));
 
     expect(mockFiles.get(model.fileName)?.exists).toBe(true);
     // The final tick is exactly 1, and no tick ever claims more.

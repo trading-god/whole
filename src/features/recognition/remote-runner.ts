@@ -23,11 +23,9 @@ import {
   type RunModel,
 } from "@whole/ocr";
 
+import { errorMessage } from "@/features/on-device-model/model-error";
 import { RemoteModelError } from "@/features/recognition/remote-model-error";
-import {
-  loadRemoteApiKey,
-  loadRemoteModelConfig,
-} from "@/features/recognition/remote-model-config-store";
+import { loadRemoteModelConfig } from "@/features/recognition/remote-model-config-store";
 
 // One turn's budget. The local runner has no network to time out; this one
 // does, and a hung request would hold the uploader's spinner forever. 90s
@@ -52,11 +50,15 @@ export async function createRemoteRunModel(): Promise<RunModel | null> {
   if (config === null) {
     return null;
   }
-  // The key is read once here and closed over, never re-read per attempt —
-  // three attempts on one turn share one credential read, and a Keychain
-  // hiccup surfaces on the first attempt rather than unpredictably on the
-  // third.
-  const apiKey = await loadRemoteApiKey();
+  // The key comes joined in from the ONE Keychain read `loadRemoteModelConfig`
+  // already made, closed over per turn rather than re-read per attempt — a
+  // Keychain hiccup surfaces on the first attempt rather than
+  // unpredictably on the third.
+  const { apiKey } = config;
+  // Built once per turn, not per attempt: the schema is a module constant in
+  // `@whole/ocr`, and a turn can retry up to three times — each attempt
+  // re-deriving the same JSON object graph from zod is pure waste.
+  const responseSchema = annotationJsonSchema();
 
   return async (attempt) => {
     // Abort rather than a fetch timeout: Hermes' `AbortSignal.timeout` is
@@ -81,14 +83,19 @@ export async function createRemoteRunModel(): Promise<RunModel | null> {
             { role: "user", content: attempt.user },
           ],
           // The grammar's twin: same schema, native constraint where the
-          // provider supports it (OpenAI, Groq, Together…), ignored where it
-          // does not — and the engine's parse still judges the answer.
+          // provider supports it, ignored where it does not — and the
+          // engine's parse still judges the answer. Deliberately NOT
+          // `strict: true`: strict mode requires every property in
+          // `required` and `additionalProperties: false` on every object,
+          // and the shared schema has an optional property (`alternates`)
+          // and no such flag — zod derives it for the grammar, not for
+          // OpenAI's strict subset — so a schema-validating provider would
+          // answer every request with HTTP 400.
           response_format: {
             type: "json_schema",
             json_schema: {
               name: "annotation",
-              strict: true,
-              schema: annotationJsonSchema(),
+              schema: responseSchema,
             },
           },
         }),
@@ -98,7 +105,7 @@ export async function createRemoteRunModel(): Promise<RunModel | null> {
       clearTimeout(timeout);
       // A network-level failure (offline, DNS, refused): not retried by the
       // engine — `recognizeWithModel` only retries answers that parsed.
-      throw new RemoteModelError(`request failed: ${String(error)}`);
+      throw new RemoteModelError(`request failed: ${errorMessage(error)}`);
     }
     clearTimeout(timeout);
 

@@ -156,13 +156,7 @@ export const enMessages = {
     about: "About",
     version: "Version {{version}}",
     onDevice: {
-      title: "Recognition runs on this device",
-      description:
-        "{{model}} is stored on your phone and does the recognition. It takes about {{size}} of storage and extra memory while recognizing.",
-      privacyNotice:
-        "Nothing about your accounts ever leaves this device. Recognition works offline.",
       test: "Test",
-      testing: "Loading the model…",
       testPassed: "The on-device model is working",
       testFailure:
         "The on-device model couldn't be verified. Restart the app, and free up memory and storage if it happens again.",
@@ -173,7 +167,7 @@ export const enMessages = {
       // storage and offline for the local one, network and data-leaving for the
       // remote one. The user decides with the trade visible.
       onDevice: "On-device model",
-      onDeviceHint: "{{size}}, works offline, nothing leaves this phone",
+      onDeviceHint: "Works offline, nothing leaves this phone",
       remote: "Cloud model service",
       remoteHint:
         "Stronger results, needs internet — the screenshot's text is sent to your service",
@@ -181,18 +175,14 @@ export const enMessages = {
       // action, reused everywhere the action appears.
       download: "Download",
       downloading: "Downloading…",
+      // A retry starts over from the beginning (the downloader replaces the
+      // partial file), so the copy must not promise kept progress.
       downloadFailed:
-        "The download didn't finish. Check your connection and try again — completed parts are kept.",
-      downloaded: "Downloaded",
-      downloadHint:
-        "Uses about {{size}} of storage. A Wi-Fi connection is recommended.",
+        "The download didn't finish. Check your connection and try again.",
       // One model row's cost line — both bills, storage and memory, because
       // they are what the E2B/E4B choice actually turns on for the device.
       modelCosts: "{{size}} storage · about {{ram}} memory to run",
       deleteModel: "Delete model",
-      deleteModelHint:
-        "Frees {{size}}. Recognition switches off until you download it again.",
-      notDownloaded: "Not downloaded",
       partialDownload: "{{size}} of {{total}}",
       // The remote engine's form. Labels say what to paste, in the words a
       // provider's console uses.

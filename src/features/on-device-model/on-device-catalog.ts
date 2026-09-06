@@ -66,6 +66,16 @@ export const DEFAULT_ON_DEVICE_MODEL = MODELS[0];
 
 const BY_ID = new Map(MODELS.map((model) => [model.id, model]));
 
+/**
+ * Every model id, in catalog order — the store's schema derives from this, so
+ * adding a model to the catalog IS adding it to the schema (no second list to
+ * forget, whose failure would be silent: an unparsed id falls back to E2B).
+ */
+export const ON_DEVICE_MODEL_IDS = MODELS.map((model) => model.id) as [
+  OnDeviceModelId,
+  ...OnDeviceModelId[],
+];
+
 /** Every model, smallest first — the order the settings screen lists them. */
 export const ON_DEVICE_MODELS = MODELS;
 

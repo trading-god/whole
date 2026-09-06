@@ -8,6 +8,7 @@ import { formatBytes } from "@/features/on-device-model/format-bytes";
 import {
   type OnDeviceModel,
   type OnDeviceModelId,
+  DEFAULT_ON_DEVICE_MODEL,
   ON_DEVICE_MODELS,
 } from "@/features/on-device-model/on-device-catalog";
 import {
@@ -15,7 +16,10 @@ import {
   downloadModel,
   modelPresence,
 } from "@/features/on-device-model/model-download";
-import { verifyOnDeviceModel } from "@/features/on-device-model/model-context";
+import {
+  selectOnDeviceModel,
+  verifyOnDeviceModel,
+} from "@/features/on-device-model/model-context";
 import {
   loadOnDeviceModelId,
   saveOnDeviceModelId,
@@ -24,27 +28,32 @@ import {
   DownloadByteReadout,
   DownloadProgressBar,
 } from "@/features/recognition/DownloadProgressBar";
-import { EngineOptionCard } from "@/features/recognition/EngineOptionCard";
 import {
-  type RecognitionEngine,
+  EngineOptionCard,
+  RadioMark,
+} from "@/features/recognition/EngineOptionCard";
+import {
   loadRecognitionEngine,
   saveRecognitionEngine,
 } from "@/features/recognition/engine-store";
 import {
   type RemoteModelConfig,
-  loadRemoteModelConfig,
   normalizeRemoteBaseUrl,
   remoteConfigSchema,
+} from "@/features/recognition/remote-config-schema";
+import {
+  loadRemoteModelConfig,
   saveRemoteModelConfig,
   clearRemoteModelConfig,
 } from "@/features/recognition/remote-model-config-store";
 import { createRemoteRunModel } from "@/features/recognition/remote-runner";
+import { useStoredPreference } from "@/storage/use-stored-preference";
 import { COLORS } from "@/theme/colors";
 import { PRESSED_OPACITY_SURFACE } from "@/theme/interaction";
 import { TONES } from "@/theme/tones";
 import { RADIUS } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
-import { FONT_SIZE, LINE_HEIGHT } from "@/theme/typography";
+import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT } from "@/theme/typography";
 
 // The recognition engine section: which model answers the annotation turn.
 //
@@ -60,28 +69,22 @@ import { FONT_SIZE, LINE_HEIGHT } from "@/theme/typography";
 // disk, remote config in SecureStore), so the card and the recognition gate
 // cannot disagree.
 
-type RemoteTestPhase = "idle" | "testing" | "passed" | "failed";
+// The probe phases both engines' Test flows share: idle → testing → a verdict.
+type TestPhase = "idle" | "testing" | "passed" | "failed";
 
 export function RecognitionEngineSection() {
   const { t } = useTranslation();
 
   // ── The engine choice ────────────────────────────────────────────────
-  const [engine, setEngine] = useState<RecognitionEngine>("on-device");
-  useEffect(() => {
-    let stale = false;
-    void loadRecognitionEngine("on-device").then((stored) => {
-      if (!stale) {
-        setEngine(stored);
-      }
-    });
-    return () => {
-      stale = true;
-    };
-  }, []);
-  const chooseEngine = useCallback((next: RecognitionEngine) => {
-    setEngine(next);
-    void saveRecognitionEngine(next).catch(() => {});
-  }, []);
+  // Both preferences hydrate through `useStoredPreference` — the hook's
+  // stale-load guard is the whole point (a tap landing before the stored
+  // value resolves must not be reverted by it), and this is the fourth and
+  // fifth consumer it exists for.
+  const [engine, chooseEngine] = useStoredPreference(
+    () => loadRecognitionEngine("on-device"),
+    "on-device",
+    saveRecognitionEngine,
+  );
 
   return (
     <View style={styles.section} testID="recognition-engine-section">
@@ -112,23 +115,20 @@ export function RecognitionEngineSection() {
 
 function OnDeviceEngineConfig() {
   // The selected model, from the same store the recognition gate reads.
-  const [modelId, setModelId] = useState<OnDeviceModelId>("gemma-4-e2b");
-  useEffect(() => {
-    let stale = false;
-    void loadOnDeviceModelId().then((stored) => {
-      if (!stale) {
-        setModelId(stored);
-      }
-    });
-    return () => {
-      stale = true;
-    };
-  }, []);
+  const [modelId, setModelId] = useStoredPreference(
+    loadOnDeviceModelId,
+    DEFAULT_ON_DEVICE_MODEL.id,
+    saveOnDeviceModelId,
+  );
 
-  const chooseModel = useCallback((next: OnDeviceModelId) => {
+  // Switching models releases the loaded context (`selectOnDeviceModel`):
+  // the E2B context is useless for running E4B, and holding both is exactly
+  // the memory crunch the lifecycle exists to avoid — the next completion
+  // loads the new weights.
+  const chooseModel = (next: OnDeviceModelId) => {
     setModelId(next);
-    void saveOnDeviceModelId(next).catch(() => {});
-  }, []);
+    void selectOnDeviceModel(next).catch(() => {});
+  };
 
   return (
     <View style={styles.configStack}>
@@ -170,7 +170,6 @@ function ModelRow({
     "idle" | "downloading" | "failed"
   >("idle");
   const [downloadFraction, setDownloadFraction] = useState(0);
-  const [downloadError, setDownloadError] = useState(false);
 
   const isMountedRef = useRef(true);
   useEffect(() => {
@@ -182,11 +181,11 @@ function ModelRow({
 
   const startDownload = useCallback(() => {
     setDownloadPhase("downloading");
-    setDownloadError(false);
-    setDownloadFraction(
-      presence.status === "partial" ? presence.sizeBytes / model.sizeBytes : 0,
-    );
-    void downloadModel(model.id, ({ fraction }) => {
+    // From zero: a retry replaces the partial file rather than resuming it,
+    // so seeding the bar from the leftover bytes would show progress the
+    // restart is about to throw away.
+    setDownloadFraction(0);
+    void downloadModel(model.id, (fraction) => {
       if (isMountedRef.current) {
         setDownloadFraction(fraction);
       }
@@ -203,11 +202,10 @@ function ModelRow({
         // failed: retry the download.
         if (isMountedRef.current) {
           setDownloadPhase("failed");
-          setDownloadError(true);
           refreshPresence();
         }
       });
-  }, [model.id, model.sizeBytes, presence, refreshPresence]);
+  }, [model.id, refreshPresence]);
 
   const deleteWeights = useCallback(() => {
     deleteModel(model.id);
@@ -270,8 +268,8 @@ function ModelRow({
   }
 
   // Absent or partial: the download offer, with what it costs stated up
-  // front. A failed pass re-offers the download — bytes already on disk are
-  // kept, so the retry resumes rather than restarts.
+  // front. A failed pass re-offers the download, which starts over from the
+  // beginning — the downloader replaces whatever partial file is there.
   return (
     <View style={styles.modelRow} testID={`model-row-${model.id}`}>
       <PressableRow selected={selected} onSelect={onSelect} name={model.name} />
@@ -281,7 +279,7 @@ function ModelRow({
           ram: formatBytes(model.ramBytes),
         })}
       </Text>
-      {downloadError ? (
+      {downloadPhase === "failed" ? (
         <Text style={styles.downloadError}>
           {t("settings.engine.downloadFailed")}
         </Text>
@@ -316,9 +314,7 @@ function PressableRow({
         pressed && styles.pressed,
       ]}
     >
-      <View style={styles.radioRing}>
-        {selected ? <View style={styles.radioDot} /> : null}
-      </View>
+      <RadioMark selected={selected} compact />
       <Text style={styles.modelName}>{name}</Text>
     </Pressable>
   );
@@ -328,9 +324,7 @@ function PressableRow({
 // one bound to the current model id, so only the selected row offers it.
 function ModelTestButton() {
   const { t } = useTranslation();
-  const [testPhase, setTestPhase] = useState<
-    "idle" | "testing" | "passed" | "failed"
-  >("idle");
+  const [testPhase, setTestPhase] = useState<TestPhase>("idle");
   const isMountedRef = useRef(true);
   useEffect(() => {
     isMountedRef.current = true;
@@ -366,12 +360,21 @@ function ModelTestButton() {
         {t("settings.onDevice.test")}
       </Button>
       {testPhase === "passed" ? (
-        <Text style={[styles.verdict, styles.verdictPassed]}>
+        // Announced, not just shown: the verdict is the answer to the tap, and
+        // the deleted SettingsScreen verdict carried the live region — losing
+        // it in the move silenced the outcome for screen-reader users.
+        <Text
+          accessibilityLiveRegion="polite"
+          style={[styles.verdict, styles.verdictPassed]}
+        >
           {t("settings.onDevice.testPassed")}
         </Text>
       ) : null}
       {testPhase === "failed" ? (
-        <Text style={[styles.verdict, styles.verdictFailed]}>
+        <Text
+          accessibilityLiveRegion="polite"
+          style={[styles.verdict, styles.verdictFailed]}
+        >
           {t("settings.onDevice.testFailure")}
         </Text>
       ) : null}
@@ -390,7 +393,7 @@ function RemoteEngineConfig() {
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [hasSavedConfig, setHasSavedConfig] = useState(false);
-  const [testPhase, setTestPhase] = useState<RemoteTestPhase>("idle");
+  const [testPhase, setTestPhase] = useState<TestPhase>("idle");
   const isMountedRef = useRef(true);
   useEffect(() => {
     isMountedRef.current = true;
@@ -401,13 +404,25 @@ function RemoteEngineConfig() {
 
   useEffect(() => {
     let stale = false;
-    void loadRemoteModelConfig().then((config) => {
-      if (!stale && config !== null) {
-        setBaseUrl(config.baseUrl);
-        setModel(config.model);
+    void loadRemoteModelConfig()
+      .then((config) => {
+        if (stale || config === null) {
+          return;
+        }
+        // Fill only what the user has not already replaced: the cold-start
+        // read can resolve after they started typing (the kv-store opens its
+        // database and runs the legacy migration scan first), and overwriting
+        // their draft would throw away keystrokes for values they
+        // deliberately changed.
+        setBaseUrl((current) => (current === "" ? config.baseUrl : current));
+        setModel((current) => (current === "" ? config.model : current));
         setHasSavedConfig(true);
-      }
-    });
+      })
+      .catch(() => {
+        // A read that failed leaves the empty form: the user can still type
+        // and save, which is a fresh write. Nothing here can act on the
+        // failure — the same discipline `useStoredPreference`'s callers apply.
+      });
     return () => {
       stale = true;
     };
@@ -422,15 +437,21 @@ function RemoteEngineConfig() {
   const draftValid = remoteConfigSchema.safeParse(draft).success;
 
   const clear = useCallback(() => {
-    void clearRemoteModelConfig().then(() => {
-      if (isMountedRef.current) {
-        setBaseUrl("");
-        setModel("");
-        setApiKey("");
-        setHasSavedConfig(false);
-        setTestPhase("idle");
-      }
-    });
+    void clearRemoteModelConfig()
+      .then(() => {
+        if (isMountedRef.current) {
+          setBaseUrl("");
+          setModel("");
+          setApiKey("");
+          setHasSavedConfig(false);
+          setTestPhase("idle");
+        }
+      })
+      .catch(() => {
+        // A removal that failed leaves the form as it was — the config is
+        // still stored, and showing it as cleared would hide a live
+        // credential behind a "removed" control.
+      });
   }, []);
 
   const test = useCallback(() => {
@@ -438,7 +459,17 @@ function RemoteEngineConfig() {
     // first, then test, is the only honest order.
     setTestPhase("testing");
     void saveRemoteModelConfig(draft, apiKey === "" ? null : apiKey)
-      .then(() => createRemoteRunModel())
+      .then(() => {
+        if (isMountedRef.current) {
+          // The config is stored the moment the save resolves; the ping that
+          // follows only verifies it. A failed ping must not hide the
+          // Remove-service control (or the "key already saved" hint) for a
+          // config that IS there — the recognition gate reads the stored
+          // config, not the ping verdict.
+          setHasSavedConfig(true);
+        }
+        return createRemoteRunModel();
+      })
       .then(async (runModel) => {
         if (runModel === null) {
           throw new Error("no config");
@@ -448,7 +479,6 @@ function RemoteEngineConfig() {
         await runModel({ system: "ping", user: "ping", grammar: "" });
         if (isMountedRef.current) {
           setTestPhase("passed");
-          setHasSavedConfig(true);
         }
       })
       .catch(() => {
@@ -497,12 +527,18 @@ function RemoteEngineConfig() {
             : t("settings.engine.save")}
         </Button>
         {testPhase === "passed" ? (
-          <Text style={[styles.verdict, styles.verdictPassed]}>
+          <Text
+            accessibilityLiveRegion="polite"
+            style={[styles.verdict, styles.verdictPassed]}
+          >
             {t("settings.engine.testPassed")}
           </Text>
         ) : null}
         {testPhase === "failed" ? (
-          <Text style={[styles.verdict, styles.verdictFailed]}>
+          <Text
+            accessibilityLiveRegion="polite"
+            style={[styles.verdict, styles.verdictFailed]}
+          >
             {t("settings.engine.testFailure")}
           </Text>
         ) : null}
@@ -553,22 +589,7 @@ const styles = StyleSheet.create({
   modelName: {
     color: COLORS.ink,
     fontSize: FONT_SIZE.bodySm,
-    fontWeight: "600",
-  },
-  radioRing: {
-    alignItems: "center",
-    borderColor: COLORS.outlineBorder,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    height: 16,
-    justifyContent: "center",
-    width: 16,
-  },
-  radioDot: {
-    backgroundColor: COLORS.brand,
-    borderRadius: 4,
-    height: 8,
-    width: 8,
+    fontWeight: FONT_WEIGHT.semibold,
   },
   costLine: {
     color: COLORS.muted,
@@ -612,11 +633,11 @@ const styles = StyleSheet.create({
   },
   verdictPassed: {
     color: COLORS.brand,
-    fontWeight: "600",
+    fontWeight: FONT_WEIGHT.semibold,
   },
   verdictFailed: {
     color: COLORS.danger,
-    fontWeight: "600",
+    fontWeight: FONT_WEIGHT.semibold,
   },
   noticeCard: {
     borderRadius: RADIUS.xs,

@@ -2,8 +2,9 @@ import { z } from "zod";
 
 import { createCachedPreferenceStore } from "@/storage/cached-preference-store";
 import {
+  DEFAULT_ON_DEVICE_MODEL,
   type OnDeviceModelId,
-  onDeviceModel,
+  ON_DEVICE_MODEL_IDS,
 } from "@/features/on-device-model/on-device-catalog";
 
 // Which of the catalog's models the on-device engine runs. A preference
@@ -18,7 +19,7 @@ import {
 // preference degrades to the small model rather than crashing a launch.
 const MODEL_KEY = "whole.recognition.onDeviceModel";
 
-export const ON_DEVICE_MODEL_SCHEMA = z.enum(["gemma-4-e2b", "gemma-4-e4b"]);
+export const ON_DEVICE_MODEL_SCHEMA = z.enum(ON_DEVICE_MODEL_IDS);
 
 const modelStore = createCachedPreferenceStore(
   MODEL_KEY,
@@ -26,14 +27,9 @@ const modelStore = createCachedPreferenceStore(
 );
 
 export async function loadOnDeviceModelId(): Promise<OnDeviceModelId> {
-  return modelStore.load("gemma-4-e2b");
+  return modelStore.load(DEFAULT_ON_DEVICE_MODEL.id);
 }
 
 export async function saveOnDeviceModelId(id: OnDeviceModelId): Promise<void> {
   return modelStore.save(id);
-}
-
-/** The selected model, resolved — the default when the stored id is unknown. */
-export async function loadSelectedOnDeviceModel() {
-  return onDeviceModel(await loadOnDeviceModelId());
 }

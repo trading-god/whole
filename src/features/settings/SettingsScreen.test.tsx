@@ -10,13 +10,11 @@ const E2B = onDeviceModel("gemma-4-e2b");
 const E4B = onDeviceModel("gemma-4-e4b");
 
 const mockVerify = jest.fn<() => Promise<void>>();
+const mockSelectOnDeviceModel = jest.fn<(id?: unknown) => Promise<void>>();
 const mockModelPresence = jest.fn<(id?: unknown) => { status: string }>();
 const mockDownloadModel =
   jest.fn<
-    (
-      id: unknown,
-      onProgress: (progress: { fraction: number; sizeBytes: number }) => void,
-    ) => Promise<void>
+    (id: unknown, onProgress: (fraction: number) => void) => Promise<void>
   >();
 const mockDeleteModel = jest.fn<(id: unknown) => void>();
 const mockLoadEngine = jest.fn<() => Promise<"on-device" | "remote">>();
@@ -29,6 +27,7 @@ const mockCreateRemoteRunModel = jest.fn<() => Promise<unknown>>();
 
 jest.mock("@/features/on-device-model/model-context", () => ({
   verifyOnDeviceModel: () => mockVerify(),
+  selectOnDeviceModel: (id: unknown) => mockSelectOnDeviceModel(id),
 }));
 
 // The engine section's three real state sources, mocked at their module
@@ -37,10 +36,8 @@ jest.mock("@/features/on-device-model/model-context", () => ({
 // mocked for the service Test button.
 jest.mock("@/features/on-device-model/model-download", () => ({
   modelPresence: (id: unknown) => mockModelPresence(id),
-  downloadModel: (
-    id: unknown,
-    onProgress: (progress: { fraction: number; sizeBytes: number }) => void,
-  ) => mockDownloadModel(id, onProgress),
+  downloadModel: (id: unknown, onProgress: (fraction: number) => void) =>
+    mockDownloadModel(id, onProgress),
   deleteModel: (id: unknown) => mockDeleteModel(id),
 }));
 
@@ -60,27 +57,15 @@ jest.mock("@/features/recognition/engine-store", () => ({
     mockSaveEngine(engine),
 }));
 
-jest.mock("@/features/recognition/remote-model-config-store", () => {
-  // The REAL schema and normalizer, re-declared here rather than mocked:
-  // the form's validity IS their behavior, so faking them would test the
-  // mock. Only the storage calls are faked. (A `requireActual` would pull
-  // the real module's kv-store import — and its AsyncStorage native seam —
-  // into the suite.)
-  const { z } = jest.requireActual("zod") as typeof import("zod");
-  return {
-    normalizeRemoteBaseUrl: (input: string) => input.trim().replace(/\/+$/, ""),
-    remoteConfigSchema: z.object({
-      baseUrl: z
-        .string()
-        .trim()
-        .regex(/^https:\/\/[^\s/]+([^\s]*[^\s/])?$/),
-      model: z.string().trim().min(1),
-    }),
-    loadRemoteModelConfig: () => mockLoadRemoteConfig(),
-    saveRemoteModelConfig: () => mockSaveRemoteConfig(),
-    clearRemoteModelConfig: () => mockClearRemoteConfig(),
-  };
-});
+// Storage-only: the schema and normalizer the form's validity runs on are
+// imported by the component from the native-free `remote-config-schema`
+// directly, so the real ones run unmocked here — only the storage calls are
+// faked.
+jest.mock("@/features/recognition/remote-model-config-store", () => ({
+  loadRemoteModelConfig: () => mockLoadRemoteConfig(),
+  saveRemoteModelConfig: () => mockSaveRemoteConfig(),
+  clearRemoteModelConfig: () => mockClearRemoteConfig(),
+}));
 
 jest.mock("@/features/recognition/remote-runner", () => ({
   createRemoteRunModel: () => mockCreateRemoteRunModel(),
@@ -110,6 +95,7 @@ beforeEach(() => {
   // returns. Every mock this suite drives is re-implemented below anyway.
   jest.clearAllMocks();
   mockVerify.mockResolvedValue(undefined);
+  mockSelectOnDeviceModel.mockResolvedValue(undefined);
   mockModelPresence.mockReturnValue({ status: "present" });
   mockLoadOnDeviceModelId.mockResolvedValue("gemma-4-e2b");
   mockSaveOnDeviceModelId.mockResolvedValue(undefined);
@@ -165,6 +151,10 @@ describe("SettingsScreen", () => {
       await fireEvent.press(screen.getByText("Gemma 4 E4B"));
 
       expect(mockSaveOnDeviceModelId).toHaveBeenCalledWith("gemma-4-e4b");
+      // The switch also releases the loaded context, so the two models are
+      // never warm at once (AGENTS.md) — the very next completion loads the
+      // new weights.
+      expect(mockSelectOnDeviceModel).toHaveBeenCalledWith("gemma-4-e4b");
     });
 
     it("shows the download offer when the selected model is absent", async () => {

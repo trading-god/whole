@@ -36,9 +36,11 @@ import {
   errorMessage,
 } from "@/features/on-device-model/model-error";
 import {
+  DEFAULT_ON_DEVICE_MODEL,
   type OnDeviceModelId,
   onDeviceModel,
 } from "@/features/on-device-model/on-device-catalog";
+import { loadOnDeviceModelId } from "@/features/on-device-model/on-device-model-store";
 import { resolveOnDeviceModelPath } from "@/features/on-device-model/model-source";
 
 // ── Context singleton ──────────────────────────────────────────────────────
@@ -116,10 +118,18 @@ let releasing: Promise<void> | null = null;
 // Which model the singleton context is (being) built over. Read at LOAD
 // time, never after: a completion in flight keeps its context whatever this
 // says now, and the next load reads whatever this says then. Null until the
-// first load or selection — the default model a null state implies is NOT
-// written here, so "select the default" on a cold module is a real no-op
-// rather than a release of a context that was never loaded.
+// first load or selection — and on a cold module the first load resolves it
+// from the STORED preference (the same value the recognition gate and the
+// settings rows read), so a relaunch honors a stored non-default selection
+// instead of silently falling back to the default model.
 let contextModelId: OnDeviceModelId | null = null;
+
+// Which model the context the singleton CURRENTLY holds was built over.
+// `contextModelId` moves the moment a selection changes; this moves only when
+// a load binds — the gap between the two is "a switch is pending", which is
+// what tells the lease below to free the old context rather than arm the
+// idle timer on it (see `withOnDeviceContext`).
+let contextBoundModelId: OnDeviceModelId | null = null;
 
 function ensureContext(): Promise<LlamaContext> {
   if (contextPromise === null) {
@@ -132,11 +142,13 @@ function ensureContext(): Promise<LlamaContext> {
     watchAppStateForRelease();
     // Same capture discipline: the id this load binds to, read before any
     // await, so a `selectOnDeviceModel` landing mid-load cannot rewrite the
-    // goalposts under a load already running. Null (nothing selected yet)
-    // means the default — and the load CLAIMS it, so a later select of a
-    // different model releases this context rather than assuming none.
-    const modelId = contextModelId ?? "gemma-4-e2b";
-    contextModelId = modelId;
+    // goalposts under a load already running. Null (nothing selected this
+    // session) means the STORED preference — resolved inside the body, where
+    // the async read lives — and the load CLAIMS the resolved id, so a later
+    // select of a different model releases this context rather than assuming
+    // none.
+    const claimed = contextModelId;
+    let modelId: OnDeviceModelId = claimed ?? DEFAULT_ON_DEVICE_MODEL.id;
     const load = (async () => {
       try {
         await ensureJsiInstalled();
@@ -144,6 +156,21 @@ function ensureContext(): Promise<LlamaContext> {
         // rethrowing it here would report a perfectly loadable model as
         // unloadable. The wait is only for the memory to come back.
         await priorRelease?.catch(() => {});
+        if (claimed === null) {
+          modelId = await loadOnDeviceModelId();
+        }
+        // Claim only when nobody selected meanwhile. A `selectOnDeviceModel`
+        // that landed while the store read was in flight already recorded its
+        // id — and its release decision was made against a null `previous`,
+        // so no release is coming from it. Overwriting the id here would
+        // drop that selection; leaving it makes the lease's exit see the
+        // divergence (`contextBoundModelId !== contextModelId`) and free this
+        // wrong-model context the moment the in-flight use ends, so the next
+        // load binds to what was selected.
+        if (contextModelId === null || contextModelId === claimed) {
+          contextModelId = modelId;
+        }
+        contextBoundModelId = modelId;
         const modelPath = resolveOnDeviceModelPath(modelId);
         return await initLlama({
           model: modelPath,
@@ -292,17 +319,22 @@ export async function releaseOnDeviceContext(): Promise<void> {
  * one — the memory crunch this lifecycle exists to avoid.
  *
  * Lease-aware like every release: a recognition still running on the old
- * model finishes on it, and the swap takes effect on the next load.
+ * model finishes on it. A switch that lands while a lease is open cannot
+ * release (nothing may be freed under a running completion), so the lease's
+ * exit re-issues the release — the swap takes effect on the first load after
+ * the in-flight completion ends, never a minute later.
  */
 export async function selectOnDeviceModel(id: OnDeviceModelId): Promise<void> {
   // A null `contextModelId` means nothing is loaded or selected yet —
-  // selecting anything then just records the choice (the next load reads
-  // it), with no context to release.
-  if (contextModelId === id || contextModelId === null) {
-    contextModelId = id;
+  // selecting anything then just records the choice (the next load resolves
+  // it, from the store if nothing else), with no context to release. Same for
+  // re-selecting the current model, including while a load of it is still
+  // running.
+  const previous = contextModelId;
+  contextModelId = id;
+  if (previous === null || previous === id) {
     return;
   }
-  contextModelId = id;
   await releaseOnDeviceContext().catch(() => {
     // The release's own failure handling (restore-or-drop) already ran; the
     // swap itself is not undone by a context that would not free.
@@ -387,6 +419,17 @@ async function withOnDeviceContext<T>(
       // up to three times, and a flag the first attempt consumed would leave
       // the later ones rebuilding the context and then arming that dead timer.
       void releaseOnDeviceContext().catch(() => {});
+    } else if (
+      contextBoundModelId !== null &&
+      contextBoundModelId !== contextModelId
+    ) {
+      // A model switch landed while this lease was open — its release was a
+      // no-op (leases > 0), so the OLD model's context is still the singleton
+      // while `contextModelId` names the new one. Arming the idle timer would
+      // serve the old weights for another minute to every completion that
+      // arrives; releasing here makes the next load read the new selection,
+      // which is what the switch promised.
+      void releaseOnDeviceContext().catch(() => {});
     } else {
       armIdleRelease();
     }
@@ -422,7 +465,7 @@ export async function completeOnDevice(params: CompletionParams) {
 }
 
 /**
- * Loads the bundled model and runs a one-token completion against it.
+ * Loads the selected model and runs a one-token completion against it.
  *
  * The settings screen's Test button: it catches an unloadable model — an
  * out-of-memory device, a corrupted file — before the user spends a

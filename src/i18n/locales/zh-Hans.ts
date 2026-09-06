@@ -132,12 +132,7 @@ export const zhHansMessages = {
     about: "关于",
     version: "版本 {{version}}",
     onDevice: {
-      title: "识别在本机完成",
-      description:
-        "{{model}} 模型已存储在你的手机上并负责识别。它占用约 {{size}} 存储空间，识别时额外占用内存。",
-      privacyNotice: "账户信息不会离开这台设备。识别可以离线完成。",
       test: "测试",
-      testing: "正在加载模型…",
       testPassed: "本机模型可用",
       testFailure:
         "本机模型未能通过验证。请重启应用；若仍不行，请清理内存和存储空间。",
@@ -147,20 +142,17 @@ export const zhHansMessages = {
       // 选择本身：两条有名字的路线，各自的代价写在说明里——本地是存储和离线，
       // 云端是联网和数据出设备。让用户看着代价做决定。
       onDevice: "本机模型",
-      onDeviceHint: "{{size}}，可离线使用，数据不离开手机",
+      onDeviceHint: "可离线使用，数据不离开手机",
       remote: "云端模型服务",
       remoteHint: "效果更强，需要联网——截图上的文字会发送到你配置的服务",
       download: "下载",
       downloading: "正在下载…",
-      downloadFailed: "下载未完成。请检查网络后重试——已下载的部分会保留。",
-      downloaded: "已下载",
-      downloadHint: "占用约 {{size}} 存储空间，建议在 Wi-Fi 下下载。",
+      // 重试会从头开始（下载器会替换未完成的文件），文案不能承诺保留进度。
+      downloadFailed: "下载未完成。请检查网络后重试。",
       // 单个模型行的成本行——存储和内存两笔账都在，因为 E2B/E4B 的选择
       // 对设备而言正是取决于这两个数字。
       modelCosts: "{{size}} 存储 · 运行时约需 {{ram}} 内存",
       deleteModel: "删除模型",
-      deleteModelHint: "释放 {{size}}。删除后识别功能关闭，需重新下载。",
-      notDownloaded: "未下载",
       partialDownload: "{{size}} / {{total}}",
       baseUrl: "服务地址",
       baseUrlHint: "服务商的 https:// 地址，例如 https://api.deepseek.com/v1",
