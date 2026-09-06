@@ -39,7 +39,10 @@ bump. After any dependency change run `pnpm exec expo-doctor`; when a
 resolution looks frozen, `pnpm update` and `overrides` will not move an
 optional peer — delete `pnpm-lock.yaml` **and**
 `node_modules/.pnpm/lock.yaml` (pnpm restores from the latter, so removing
-only the first is a no-op) and reinstall. Verify with `pnpm ios` afterwards,
+only the first is a no-op) and reinstall, then run `pnpm peers check`: the
+reset re-resolves every loose range, which is how a transitive `react-dom`
+once floated ahead of the pinned `react` (it is now an exact direct
+dependency for exactly that reason). Verify with `pnpm ios` afterwards,
 not just `pnpm typecheck`: re-resolving moves native modules and the pods
 have to be rebuilt.
 
