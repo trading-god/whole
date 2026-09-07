@@ -27,6 +27,7 @@ allowBuilds:
   # gradle both fail to find the sources.
   llama.rn: true
 patchedDependencies:
+  '@kesha-antonov/react-native-background-downloader@4.6.2': patches/@kesha-antonov__react-native-background-downloader@4.6.2.patch
   expo-media-viewer@0.7.2: patches/expo-media-viewer@0.7.2.patch
   expo-mlkit-ocr@0.2.7: patches/expo-mlkit-ocr@0.2.7.patch
   llama.rn@0.12.9: patches/llama.rn@0.12.9.patch

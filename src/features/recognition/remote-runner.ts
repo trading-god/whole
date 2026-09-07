@@ -11,7 +11,12 @@
 // schema (`annotationJsonSchema`) rides as `response_format`, so the endpoint
 // is constrained to the same shape the local GBNF grammar enforces — a
 // provider without the field simply ignores it and the retry loop still
-// catches what slips through.
+// catches what slips through. The attempt's `grammar` is what carries the
+// schema's counterpart over the wire: a non-empty grammar is a recognition
+// turn, so the schema rides along; an empty one (the settings Test's ping)
+// is a plain completion — constraining "ping" to the annotation shape would
+// make the provider generate a full JSON annotation and turn a one-second
+// reachability check into a full inference.
 //
 // NOT a singleton: unlike the on-device context there is nothing to warm —
 // each call is a stateless HTTPS request. The config is loaded per turn, so a
@@ -77,27 +82,39 @@ export async function createRemoteRunModel(): Promise<RunModel | null> {
         body: JSON.stringify({
           model: config.model,
           temperature: ANNOTATION_INFERENCE.temperature,
-          max_tokens: ANNOTATION_INFERENCE.maxOutputTokens,
+          // The remote output cap mirrors the local runtime's 8192 context
+          // budget: generous enough that a reasoning model's thinking tokens
+          // (which count against the limit) never eat the annotation JSON,
+          // bounded enough that a runaway generation can't bill unboundedly.
+          // The engine's parse + retry loop is the backstop either way — a
+          // truncated answer fails validation and is retried, not believed.
+          max_tokens: ANNOTATION_INFERENCE.contextWindow,
           messages: [
             { role: "system", content: attempt.system },
             { role: "user", content: attempt.user },
           ],
           // The grammar's twin: same schema, native constraint where the
           // provider supports it, ignored where it does not — and the
-          // engine's parse still judges the answer. Deliberately NOT
-          // `strict: true`: strict mode requires every property in
-          // `required` and `additionalProperties: false` on every object,
-          // and the shared schema has an optional property (`alternates`)
-          // and no such flag — zod derives it for the grammar, not for
-          // OpenAI's strict subset — so a schema-validating provider would
-          // answer every request with HTTP 400.
-          response_format: {
-            type: "json_schema",
-            json_schema: {
-              name: "annotation",
-              schema: responseSchema,
-            },
-          },
+          // engine's parse still judges the answer. Sent only on recognition
+          // turns (non-empty grammar); the settings Test's ping travels
+          // without it, so the probe measures the endpoint, not a full
+          // annotation. Deliberately NOT `strict: true`: strict mode requires
+          // every property in `required` and `additionalProperties: false` on
+          // every object, and the shared schema has an optional property
+          // (`alternates`) and no such flag — zod derives it for the grammar,
+          // not for OpenAI's strict subset — so a schema-validating provider
+          // would answer every request with HTTP 400.
+          ...(attempt.grammar === ""
+            ? {}
+            : {
+                response_format: {
+                  type: "json_schema",
+                  json_schema: {
+                    name: "annotation",
+                    schema: responseSchema,
+                  },
+                },
+              }),
         }),
         signal: controller.signal,
       });
@@ -129,4 +146,23 @@ export async function createRemoteRunModel(): Promise<RunModel | null> {
     }
     return content;
   };
+}
+
+/**
+ * Probes the configured endpoint the way the settings Test does: one minimal
+ * completion that proves reachability, auth, and the model name in a single
+ * round trip. The empty grammar is load-bearing — it keeps the annotation
+ * schema off the wire (see the module comment), so the probe measures the
+ * endpoint instead of asking the provider to fill a full annotation JSON.
+ *
+ * Throws when no config is saved or the endpoint does not answer; the caller
+ * maps the outcome to localized copy — the message never reaches the user
+ * raw.
+ */
+export async function verifyRemoteModel(): Promise<void> {
+  const runModel = await createRemoteRunModel();
+  if (runModel === null) {
+    throw new Error("no config");
+  }
+  await runModel({ system: "ping", user: "ping", grammar: "" });
 }

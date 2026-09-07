@@ -1,10 +1,8 @@
-import { z } from "zod";
-
 import { createCachedPreferenceStore } from "@/storage/cached-preference-store";
 import {
   DEFAULT_ON_DEVICE_MODEL,
   type OnDeviceModelId,
-  ON_DEVICE_MODEL_IDS,
+  ON_DEVICE_MODEL_SCHEMA,
 } from "@/features/on-device-model/on-device-catalog";
 
 // Which of the catalog's models the on-device engine runs. A preference
@@ -18,8 +16,6 @@ import {
 // later catalog) resolves to the DEFAULT through `onDeviceModel`, so a stale
 // preference degrades to the small model rather than crashing a launch.
 const MODEL_KEY = "whole.recognition.onDeviceModel";
-
-export const ON_DEVICE_MODEL_SCHEMA = z.enum(ON_DEVICE_MODEL_IDS);
 
 const modelStore = createCachedPreferenceStore(
   MODEL_KEY,

@@ -150,24 +150,45 @@ export const zhHansMessages = {
       download: "下载",
       downloadHint: "下载 {{model}}，将占用 {{size}} 存储空间",
       downloading: "正在下载…",
+      // 下载中/暂停的切换控件：标签写它要切换到的状态，与“下载”的动宾
+      // 结构保持一致。
+      pauseDownload: "暂停下载",
+      resumeDownload: "继续下载",
+      paused: "已暂停",
       downloadProgress: "模型下载进度",
       downloadProgressValue: "已下载 {{percentage}}%",
+      downloadPercentValue: "{{percentage}}%",
       // 重试会从头开始（下载器会替换未完成的文件），文案不能承诺保留进度。
       downloadFailed: "下载未完成。请检查网络后重试。",
       // 单个模型行的成本行——存储和内存两笔账都在，因为 E2B/E4B 的选择
       // 对设备而言正是取决于这两个数字。
       modelCosts: "{{size}} 存储 · 运行时约需 {{ram}} 内存",
       deleteModel: "删除模型",
+      // 删除前的确认弹窗。模型权重是应用会在磁盘上写入的最大文件，所以
+      // 弹窗说清删掉的是什么、之后要用就得重新下载——确认按钮沿用触发动
+      // 作的措辞，整个流程里操作名保持不变。
+      deleteModelTitle: "删除 {{model}}？",
+      deleteModelMessage:
+        "将从这台设备删除已下载的模型文件（{{size}}）。之后可随时重新下载。",
       partialDownload: "{{size}} / {{total}}",
       baseUrl: "服务地址",
-      baseUrlHint: "服务商的 https:// 地址，例如 https://api.deepseek.com/v1",
+      baseUrlHint: "服务商 API 的地址，例如 https://api.deepseek.com/v1",
       model: "模型",
       modelHint: "服务商提供的模型名称，例如 deepseek-chat",
       apiKey: "API 密钥",
       apiKeyHint: "仅保存在这台手机上，保存后不再显示",
       save: "保存服务",
-      testPassed: "服务可用",
-      testFailure: "服务没有响应。请检查地址、模型名称和 API 密钥。",
+      // 保存是探测的前半程（先落盘再 ping），这条 verdict 同时回答两步：
+      // “服务可用”确认探测通过，“已保存”确认写盘成功。
+      testPassed: "服务可用，已保存",
+      // ping 失败时配置其实已保存（保存先于探测完成）：verdict 要说明服务
+      // 已生效但未验证，并指向可以撤销它的“移除服务”——否则用户会把已存
+      // 储的密钥重输一遍，却不知道配置已经生效。
+      testFailure:
+        "服务没有响应。配置已保存——请检查地址、模型名称和 API 密钥，或移除服务。",
+      // 保存失败时探测根本没跑，“没有响应”会是假话（服务可能完全正常）；
+      // 失败发生在本机写入（钥匙串或存储），文案如实说明。
+      saveFailure: "无法在本机保存服务，请重试。",
       clear: "移除服务",
       clearFailed: "无法移除服务，配置仍已保存，请重试。",
       remotePrivacy:

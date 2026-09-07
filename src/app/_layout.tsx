@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { queryClient, queryPersistOptions } from "@/lib/query-client";
+import { reattachModelDownloads } from "@/features/on-device-model/model-download";
 import { I18nProvider } from "@/i18n";
 import { BrandSplash } from "@/components/BrandSplash";
 import { OnboardingContext } from "@/features/onboarding/onboarding-context";
@@ -54,6 +55,10 @@ export default function RootLayout() {
     // behind (see `removeLegacyModelKeys`). Fire-and-forget: a failure means
     // the orphaned rows survive one more launch.
     void removeLegacyModelKeys().catch(() => {});
+    // Re-attach to model downloads the OS kept running across a backgrounding
+    // or a relaunch, so their progress and completion still land in the
+    // download store. Fire-and-forget for the same reason.
+    void reattachModelDownloads().catch(() => {});
   }, []);
 
   // First-launch gate (expo-router auth-gate pattern): send un-onboarded users

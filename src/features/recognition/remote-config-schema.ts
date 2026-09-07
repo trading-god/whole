@@ -11,16 +11,30 @@ import { z } from "zod";
 // The base URL is normalized WITHOUT a trailing slash and WITHOUT the
 // `/chat/completions` suffix — the runner appends the path, so a user who
 // pastes either form of the same endpoint ends up with the same request.
-// `https://` required: the app's ATS policy allows no cleartext, and a
-// credential sent over http:// would be readable on the wire. The settings
-// form says this in words; the schema enforces it.
+//
+// A SCHEME is required and only `http`/`https` pass, and `http://` is allowed
+// only for hosts that are local BY CONSTRUCTION — `localhost` plus the
+// loopback and private IPv4 ranges a LAN service lives at. The schema is the
+// only layer that can keep a credential off a cleartext public wire: ATS
+// exempts numeric IP addresses entirely before iOS 17 and the deployment
+// target is 16.4, so `http://<public-IP>` would otherwise POST the
+// `Authorization: Bearer` key in the clear on every supported iOS 16 device —
+// a named public host is safe (ATS blocks cleartext to it), but the IP-literal
+// hole is closed here, at save time. Local hosts are exactly what the platform
+// allowances exist for (`NSAllowsLocalNetworking` in app.json on iOS; the
+// loopback-only network security config on Android, where a LAN-IP endpoint
+// stays https-only).
+const LOCAL_HTTP_HOST =
+  "(?:localhost|(?:127|10)\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}|172\\.(?:1[6-9]|2\\d|3[01])\\.\\d{1,3}\\.\\d{1,3}|192\\.168\\.\\d{1,3}\\.\\d{1,3}|169\\.254\\.\\d{1,3}\\.\\d{1,3})";
 
 const remoteBaseUrlSchema = z
   .string()
   .trim()
   .regex(
-    /^https:\/\/[^\s/]+([^\s]*[^\s/])?$/,
-    "Base URL must be an https:// address",
+    new RegExp(
+      `^(?:https://[^\\s/]+(?:[^\\s]*[^\\s/])?|http://${LOCAL_HTTP_HOST}(?::\\d+)?(?:/[^\\s]*)?)$`,
+    ),
+    "Base URL must be an https:// address, or http:// for a local service",
   );
 
 export const remoteConfigSchema = z.object({

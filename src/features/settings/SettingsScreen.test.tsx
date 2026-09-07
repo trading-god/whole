@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
+import { Alert } from "react-native";
 
 import { SettingsScreen } from "@/features/settings/SettingsScreen";
 import { deferred } from "@/test-support/deferred";
@@ -13,11 +14,73 @@ const E4B = onDeviceModel("gemma-4-e4b");
 const mockVerify = jest.fn<() => Promise<void>>();
 const mockSelectOnDeviceModel = jest.fn<(id?: unknown) => Promise<void>>();
 const mockModelPresence = jest.fn<(id?: unknown) => { status: string }>();
-const mockDownloadModel =
-  jest.fn<
-    (id: unknown, onProgress: (fraction: number) => void) => Promise<void>
-  >();
+const mockStartModelDownload = jest.fn<(id: unknown) => void>();
+const mockPauseModelDownload = jest.fn<(id: unknown) => void>();
+const mockResumeModelDownload = jest.fn<(id: unknown) => void>();
 const mockDeleteModel = jest.fn<(id: unknown) => void>();
+// The deletion confirm rides the native alert (the multi-account replace
+// confirm's pattern). A spy, not a module mock: the component holds the
+// `Alert` OBJECT and resolves `.alert` at call time, so replacing the method
+// reaches it — and jest-expo's own Alert mock is a no-op, so calling through
+// is safe in the suite.
+const mockAlertAlert = jest.spyOn(Alert, "alert");
+// The module-level download store, faked at the same seam the component
+// consumes: observeModelDownload reports the current snapshot immediately
+// and on every publish, per model id — which is what re-mounting rows ride.
+// The IDLE default is a shared, STABLE object: the component reads the
+// snapshot through useSyncExternalStore, which compares by identity — a
+// fresh literal per call would loop it forever.
+const IDLE_SNAPSHOT = { phase: "idle", fraction: 0 } as const;
+type FakeSnapshot = { phase: string; fraction: number };
+const mockSnapshots = new Map<string, FakeSnapshot>();
+const mockDownloadListeners = new Map<
+  string,
+  Set<(snapshot: FakeSnapshot) => void>
+>();
+const emitDownloadSnapshot = (id: string, snapshot: FakeSnapshot) => {
+  mockSnapshots.set(id, snapshot);
+  for (const listener of mockDownloadListeners.get(id) ?? []) {
+    listener(snapshot);
+  }
+};
+// The presence side of the same fake: observeModelPresence reports the
+// current disk state immediately and after each change the row cannot see on
+// its own (a settle's rename, a delete), which is what re-mounting rows ride.
+const mockPresenceListeners = new Map<
+  string,
+  Set<(presence: { status: string }) => void>
+>();
+const emitModelPresence = (id: string, presence: { status: string }) => {
+  for (const listener of mockPresenceListeners.get(id) ?? []) {
+    listener(presence);
+  }
+};
+// The observe contract both fakes below share (the real store's
+// `observeValue`): register the listener, deliver the current value
+// immediately, unsubscribe with empty-set cleanup — one helper so the fakes
+// cannot drift from each other or from the real contract. Everything is
+// resolved at CALL time: the jest.mock factory runs during the import phase,
+// before this file's top-level consts initialize. Mock-prefixed because the
+// factory closes over it (AGENTS.md, Jest gotchas). The trailing comma in
+// `<T,>` is what keeps tsc from reading the generic as JSX in a .tsx file.
+const mockObserve = <T,>(
+  id: unknown,
+  listener: (value: T) => void,
+  registry: Map<string, Set<(value: T) => void>>,
+  read: (id: string) => T,
+) => {
+  const key = id as string;
+  const set = registry.get(key) ?? new Set();
+  set.add(listener);
+  registry.set(key, set);
+  listener(read(key));
+  return () => {
+    set.delete(listener);
+    if (set.size === 0) {
+      registry.delete(key);
+    }
+  };
+};
 const mockLoadEngine = jest.fn<() => Promise<"on-device" | "remote">>();
 const mockSaveEngine =
   jest.fn<(engine: "on-device" | "remote") => Promise<void>>();
@@ -25,8 +88,7 @@ const mockLoadRemoteConfig = jest.fn<() => Promise<unknown>>();
 const mockSaveRemoteConfig =
   jest.fn<(config?: unknown, apiKey?: unknown) => Promise<void>>();
 const mockClearRemoteConfig = jest.fn<() => Promise<void>>();
-const mockCreateRemoteRunModel = jest.fn<() => Promise<unknown>>();
-const mockRunRemoteModel = jest.fn<() => Promise<string>>();
+const mockVerifyRemote = jest.fn<() => Promise<void>>();
 
 jest.mock("@/features/on-device-model/model-context", () => ({
   verifyOnDeviceModel: () => mockVerify(),
@@ -39,8 +101,28 @@ jest.mock("@/features/on-device-model/model-context", () => ({
 // mocked for the service Test button.
 jest.mock("@/features/on-device-model/model-download", () => ({
   modelPresence: (id: unknown) => mockModelPresence(id),
-  downloadModel: (id: unknown, onProgress: (fraction: number) => void) =>
-    mockDownloadModel(id, onProgress),
+  modelDownloadState: (id: unknown) =>
+    mockSnapshots.get(id as string) ?? IDLE_SNAPSHOT,
+  observeModelDownload: (
+    id: unknown,
+    listener: (snapshot: FakeSnapshot) => void,
+  ) =>
+    mockObserve(
+      id,
+      listener,
+      mockDownloadListeners,
+      (key) => mockSnapshots.get(key) ?? IDLE_SNAPSHOT,
+    ),
+  observeModelPresence: (
+    id: unknown,
+    listener: (presence: { status: string }) => void,
+  ) =>
+    mockObserve(id, listener, mockPresenceListeners, (key) =>
+      mockModelPresence(key),
+    ),
+  startModelDownload: (id: unknown) => mockStartModelDownload(id),
+  pauseModelDownload: (id: unknown) => mockPauseModelDownload(id),
+  resumeModelDownload: (id: unknown) => mockResumeModelDownload(id),
   deleteModel: (id: unknown) => mockDeleteModel(id),
 }));
 
@@ -72,7 +154,7 @@ jest.mock("@/features/recognition/remote-model-config-store", () => ({
 }));
 
 jest.mock("@/features/recognition/remote-runner", () => ({
-  createRemoteRunModel: () => mockCreateRemoteRunModel(),
+  verifyRemoteModel: () => mockVerifyRemote(),
 }));
 
 // `ScreenHeader`'s back chevron reads it; the screen itself no longer does.
@@ -96,7 +178,7 @@ const showRemoteEngine = async () => {
   mockLoadEngine.mockResolvedValue("remote");
   await renderWithProviders(<SettingsScreen />);
   await waitFor(() => {
-    expect(screen.getByText("Base URL")).toBeOnTheScreen();
+    expect(screen.getByText("Base URL *")).toBeOnTheScreen();
   });
 };
 
@@ -120,14 +202,20 @@ beforeEach(() => {
   mockModelPresence.mockReturnValue({ status: "present" });
   mockLoadOnDeviceModelId.mockResolvedValue("gemma-4-e2b");
   mockSaveOnDeviceModelId.mockResolvedValue(undefined);
-  mockDownloadModel.mockResolvedValue(undefined);
+  mockStartModelDownload.mockImplementation((id) => {
+    // The default download behavior: the start lands the transfer in the
+    // downloading snapshot; tests that need more drive it by hand.
+    emitDownloadSnapshot(id as string, { phase: "downloading", fraction: 0 });
+  });
+  mockSnapshots.clear();
+  mockDownloadListeners.clear();
+  mockPresenceListeners.clear();
   mockLoadEngine.mockResolvedValue("on-device");
   mockSaveEngine.mockResolvedValue(undefined);
   mockLoadRemoteConfig.mockResolvedValue(null);
   mockSaveRemoteConfig.mockResolvedValue(undefined);
   mockClearRemoteConfig.mockResolvedValue(undefined);
-  mockRunRemoteModel.mockResolvedValue("pong");
-  mockCreateRemoteRunModel.mockResolvedValue(mockRunRemoteModel);
+  mockVerifyRemote.mockResolvedValue(undefined);
 });
 
 // Labels are asserted in ENGLISH: `useLocales()` resolves to `en` under
@@ -225,14 +313,8 @@ describe("SettingsScreen", () => {
       expect(screen.getAllByText("Download")).toHaveLength(1);
     });
 
-    it("shows byte and accessible percentage progress while downloading", async () => {
+    it("shows byte, percentage, and accessible progress while downloading", async () => {
       mockModelPresence.mockReturnValue({ status: "absent" });
-      const pendingDownload = deferred<void>();
-      let reportProgress: ((fraction: number) => void) | undefined;
-      mockDownloadModel.mockImplementation(async (_id, onProgress) => {
-        reportProgress = onProgress;
-        return pendingDownload.promise;
-      });
 
       await renderWithProviders(<SettingsScreen />);
       await fireEvent.press(screen.getAllByText("Download")[0]);
@@ -241,9 +323,13 @@ describe("SettingsScreen", () => {
       expect(
         screen.getByText(`0 B of ${formatBytes(E2B.sizeBytes)}`),
       ).toBeOnTheScreen();
+      expect(screen.getByText("0%")).toBeOnTheScreen();
 
       await act(() => {
-        reportProgress?.(0.42);
+        emitDownloadSnapshot("gemma-4-e2b", {
+          phase: "downloading",
+          fraction: 0.42,
+        });
       });
 
       await waitFor(() => {
@@ -260,19 +346,22 @@ describe("SettingsScreen", () => {
             `${formatBytes(Math.round(E2B.sizeBytes * 0.42))} of ${formatBytes(E2B.sizeBytes)}`,
           ),
         ).toBeOnTheScreen();
-      });
-
-      await act(() => {
-        pendingDownload.resolve();
+        expect(screen.getByText("42%")).toBeOnTheScreen();
       });
     });
 
     it("runs a download to completion and lands on the downloaded state", async () => {
-      // Initial render: absent. After the download resolves, the presence
-      // re-read reports present.
+      // Initial render: absent. After the download settles, the disk holds
+      // the model and the presence subscription carries that to the row.
       mockModelPresence.mockReturnValue({ status: "absent" });
-      mockDownloadModel.mockImplementation(async () => {
+      mockStartModelDownload.mockImplementation((id) => {
+        emitDownloadSnapshot(id as string, {
+          phase: "downloading",
+          fraction: 0,
+        });
         mockModelPresence.mockReturnValue({ status: "present" });
+        emitDownloadSnapshot(id as string, { phase: "idle", fraction: 0 });
+        emitModelPresence(id as string, { status: "present" });
       });
 
       await renderWithProviders(<SettingsScreen />);
@@ -282,14 +371,43 @@ describe("SettingsScreen", () => {
       // The downloaded state: the row swaps its download button for the
       // Test button, which only a present model offers.
       await waitFor(() => {
-        expect(mockDownloadModel).toHaveBeenCalledTimes(1);
+        expect(mockStartModelDownload).toHaveBeenCalledTimes(1);
         expect(screen.getByText("Test")).toBeTruthy();
       });
     });
 
+    it("pauses a running download and offers to resume it", async () => {
+      mockModelPresence.mockReturnValue({ status: "absent" });
+
+      await renderWithProviders(<SettingsScreen />);
+      await fireEvent.press(screen.getAllByText("Download")[0]);
+      await waitFor(() => {
+        expect(screen.getByText("Downloading…")).toBeOnTheScreen();
+      });
+
+      await press("Pause download");
+
+      expect(mockPauseModelDownload).toHaveBeenCalledWith("gemma-4-e2b");
+      // The store is what flips the phase; the test drives it as the real
+      // store would, then asserts the row answers with the resume offer.
+      await act(() => {
+        emitDownloadSnapshot("gemma-4-e2b", { phase: "paused", fraction: 0.4 });
+      });
+
+      expect(screen.getByText("Paused")).toBeOnTheScreen();
+      await press("Resume download");
+      expect(mockResumeModelDownload).toHaveBeenCalledWith("gemma-4-e2b");
+    });
+
     it("reports a failed download with the retry copy", async () => {
       mockModelPresence.mockReturnValue({ status: "absent" });
-      mockDownloadModel.mockRejectedValue(new Error("network"));
+      mockStartModelDownload.mockImplementation((id) => {
+        emitDownloadSnapshot(id as string, {
+          phase: "downloading",
+          fraction: 0,
+        });
+        emitDownloadSnapshot(id as string, { phase: "failed", fraction: 0 });
+      });
 
       await renderWithProviders(<SettingsScreen />);
 
@@ -331,7 +449,7 @@ describe("SettingsScreen", () => {
       });
     });
 
-    it("deletes the model when asked", async () => {
+    it("asks for confirmation before deleting the model", async () => {
       mockModelPresence.mockReturnValueOnce({ status: "present" });
       mockModelPresence.mockReturnValueOnce({ status: "absent" });
 
@@ -339,6 +457,19 @@ describe("SettingsScreen", () => {
 
       await press("Delete model");
 
+      // The press only ASKS: the weights are the gigabytes the user
+      // deliberately downloaded, so nothing is deleted yet.
+      expect(mockDeleteModel).not.toHaveBeenCalled();
+      const buttons = mockAlertAlert.mock.calls.at(-1)?.[2];
+      expect(buttons?.[0]).toMatchObject({ style: "cancel", text: "Cancel" });
+
+      // Confirming runs the deletion the row always performed — under the
+      // trigger's own label, so the action keeps one name through the flow.
+      const confirm = buttons?.find((button) => button.style === "destructive");
+      expect(confirm?.text).toBe("Delete model");
+      await act(() => {
+        confirm?.onPress?.();
+      });
       expect(mockDeleteModel).toHaveBeenCalledTimes(1);
     });
 
@@ -350,7 +481,7 @@ describe("SettingsScreen", () => {
       expect(mockSaveEngine).toHaveBeenCalledWith("remote");
       // The remote form appears inside the now-selected card.
       await waitFor(() => {
-        expect(screen.getByText("Base URL")).toBeTruthy();
+        expect(screen.getByText("Base URL *")).toBeTruthy();
       });
     });
 
@@ -378,9 +509,10 @@ describe("SettingsScreen", () => {
       const save = screen.getByText("Save service").parent;
       expect(save?.props.accessibilityState).toEqual({ disabled: true });
 
+      // No scheme: ambiguous to paste, so the draft stays unsavable.
       await fireEvent.changeText(
         screen.getByLabelText("Base URL"),
-        "http://api.example.com/v1",
+        "api.example.com/v1",
       );
       await fireEvent.changeText(
         screen.getByLabelText("Model"),
@@ -397,6 +529,70 @@ describe("SettingsScreen", () => {
           screen.getByText("Save service").parent?.props.accessibilityState,
         ).toEqual({ disabled: false });
       });
+    });
+
+    it("accepts a local http:// endpoint", async () => {
+      await showRemoteEngine();
+
+      await fireEvent.changeText(
+        screen.getByLabelText("Base URL"),
+        "http://localhost:11434/v1",
+      );
+      await fireEvent.changeText(screen.getByLabelText("Model"), "llama3.2");
+
+      // Cleartext is for LOCAL services (Ollama and friends) — a private
+      // LAN address included; Android's loopback-only config still refuses
+      // the LAN case at request time, a documented platform limit.
+      await waitFor(() => {
+        expect(
+          screen.getByText("Save service").parent?.props.accessibilityState,
+        ).toEqual({ disabled: false });
+      });
+    });
+
+    it("rejects http for anything but a local host", async () => {
+      await showRemoteEngine();
+
+      await fireEvent.changeText(
+        screen.getByLabelText("Model"),
+        "example-model",
+      );
+
+      // A public IP over cleartext: ATS exempts numeric IP addresses before
+      // iOS 17 (the deployment target is 16.4), so the schema is the only
+      // layer that keeps the Bearer key off a cleartext public wire.
+      for (const baseUrl of [
+        "http://203.0.113.7/v1",
+        "http://api.example.com/v1",
+        "ftp://api.example.com/v1",
+      ]) {
+        await fireEvent.changeText(screen.getByLabelText("Base URL"), baseUrl);
+        expect(
+          screen.getByText("Save service").parent?.props.accessibilityState,
+        ).toEqual({ disabled: true });
+      }
+
+      // The local-service allowance itself survives: the loopback host with
+      // a port and path saves.
+      await fireEvent.changeText(
+        screen.getByLabelText("Base URL"),
+        "http://127.0.0.1:11434/v1",
+      );
+      await waitFor(() => {
+        expect(
+          screen.getByText("Save service").parent?.props.accessibilityState,
+        ).toEqual({ disabled: false });
+      });
+    });
+
+    it("marks the two required fields, leaving the optional key unmarked", async () => {
+      await showRemoteEngine();
+
+      expect(screen.getByLabelText("Base URL, Required")).toBeOnTheScreen();
+      expect(screen.getByLabelText("Model, Required")).toBeOnTheScreen();
+      // The API key is optional — a local endpoint needs none.
+      expect(screen.queryByLabelText("API key, Required")).toBeNull();
+      expect(screen.getByLabelText("API key")).toBeOnTheScreen();
     });
 
     it("configures the API key as a secure credential field", async () => {
@@ -439,12 +635,13 @@ describe("SettingsScreen", () => {
       });
 
       await waitFor(() => {
-        expect(mockRunRemoteModel).toHaveBeenCalledWith({
-          system: "ping",
-          user: "ping",
-          grammar: "",
-        });
-        expect(screen.getByText("The service responded")).toBeOnTheScreen();
+        // The probe ran, and its passing verdict is on the line below the
+        // actions. (The ping's wire shape lives with the runner, in
+        // remote-runner.test.ts.)
+        expect(mockVerifyRemote).toHaveBeenCalled();
+        expect(
+          screen.getByText("The service responded — saved"),
+        ).toBeOnTheScreen();
         expect(screen.getByText("Remove service")).toBeOnTheScreen();
       });
     });
@@ -452,18 +649,97 @@ describe("SettingsScreen", () => {
     it("reports a remote test failure while keeping the saved service removable", async () => {
       await showRemoteEngine();
       await fillValidRemoteDraft();
-      mockRunRemoteModel.mockRejectedValue(new Error("unauthorized"));
+      mockVerifyRemote.mockRejectedValue(new Error("unauthorized"));
 
       await press("Save service");
 
       await waitFor(() => {
+        // The ping failed, but the save resolved first — the config IS
+        // stored, so the verdict says so and points at the Remove control.
         expect(
           screen.getByText(
-            "The service didn't respond. Check the address, the model name, and the API key.",
+            "The service didn't respond. The configuration is saved — check the address, the model name, and the API key, or remove the service.",
           ),
         ).toBeOnTheScreen();
         expect(screen.getByText("Remove service")).toBeOnTheScreen();
       });
+    });
+
+    it("reports a failed save as this phone's failure, not the service's", async () => {
+      await showRemoteEngine();
+      await fillValidRemoteDraft();
+      mockSaveRemoteConfig.mockRejectedValue(new Error("keychain"));
+
+      await press("Save service");
+
+      // A save that failed never reached the probe: "the service didn't
+      // respond" would be false — the service may be perfectly healthy —
+      // so the save failure gets its own verdict.
+      await waitFor(() => {
+        expect(
+          screen.getByText(
+            "Couldn't save the service on this phone. Try again.",
+          ),
+        ).toBeOnTheScreen();
+      });
+      expect(screen.queryByText(/didn't respond/)).toBeNull();
+    });
+
+    it("does not resurrect a removed config when the mount-time hydration lands late", async () => {
+      // The hydration read is held mid-flight while the user saves a fresh
+      // config and removes it — then the stale snapshot (the config that
+      // existed at mount) resolves. It must not refill the form it just
+      // watched empty: a save or a removal supersedes the read.
+      const pendingHydration = deferred<{
+        baseUrl: string;
+        model: string;
+        apiKey: null;
+      }>();
+      mockLoadRemoteConfig.mockReturnValue(pendingHydration.promise);
+      mockLoadEngine.mockResolvedValue("remote");
+      await renderWithProviders(<SettingsScreen />);
+      await waitFor(() => {
+        expect(screen.getByText("Base URL *")).toBeOnTheScreen();
+      });
+
+      await fillValidRemoteDraft();
+      await press("Save service");
+      await waitFor(() => {
+        expect(screen.getByText("Remove service")).toBeOnTheScreen();
+      });
+      await press("Remove service");
+      await waitFor(() => {
+        expect(screen.queryByText("Remove service")).toBeNull();
+      });
+
+      await act(async () => {
+        pendingHydration.resolve({
+          baseUrl: "https://api.deepseek.com/v1",
+          model: "deepseek-chat",
+          apiKey: null,
+        });
+      });
+
+      expect(screen.getByLabelText("Base URL").props.value).toBe("");
+      expect(screen.getByLabelText("Model").props.value).toBe("");
+    });
+
+    it("drops the test verdict when the user edits the saved draft", async () => {
+      await showRemoteEngine();
+      await fillValidRemoteDraft();
+      await press("Save service");
+      await waitFor(() => {
+        expect(
+          screen.getByText("The service responded — saved"),
+        ).toBeOnTheScreen();
+      });
+
+      // The verdict describes the SAVED config; once the draft changes it no
+      // longer answers what is on screen — endpoint B under a "saved" line
+      // would read as B being saved when only A is on disk.
+      await fireEvent.changeText(screen.getByLabelText("Model"), "other-model");
+
+      expect(screen.queryByText(/The service responded/)).toBeNull();
     });
 
     it("clears a saved remote service with a visible, guarded loading state", async () => {

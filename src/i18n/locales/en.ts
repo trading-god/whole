@@ -178,8 +178,14 @@ export const enMessages = {
       download: "Download",
       downloadHint: "Downloads {{model}}, using {{size}} of storage",
       downloading: "Downloading…",
+      // The pause/resume toggle on an in-flight download: each label names the
+      // state it switches TO, matching the "verb + noun" shape of "Download".
+      pauseDownload: "Pause download",
+      resumeDownload: "Resume download",
+      paused: "Paused",
       downloadProgress: "Model download progress",
       downloadProgressValue: "{{percentage}}% downloaded",
+      downloadPercentValue: "{{percentage}}%",
       // A retry starts over from the beginning (the downloader replaces the
       // partial file), so the copy must not promise kept progress.
       downloadFailed:
@@ -188,20 +194,37 @@ export const enMessages = {
       // they are what the E2B/E4B choice actually turns on for the device.
       modelCosts: "{{size}} storage · about {{ram}} memory to run",
       deleteModel: "Delete model",
+      // The deletion confirm. The weights are the largest thing on disk this
+      // app ever writes, so the dialog states what leaves and that a later
+      // use means re-downloading it — the confirm button reuses the trigger's
+      // own label, keeping the action's name the same through the flow.
+      deleteModelTitle: "Delete {{model}}?",
+      deleteModelMessage:
+        "The downloaded files ({{size}}) will be removed from this device. You can download the model again anytime.",
       partialDownload: "{{size}} of {{total}}",
       // The remote engine's form. Labels say what to paste, in the words a
       // provider's console uses.
       baseUrl: "Base URL",
       baseUrlHint:
-        "Your provider's https:// address, e.g. https://api.deepseek.com/v1",
+        "Your provider's API address, e.g. https://api.deepseek.com/v1",
       model: "Model",
       modelHint: "The model name your provider serves, e.g. deepseek-chat",
       apiKey: "API key",
       apiKeyHint: "Stored only on this phone, never shown again after saving",
       save: "Save service",
-      testPassed: "The service responded",
+      // Saving is the probe's first half (persist, then ping) — this verdict
+      // answers both steps: responded confirms the probe, saved the write.
+      testPassed: "The service responded — saved",
+      // A failed ping still SAVED the config (the save resolved first): the
+      // verdict must say the service is live but unverified, and point at the
+      // Remove control that undoes it — otherwise the user retypes a key
+      // that is already stored, never learning the config went live.
       testFailure:
-        "The service didn't respond. Check the address, the model name, and the API key.",
+        "The service didn't respond. The configuration is saved — check the address, the model name, and the API key, or remove the service.",
+      // A save that failed never reached the probe, so "didn't respond" would
+      // be false — the service may be perfectly healthy. What failed is this
+      // phone's write (the keychain or the store), and the copy says so.
+      saveFailure: "Couldn't save the service on this phone. Try again.",
       clear: "Remove service",
       clearFailed:
         "Couldn't remove the service — it is still saved. Try again.",

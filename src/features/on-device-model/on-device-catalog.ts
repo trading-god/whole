@@ -22,6 +22,8 @@
 // jetsams the app mid-load — so the number a user weighing the choice
 // needs is stated up front. Measured on the eval devices (see
 // whole-test AVD notes): E2B loads in ~2.7 GB, E4B in ~4.3 GB.
+import { z } from "zod";
+
 export type OnDeviceModelId = "gemma-4-e2b" | "gemma-4-e4b";
 
 export type OnDeviceModel = {
@@ -67,14 +69,21 @@ export const DEFAULT_ON_DEVICE_MODEL = MODELS[0];
 const BY_ID = new Map(MODELS.map((model) => [model.id, model]));
 
 /**
- * Every model id, in catalog order — the store's schema derives from this, so
+ * Every model id, in catalog order — the schema below derives from this, so
  * adding a model to the catalog IS adding it to the schema (no second list to
  * forget, whose failure would be silent: an unparsed id falls back to E2B).
  */
-export const ON_DEVICE_MODEL_IDS = MODELS.map((model) => model.id) as [
+const ON_DEVICE_MODEL_IDS = MODELS.map((model) => model.id) as [
   OnDeviceModelId,
   ...OnDeviceModelId[],
 ];
+
+// The id's runtime schema lives with the ids it validates, in this pure
+// module: consumers on either side of the test boundary (the preference
+// store AND the download reattach path, which reads ids back from the native
+// downloader) validate through the one schema instead of hand-written
+// membership checks (AGENTS.md, Validation).
+export const ON_DEVICE_MODEL_SCHEMA = z.enum(ON_DEVICE_MODEL_IDS);
 
 /** Every model, smallest first — the order the settings screen lists them. */
 export const ON_DEVICE_MODELS = MODELS;

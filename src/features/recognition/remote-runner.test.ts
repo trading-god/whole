@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
 import type { RunModel } from "@whole/ocr";
 
-import { createRemoteRunModel } from "@/features/recognition/remote-runner";
+import {
+  createRemoteRunModel,
+  verifyRemoteModel,
+} from "@/features/recognition/remote-runner";
 import { RemoteModelError } from "@/features/recognition/remote-model-error";
 
 const mockLoadRemoteModelConfig = jest.fn<() => Promise<unknown>>();
@@ -20,6 +23,15 @@ const COMPLETION_BODY = {
   choices: [{ message: { content: '{"homeCurrency":"none"}' } }],
 };
 
+// The success mock every happy-path test answers through: one completion,
+// HTTP 200. Returns the spy so a test can assert on the request it saw.
+const mockCompletion = () =>
+  jest
+    .spyOn(global, "fetch")
+    .mockResolvedValue(
+      new Response(JSON.stringify(COMPLETION_BODY), { status: 200 }),
+    );
+
 beforeEach(() => {
   jest.resetAllMocks();
   mockLoadRemoteModelConfig.mockResolvedValue(CONFIG);
@@ -27,11 +39,7 @@ beforeEach(() => {
 
 describe("createRemoteRunModel", () => {
   it("answers a completion with the endpoint's content", async () => {
-    jest
-      .spyOn(global, "fetch")
-      .mockResolvedValue(
-        new Response(JSON.stringify(COMPLETION_BODY), { status: 200 }),
-      );
+    mockCompletion();
 
     const runModel = (await createRemoteRunModel()) as RunModel;
 
@@ -44,15 +52,15 @@ describe("createRemoteRunModel", () => {
     expect(answer).toBe(COMPLETION_BODY.choices[0].message.content);
   });
 
-  it("posts to the configured base URL with the auth header and the schema", async () => {
-    const fetchSpy = jest
-      .spyOn(global, "fetch")
-      .mockResolvedValue(
-        new Response(JSON.stringify(COMPLETION_BODY), { status: 200 }),
-      );
+  it("posts to the configured base URL with the auth header and the schema on a recognition turn", async () => {
+    const fetchSpy = mockCompletion();
 
     const runModel = (await createRemoteRunModel()) as RunModel;
-    await runModel({ system: "s", user: "u", grammar: "" });
+    // A non-empty grammar is what marks the turn as recognition (the engine
+    // always passes the compiled annotation grammar; only the settings Test
+    // passes ""). Its content is irrelevant to this runner — presence alone
+    // decides whether the schema rides along.
+    await runModel({ system: "s", user: "u", grammar: "root ::= ..." });
 
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("https://api.deepseek.com/v1/chat/completions");
@@ -75,6 +83,21 @@ describe("createRemoteRunModel", () => {
     fetchSpy.mockRestore();
   });
 
+  it("omits response_format on a turn without a grammar — the settings Test's ping", async () => {
+    // The Test probe is a reachability check; constraining "ping" to the
+    // annotation shape would have the provider generate a full JSON
+    // annotation and turn a one-second round trip into a full inference.
+    const fetchSpy = mockCompletion();
+
+    const runModel = (await createRemoteRunModel()) as RunModel;
+    await runModel({ system: "ping", user: "ping", grammar: "" });
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body.response_format).toBeUndefined();
+    fetchSpy.mockRestore();
+  });
+
   it("returns null when no config is saved", async () => {
     mockLoadRemoteModelConfig.mockResolvedValue(null);
 
@@ -90,11 +113,7 @@ describe("createRemoteRunModel", () => {
       model: "deepseek-chat",
       apiKey: null,
     });
-    const fetchSpy = jest
-      .spyOn(global, "fetch")
-      .mockResolvedValue(
-        new Response(JSON.stringify(COMPLETION_BODY), { status: 200 }),
-      );
+    const fetchSpy = mockCompletion();
 
     const runModel = (await createRemoteRunModel()) as RunModel;
     await runModel({ system: "s", user: "u", grammar: "" });
@@ -141,5 +160,32 @@ describe("createRemoteRunModel", () => {
     await expect(
       runModel({ system: "s", user: "u", grammar: "" }),
     ).rejects.toThrow(RemoteModelError);
+  });
+});
+
+describe("verifyRemoteModel", () => {
+  it("probes with a bare ping that carries no schema", async () => {
+    // The empty grammar is load-bearing: without it the probe would ride
+    // `response_format`, and a provider asked to fill a full annotation JSON
+    // turns a one-second reachability check into a full inference.
+    const fetchSpy = mockCompletion();
+
+    await verifyRemoteModel();
+
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.deepseek.com/v1/chat/completions");
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body.messages).toEqual([
+      { role: "system", content: "ping" },
+      { role: "user", content: "ping" },
+    ]);
+    expect(body).not.toHaveProperty("response_format");
+    fetchSpy.mockRestore();
+  });
+
+  it("throws when no config is saved", async () => {
+    mockLoadRemoteModelConfig.mockResolvedValue(null);
+
+    await expect(verifyRemoteModel()).rejects.toThrow("no config");
   });
 });

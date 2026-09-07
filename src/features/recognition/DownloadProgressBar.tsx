@@ -11,6 +11,15 @@ import { RADIUS } from "@/theme/sizes";
 // so the bar moves smoothly between progress ticks instead of stepping — the
 // one motion this flow needs, and the one that answers the user's "is it
 // moving?" glance.
+
+// Clamps to 0..1 — the one range both the bar's width and the readout's
+// percentages render.
+const clampFraction = (fraction: number) => Math.max(0, Math.min(1, fraction));
+
+/** 0..1 → 0..100, the one percentage derivation the bar and readout share. */
+const fractionToPercent = (fraction: number) =>
+  Math.round(clampFraction(fraction) * 100);
+
 type DownloadProgressBarProps = {
   /** 0..1 across the whole file. */
   fraction: number;
@@ -18,8 +27,10 @@ type DownloadProgressBarProps = {
 
 export function DownloadProgressBar({ fraction }: DownloadProgressBarProps) {
   const { t } = useTranslation();
-  const clamped = Math.max(0, Math.min(1, fraction));
-  const percentage = Math.round(clamped * 100);
+  // The bar animates the clamped value; the percentage derivation clamps
+  // its own input (`fractionToPercent`), so it takes the raw fraction.
+  const clamped = clampFraction(fraction);
+  const percentage = fractionToPercent(fraction);
   const [width] = useState(() => new Animated.Value(clamped));
   useEffect(() => {
     Animated.timing(width, {
@@ -58,22 +69,30 @@ export function DownloadProgressBar({ fraction }: DownloadProgressBarProps) {
   );
 }
 
-/** The byte readout beside the bar: "{{size}} of {{total}}" via the partial copy. */
+/** The readout row under the bar: bytes at the left, percentage at the right. */
 export function DownloadByteReadout({
-  sizeBytes,
+  fraction,
   totalBytes,
 }: {
-  sizeBytes: number;
+  /** 0..1 across the whole file. */
+  fraction: number;
   totalBytes: number;
 }) {
   const { t } = useTranslation();
   return (
-    <Text style={styles.readout}>
-      {t("settings.engine.partialDownload", {
-        size: formatBytes(sizeBytes),
-        total: formatBytes(totalBytes),
-      })}
-    </Text>
+    <View style={styles.readoutRow}>
+      <Text style={styles.readout}>
+        {t("settings.engine.partialDownload", {
+          size: formatBytes(Math.round(fraction * totalBytes)),
+          total: formatBytes(totalBytes),
+        })}
+      </Text>
+      <Text style={styles.readout}>
+        {t("settings.engine.downloadPercentValue", {
+          percentage: fractionToPercent(fraction),
+        })}
+      </Text>
+    </View>
   );
 }
 
@@ -92,5 +111,11 @@ const styles = StyleSheet.create({
   },
   readout: {
     ...screenStyles.metaLine,
+  },
+  // Bytes hug the bar's left edge, the percentage its right — one row under
+  // the bar, the two facts never competing for the same starting point.
+  readoutRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
   },
 });

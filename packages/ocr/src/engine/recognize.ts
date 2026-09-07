@@ -76,7 +76,10 @@ export type RecognitionAttempt = {
    * The annotation schema compiled to a GBNF grammar, which makes a malformed
    * answer unreturnable rather than merely retried. Invariant across attempts —
    * the correction fed back changes what to say, not the shape of an answer —
-   * so it is compiled once, not per attempt.
+   * so it is compiled once, not per attempt. An EMPTY string requests an
+   * unconstrained completion instead: every runtime treats "" as "no
+   * grammar" — the remote runner keeps the JSON schema off the wire for it,
+   * which is how the settings Test's plain ping rides the same contract.
    */
   grammar: string;
 };

@@ -56,10 +56,16 @@ describe("BUTTON_VARIANTS", () => {
     expect(BUTTON_VARIANTS.onDark.iconColor).not.toBe(COLORS.brand);
   });
 
-  it("is the only variant with a border", () => {
+  it("gives exactly the outline pair a border", () => {
     const bordered = VARIANTS.filter((v) => BUTTON_VARIANTS[v].border);
 
-    expect(bordered).toEqual(["outline"]);
+    // `dangerOutline` is `outline`'s destructive twin: the same hairline
+    // shape with danger ink on the border and label, so a destructive action
+    // sitting in a row of outline buttons (delete beside test, remove beside
+    // save) stays tellable at a glance.
+    expect(bordered).toEqual(["dangerOutline", "outline"]);
+    expect(BUTTON_VARIANTS.dangerOutline.labelColor).toBe(COLORS.danger);
+    expect(BUTTON_VARIANTS.dangerOutline.border?.color).toBe(COLORS.danger);
   });
 });
 
