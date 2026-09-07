@@ -259,18 +259,16 @@ function ModelRow({
     const paused = download.phase === "paused";
     body = (
       <>
-        <View style={styles.progressStack}>
-          <DownloadProgressBar fraction={download.fraction} />
-          <DownloadByteReadout
-            fraction={download.fraction}
-            totalBytes={model.sizeBytes}
-          />
-          <Text style={styles.hint}>
-            {paused
-              ? t("settings.engine.paused")
-              : t("settings.engine.downloading")}
-          </Text>
-        </View>
+        <DownloadProgressBar fraction={download.fraction} />
+        <DownloadByteReadout
+          fraction={download.fraction}
+          totalBytes={model.sizeBytes}
+        />
+        <Text style={styles.hint}>
+          {paused
+            ? t("settings.engine.paused")
+            : t("settings.engine.downloading")}
+        </Text>
         <Button
           size="xs"
           variant={paused ? "primary" : "secondary"}
@@ -513,7 +511,10 @@ function RemoteEngineConfig() {
           throw new Error("no config");
         }
         // A one-token completion: proves reachability, auth, and the model
-        // name in one round trip.
+        // name in one round trip. The empty grammar is load-bearing — it is
+        // what keeps the annotation schema off the wire, so the probe stays a
+        // plain completion instead of an inference the provider must fill a
+        // full annotation JSON for.
         await runModel({ system: "ping", user: "ping", grammar: "" });
         if (isMountedRef.current) {
           setTestPhase("passed");
@@ -643,9 +644,6 @@ const styles = StyleSheet.create({
   modelBody: {
     gap: SPACING.sm,
     paddingLeft: RADIO_ROW_INDENT,
-  },
-  progressStack: {
-    gap: SPACING.sm,
   },
   hint: {
     ...screenStyles.metaLine,

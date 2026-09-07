@@ -172,8 +172,7 @@ export const zhHansMessages = {
         "将从这台设备删除已下载的模型文件（{{size}}）。之后可随时重新下载。",
       partialDownload: "{{size}} / {{total}}",
       baseUrl: "服务地址",
-      baseUrlHint:
-        "服务商的 https:// 地址，例如 https://api.deepseek.com/v1；本地服务可用 http://。",
+      baseUrlHint: "服务商 API 的地址，例如 https://api.deepseek.com/v1",
       model: "模型",
       modelHint: "服务商提供的模型名称，例如 deepseek-chat",
       apiKey: "API 密钥",

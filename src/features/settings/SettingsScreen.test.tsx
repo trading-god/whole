@@ -55,6 +55,32 @@ const emitModelPresence = (id: string, presence: { status: string }) => {
     listener(presence);
   }
 };
+// The observe contract both fakes below share (the real store's
+// `observeValue`): register the listener, deliver the current value
+// immediately, unsubscribe with empty-set cleanup — one helper so the fakes
+// cannot drift from each other or from the real contract. Everything is
+// resolved at CALL time: the jest.mock factory runs during the import phase,
+// before this file's top-level consts initialize. Mock-prefixed because the
+// factory closes over it (AGENTS.md, Jest gotchas). The trailing comma in
+// `<T,>` is what keeps tsc from reading the generic as JSX in a .tsx file.
+const mockObserve = <T,>(
+  id: unknown,
+  listener: (value: T) => void,
+  registry: Map<string, Set<(value: T) => void>>,
+  read: (id: string) => T,
+) => {
+  const key = id as string;
+  const set = registry.get(key) ?? new Set();
+  set.add(listener);
+  registry.set(key, set);
+  listener(read(key));
+  return () => {
+    set.delete(listener);
+    if (set.size === 0) {
+      registry.delete(key);
+    }
+  };
+};
 const mockLoadEngine = jest.fn<() => Promise<"on-device" | "remote">>();
 const mockSaveEngine =
   jest.fn<(engine: "on-device" | "remote") => Promise<void>>();
@@ -81,35 +107,20 @@ jest.mock("@/features/on-device-model/model-download", () => ({
   observeModelDownload: (
     id: unknown,
     listener: (snapshot: FakeSnapshot) => void,
-  ) => {
-    const key = id as string;
-    const set = mockDownloadListeners.get(key) ?? new Set();
-    set.add(listener);
-    mockDownloadListeners.set(key, set);
-    listener(mockSnapshots.get(key) ?? IDLE_SNAPSHOT);
-    return () => {
-      set.delete(listener);
-      if (set.size === 0) {
-        mockDownloadListeners.delete(key);
-      }
-    };
-  },
+  ) =>
+    mockObserve(
+      id,
+      listener,
+      mockDownloadListeners,
+      (key) => mockSnapshots.get(key) ?? IDLE_SNAPSHOT,
+    ),
   observeModelPresence: (
     id: unknown,
     listener: (presence: { status: string }) => void,
-  ) => {
-    const key = id as string;
-    const set = mockPresenceListeners.get(key) ?? new Set();
-    set.add(listener);
-    mockPresenceListeners.set(key, set);
-    listener(mockModelPresence(id));
-    return () => {
-      set.delete(listener);
-      if (set.size === 0) {
-        mockPresenceListeners.delete(key);
-      }
-    };
-  },
+  ) =>
+    mockObserve(id, listener, mockPresenceListeners, (key) =>
+      mockModelPresence(key),
+    ),
   startModelDownload: (id: unknown) => mockStartModelDownload(id),
   pauseModelDownload: (id: unknown) => mockPauseModelDownload(id),
   resumeModelDownload: (id: unknown) => mockResumeModelDownload(id),
@@ -531,8 +542,44 @@ describe("SettingsScreen", () => {
       );
       await fireEvent.changeText(screen.getByLabelText("Model"), "llama3.2");
 
-      // Cleartext is for LOCAL services (Ollama and friends); the schema
-      // allows it and ATS is what keeps public endpoints on https.
+      // Cleartext is for LOCAL services (Ollama and friends) — a private
+      // LAN address included; Android's loopback-only config still refuses
+      // the LAN case at request time, a documented platform limit.
+      await waitFor(() => {
+        expect(
+          screen.getByText("Save service").parent?.props.accessibilityState,
+        ).toEqual({ disabled: false });
+      });
+    });
+
+    it("rejects http for anything but a local host", async () => {
+      await showRemoteEngine();
+
+      await fireEvent.changeText(
+        screen.getByLabelText("Model"),
+        "example-model",
+      );
+
+      // A public IP over cleartext: ATS exempts numeric IP addresses before
+      // iOS 17 (the deployment target is 16.4), so the schema is the only
+      // layer that keeps the Bearer key off a cleartext public wire.
+      for (const baseUrl of [
+        "http://203.0.113.7/v1",
+        "http://api.example.com/v1",
+        "ftp://api.example.com/v1",
+      ]) {
+        await fireEvent.changeText(screen.getByLabelText("Base URL"), baseUrl);
+        expect(
+          screen.getByText("Save service").parent?.props.accessibilityState,
+        ).toEqual({ disabled: true });
+      }
+
+      // The local-service allowance itself survives: the loopback host with
+      // a port and path saves.
+      await fireEvent.changeText(
+        screen.getByLabelText("Base URL"),
+        "http://127.0.0.1:11434/v1",
+      );
       await waitFor(() => {
         expect(
           screen.getByText("Save service").parent?.props.accessibilityState,

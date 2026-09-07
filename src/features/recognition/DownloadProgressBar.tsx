@@ -27,8 +27,10 @@ type DownloadProgressBarProps = {
 
 export function DownloadProgressBar({ fraction }: DownloadProgressBarProps) {
   const { t } = useTranslation();
-  const percentage = fractionToPercent(fraction);
+  // The bar animates the clamped value; the percentage derivation clamps
+  // its own input (`fractionToPercent`), so it takes the raw fraction.
   const clamped = clampFraction(fraction);
+  const percentage = fractionToPercent(fraction);
   const [width] = useState(() => new Animated.Value(clamped));
   useEffect(() => {
     Animated.timing(width, {

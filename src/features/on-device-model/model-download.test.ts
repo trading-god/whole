@@ -503,16 +503,19 @@ describe("startModelDownload", () => {
     expect(mockLastTask?.started).toBe(true);
   });
 
-  it("reports a failed transfer as failed, keeping the .part for a resume", () => {
+  it("reports a failed transfer as failed and sheds the dead partial", () => {
     const model = onDeviceModel("gemma-4-e2b");
     startModelDownload("gemma-4-e2b");
     stage(`${model.fileName}.part`, 7);
 
     mockLastTask?.handlers.error?.({ error: "network", errorCode: 0 });
 
-    // The partial file SURVIVES the failure: iOS resume data and Android's
-    // paused-state recovery both build on the bytes already on disk.
-    expect(mockFiles.get(`${model.fileName}.part`)?.deleted).toBeFalsy();
+    // The partial file GOES with the failure: nothing resumes a FAILED
+    // task (the OS session dropped it; resume continues only a PAUSED one)
+    // and the recovery — retry — starts from zero, so the bytes would be
+    // storage no UI path reclaims: Delete is offered only for a PRESENT
+    // model, and this row offers nothing but Download.
+    expect(mockFiles.get(`${model.fileName}.part`)?.deleted).toBe(true);
     expect(modelDownloadState("gemma-4-e2b").phase).toBe("failed");
     expect(mockCompleteHandler).toHaveBeenCalledWith("gemma-4-e2b");
   });
@@ -797,6 +800,12 @@ describe("reattachModelDownloads", () => {
       phase: "idle",
       fraction: 1,
     });
+    // The settled task was stopped — AFTER the rename: Android's DownloadManager
+    // record and persisted config survive a completion the dead process
+    // never broadcast-received, and without the stop every later launch
+    // would re-report the DONE task and re-run a settlement that finds no
+    // `.part` and publishes "failed" over this idle.
+    expect(mockExistingTasks[0]?.stopped).toBe(true);
     // And the session-wide handshake ran: a background relaunch woken to
     // deliver the completion is released the moment the JS work finishes,
     // not held to the OS's own timeout.
@@ -863,6 +872,42 @@ describe("reattachModelDownloads", () => {
     expect(mockExistingTasks[0]?.resumed).toBe(true);
     expect(modelDownloadState("gemma-4-e2b").phase).toBe("downloading");
     expect(modelDownloadState("gemma-4-e2b").fraction).toBeCloseTo(0.25);
+  });
+
+  it("does not publish failed over a settle that landed while an adopted resume was in flight", async () => {
+    const model = onDeviceModel("gemma-4-e2b");
+    mockDirectories.add("whole_models");
+    stage(`${model.fileName}.part`, Math.floor(model.sizeBytes / 4));
+    // No marker: the reattach auto-resumes this task — and the resume stays
+    // pending until the test says otherwise.
+    const task = mockMakeTask!(
+      "gemma-4-e2b",
+      "PAUSED",
+      Math.floor(model.sizeBytes / 4),
+    );
+    mockExistingTasks.push(task);
+    mockResumeDeferred = {};
+    const lateRejection = mockResumeDeferred;
+
+    await reattachModelDownloads();
+
+    // The transfer finished under the in-flight resume: the done handler
+    // settles the model, and only THEN the resume rejects — the adopted
+    // task's catch must carry the same liveness guard
+    // `resumeModelDownload`'s does, or it publishes "failed" over the
+    // settle (and re-fires the session handshake for a dead task).
+    stage(`${model.fileName}.part`, model.sizeBytes);
+    await task.handlers.done?.();
+    expect(modelPresence("gemma-4-e2b").status).toBe("present");
+    expect(modelDownloadState("gemma-4-e2b")).toEqual({
+      phase: "idle",
+      fraction: 1,
+    });
+
+    lateRejection.reject?.(new Error("task already completed"));
+    await Promise.resolve(); // let the rejection land
+
+    expect(modelDownloadState("gemma-4-e2b").phase).toBe("idle");
   });
 
   it("stops ids the catalog no longer knows", async () => {
@@ -941,6 +986,38 @@ describe("reattachModelDownloads", () => {
     expect(modelDownloadState("gemma-4-e2b")).toEqual({
       phase: "idle",
       fraction: 1,
+    });
+  });
+
+  it("defers a delete that lands mid-reattach instead of racing it", async () => {
+    // The delete variant of the launch-time hole: without the gate, the
+    // delete would run before the adoption lands, find no task to stop,
+    // remove the directory — and the adoption would then re-book the task,
+    // re-publish "downloading" over the delete, and leave a transfer the
+    // user just removed running (its eventual settle re-installing the
+    // model).
+    const model = onDeviceModel("gemma-4-e2b");
+    mockDirectories.add("whole_models");
+    mockDirectories.add(model.id);
+    stage(model.fileName, model.sizeBytes);
+    mockExistingTasks.push(mockMakeTask!("gemma-4-e2b", "DOWNLOADING", 0));
+
+    const reattaching = reattachModelDownloads();
+    deleteModel("gemma-4-e2b");
+    // Still mid-reattach: nothing has been removed yet — the delete waits
+    // behind the adoption it must see.
+    expect(mockDirectories.has(model.id)).toBe(true);
+
+    await reattaching;
+
+    // The re-entered delete found the adopted task: stopped, retired, the
+    // directory gone, and the row idle — not "downloading" over a model the
+    // user removed.
+    expect(mockExistingTasks[0]?.stopped).toBe(true);
+    expect(mockDirectories.has(model.id)).toBe(false);
+    expect(modelDownloadState("gemma-4-e2b")).toEqual({
+      phase: "idle",
+      fraction: 0,
     });
   });
 
@@ -1028,5 +1105,33 @@ describe("deleteModel", () => {
 
   it("is a no-op when the model is absent", () => {
     expect(() => deleteModel("gemma-4-e4b")).not.toThrow();
+  });
+
+  it("prunes the models root once the last model directory is gone", () => {
+    const model = onDeviceModel("gemma-4-e2b");
+    mockDirectories.add("whole_models");
+    mockDirectories.add(model.id);
+    stage(model.fileName, model.sizeBytes);
+
+    deleteModel("gemma-4-e2b");
+
+    expect(mockDirectories.has(model.id)).toBe(false);
+    // The emptied root went with it: `reattachModelDownloads` gates its
+    // native query on the root's existence, and a root that outlived every
+    // model would make that query a cost of every launch for the rest of
+    // the install's life.
+    expect(mockDirectories.has("whole_models")).toBe(false);
+  });
+
+  it("keeps the models root while another model's directory remains", () => {
+    const model = onDeviceModel("gemma-4-e2b");
+    mockDirectories.add("whole_models");
+    mockDirectories.add(model.id);
+    mockDirectories.add(onDeviceModel("gemma-4-e4b").id);
+
+    deleteModel("gemma-4-e2b");
+
+    expect(mockDirectories.has(model.id)).toBe(false);
+    expect(mockDirectories.has("whole_models")).toBe(true);
   });
 });

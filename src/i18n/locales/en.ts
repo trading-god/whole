@@ -206,7 +206,7 @@ export const enMessages = {
       // provider's console uses.
       baseUrl: "Base URL",
       baseUrlHint:
-        "Your provider's https:// address, e.g. https://api.deepseek.com/v1. A local service may use http://.",
+        "Your provider's API address, e.g. https://api.deepseek.com/v1",
       model: "Model",
       modelHint: "The model name your provider serves, e.g. deepseek-chat",
       apiKey: "API key",

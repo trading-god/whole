@@ -45,7 +45,7 @@ native modules and the pods have to be rebuilt.
 
 ## Patched dependencies
 
-All three patches are registered under `patchedDependencies` in
+All four patches are registered under `patchedDependencies` in
 `pnpm-workspace.yaml`, pinned to exact versions. **Re-evaluate each on
 every bump of the patched package** — a version mismatch fails resolution
 loudly, but a silent patch loss returns only as the bug it fixed.
@@ -57,6 +57,16 @@ loudly, but a silent patch loss returns only as the bug it fixed.
   through the JS wrapper to the iOS module's existing `closeIconName` prop,
   so the fullscreen screenshot viewer can close with an icon instead of an
   unlocalized English "Close". Android already draws one.
+- `@kesha-antonov/react-native-background-downloader@4.6.2` fixes the
+  package's Expo config plugin: `addSwiftSupport` inserts
+  `handleEventsForBackgroundURLSession` before the LAST top-level `}` of
+  AppDelegate.swift, which on Expo SDK ≥ 52 templates is the
+  `ReactNativeDelegate` class appended after `AppDelegate`, not the `@main`
+  `UIApplicationDelegate` the OS delivers the callback to. The patch makes
+  it insert before the FIRST closing brace, so iOS actually receives the
+  background-URLSession completion handler (the library's own README: skip
+  it "or iOS will throttle future background time"). Drop the patch once an
+  upstream release fixes the insertion point.
 - `llama.rn@0.12.9` moves `@expo/config-plugins` from llama.rn's
   devDependencies into dependencies: the Expo config plugin imports it at
   prebuild, pnpm does not install a transitive package's devDependencies,
@@ -321,6 +331,17 @@ Settings (radio-card section, `recognition/RecognitionEngineSection.tsx`):
   the Gemma weights, grammar-constrained. The weights are NOT bundled —
   `model-download.ts` downloads them on demand because a 3 GB+ bundle blew
   both Play's 150 MB base-APK cap and any reasonable iOS download. The
+  download itself is a BACKGROUND transfer
+  (`@kesha-antonov/react-native-background-downloader`): it survives the
+  settings screen unmounting and the app being backgrounded or terminated,
+  its status lives in module state (never component state), and
+  `reattachModelDownloads()` — wired once in `src/app/_layout.tsx` —
+  re-adopts OS-resident tasks at launch so a previous process's download
+  still lands and still reports progress. A USER pause leaves a
+  `.user-paused` marker file beside the `.part` so a relaunch can tell a
+  deliberate pause from the library's own kill-recovery parking; it is a
+  file, not kv, because its lifecycle is the download directory's.
+  The
   catalog (`on-device-catalog.ts`) lists TWO models the user picks between,
   smallest-first: Gemma 4 E2B and E4B, unsloth's single-file Q4_K_M quants
   (the ggml-org repos carry no Q4_K_M), each row in the settings section
@@ -328,7 +349,8 @@ Settings (radio-card section, `recognition/RecognitionEngineSection.tsx`):
   on for the device. Each model lands under `document/whole_models/<id>/`
   (its own directory, so two downloads never fight over file names),
   size-verified, presence on disk is the truth (`modelPresence(id)`), never
-  a stored flag. The selected model is `on-device-model-store.ts`
+  a stored flag (the pause marker above stores pause intent, not
+  presence). The selected model is `on-device-model-store.ts`
   (kv-store, E2B default); `selectOnDeviceModel` in `model-context.ts`
   releases the context on a switch so two models are never warm at once.
   The weights live nowhere in the repo — the eval harness takes its gguf
@@ -339,8 +361,12 @@ Settings (radio-card section, `recognition/RecognitionEngineSection.tsx`):
   rest in kv-store — `remote-model-config-store.ts`). No GBNF exists over
   HTTP, so the same annotation JSON schema rides as
   `response_format.json_schema` and the engine's parse/retry loop is the
-  backstop. A URL scheme is required and only `http`/`https` pass; `http://`
-  exists for LOCAL services (Ollama, LM Studio) — `NSAllowsLocalNetworking`
+  backstop. A URL scheme is required and only `http`/`https` pass, and
+  `http://` only for LOCAL hosts (loopback and private IPv4 ranges —
+  `remote-config-schema.ts` enforces it at save time, because ATS exempts
+  numeric IP addresses entirely before iOS 17 and the deployment target is
+  16.4, so a public-IP cleartext URL would otherwise ship the API key in the
+  clear); `NSAllowsLocalNetworking`
   in `app.json` (iOS) and the network security config written by
   `config/plugins/with-android-local-cleartext.js` (Android, which blocks all
   cleartext in release builds otherwise) are what let those cleartext

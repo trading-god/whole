@@ -1,0 +1,23 @@
+diff --git a/plugin/build/index.js b/plugin/build/index.js
+index 2ec94452a71e970327c774eb5a8e2538202fcaf2..c1950ea1af2e8ba86e08112114e8376626ff9c42 100644
+--- a/plugin/build/index.js
++++ b/plugin/build/index.js
+@@ -175,9 +175,15 @@ function addSwiftSupport(appDelegateContents) {
+         const classEndRegex = /^}$/gm;
+         const matches = [...appDelegateContents.matchAll(classEndRegex)];
+         if (matches.length > 0) {
+-            // Insert before the last closing brace (assuming it's the AppDelegate class)
+-            const lastMatch = matches[matches.length - 1];
+-            const insertPosition = lastMatch.index;
++            // Insert before the FIRST closing brace: that is the @main
++            // UIApplicationDelegate class the OS delivers the callback to.
++            // Expo SDK >= 52 templates append a ReactNativeDelegate class
++            // AFTER AppDelegate, so the LAST brace is that delegate's —
++            // inserting there puts the method on a class that never
++            // receives it, iOS never hands over the completion handler,
++            // and background-download relaunches are throttled.
++            const firstMatch = matches[0];
++            const insertPosition = firstMatch.index;
+             appDelegateContents = appDelegateContents.slice(0, insertPosition) +
+                 methodToAdd + '\n' +
+                 appDelegateContents.slice(insertPosition);
