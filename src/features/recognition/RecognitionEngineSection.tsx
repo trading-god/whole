@@ -59,7 +59,7 @@ import {
   saveRemoteModelConfig,
   clearRemoteModelConfig,
 } from "@/features/recognition/remote-model-config-store";
-import { createRemoteRunModel } from "@/features/recognition/remote-runner";
+import { verifyRemoteModel } from "@/features/recognition/remote-runner";
 import { useStoredPreference } from "@/storage/use-stored-preference";
 import { COLORS } from "@/theme/colors";
 import { screenStyles } from "@/theme/screen-styles";
@@ -84,6 +84,12 @@ import { FONT_WEIGHT } from "@/theme/typography";
 
 // The probe phases both engines' Test flows share: idle → testing → a verdict.
 type TestPhase = "idle" | "testing" | "passed" | "failed";
+
+// The remote Test flow's phases: the shared probe phases plus the one state
+// only the save-first order can produce — `saveFailed` (the local persist
+// failed, which is NOT "the service didn't respond": the probe never ran,
+// and the service may be perfectly healthy).
+type RemoteTestPhase = TestPhase | "saveFailed";
 
 // Module-scope so the loader keeps one identity across renders —
 // `useStoredPreference`'s hydrate effect is keyed on `[load]`, and an inline
@@ -328,6 +334,32 @@ function ModelRow({
   );
 }
 
+// One Test verdict, on its own line under the action row it answers — the
+// shared shape BOTH engines' flows render: announced (live region, so the
+// outcome reaches screen-reader users) and toned per outcome (brand for
+// passed, danger for failed). One JSX site, so an accessibility or style
+// change to the verdict lands in both flows — the per-outcome label this
+// carries was already lost once in a move, in exactly this way.
+function TestVerdictLine({
+  tone,
+  children,
+}: {
+  tone: "passed" | "failed";
+  children: ReactNode;
+}) {
+  return (
+    <Text
+      accessibilityLiveRegion="polite"
+      style={[
+        styles.verdictLine,
+        tone === "passed" ? styles.verdictPassed : styles.verdictFailed,
+      ]}
+    >
+      {children}
+    </Text>
+  );
+}
+
 // The present model's actions: Test and Delete as two equal-width blocks
 // sharing the row (ButtonGroup), the verdict on its own line below — the
 // failure copy runs two lines, and inline between the buttons it would rag
@@ -378,23 +410,14 @@ function ModelActionsRow({ onDelete }: { onDelete: () => void }) {
         </Button>
       </ButtonGroup>
       {testPhase === "passed" ? (
-        // Announced, not just shown: the verdict is the answer to the tap, and
-        // the deleted SettingsScreen verdict carried the live region — losing
-        // it in the move silenced the outcome for screen-reader users.
-        <Text
-          accessibilityLiveRegion="polite"
-          style={[styles.verdictLine, styles.verdictPassed]}
-        >
+        <TestVerdictLine tone="passed">
           {t("settings.onDevice.testPassed")}
-        </Text>
+        </TestVerdictLine>
       ) : null}
       {testPhase === "failed" ? (
-        <Text
-          accessibilityLiveRegion="polite"
-          style={[styles.verdictLine, styles.verdictFailed]}
-        >
+        <TestVerdictLine tone="failed">
           {t("settings.onDevice.testFailure")}
-        </Text>
+        </TestVerdictLine>
       ) : null}
     </>
   );
@@ -411,7 +434,7 @@ function RemoteEngineConfig() {
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [hasSavedConfig, setHasSavedConfig] = useState(false);
-  const [testPhase, setTestPhase] = useState<TestPhase>("idle");
+  const [testPhase, setTestPhase] = useState<RemoteTestPhase>("idle");
   // One enum, in the same shape as `downloadPhase` and `TestPhase`, instead
   // of a phase + a failed flag whose "clearing AND failed" combination is
   // meaningless.
@@ -425,12 +448,20 @@ function RemoteEngineConfig() {
       isMountedRef.current = false;
     };
   }, []);
+  // The mount-time hydration's snapshot describes the config as it was
+  // BEFORE this session's actions: a save or a removal supersedes it, and
+  // applying the stale snapshot after `clear` would resurrect the removed
+  // config (refilling the emptied fields and re-showing the Remove row) —
+  // the `current === ""` field guard cannot tell "not yet typed" from
+  // "cleared by Remove". One ref, flipped by both actions, ends the read's
+  // authority the moment the user acts.
+  const actedRef = useRef(false);
 
   useEffect(() => {
     let stale = false;
     void loadRemoteModelConfig()
       .then((config) => {
-        if (stale || config === null) {
+        if (stale || config === null || actedRef.current) {
           return;
         }
         // Fill only what the user has not already replaced: the cold-start
@@ -459,10 +490,30 @@ function RemoteEngineConfig() {
     [baseUrl, model],
   );
   const draftValid = remoteConfigSchema.safeParse(draft).success;
+  // Busy for the whole save-then-probe chain: "testing" starts at the press
+  // and only the probe's verdict retires it, so the button must not free up
+  // between the write and the probe.
   const isTesting = testPhase === "testing";
   const isClearing = clearPhase === "clearing";
 
+  // The verdict lines describe the config they were earned by — the SAVED
+  // one; once the draft changes, a verdict from an earlier save no longer
+  // answers what is on screen, so editing resets it to idle. A probe still
+  // in flight keeps its phase: resetting it would also release the Save
+  // button's busy guard mid-flight. (React bails out on the same-value set,
+  // so per-keystroke calls cost nothing.)
+  const edit =
+    (set: (value: string) => void) =>
+    (value: string): void => {
+      set(value);
+      setTestPhase((current) => (current === "testing" ? current : "idle"));
+    };
+  const editBaseUrl = edit(setBaseUrl);
+  const editModel = edit(setModel);
+  const editApiKey = edit(setApiKey);
+
   const clear = useCallback(() => {
+    actedRef.current = true;
     setClearPhase("clearing");
     void clearRemoteModelConfig()
       .then(() => {
@@ -489,42 +540,46 @@ function RemoteEngineConfig() {
   const test = useCallback(() => {
     // The test runs what the runner would run, against what is SAVED — save
     // first, then test, is the only honest order.
+    actedRef.current = true;
     setTestPhase("testing");
     // A fresh save supersedes any earlier failed removal: a stale "couldn't
     // remove" note beside a passing save would tell the user a problem they
     // abandoned is still the current one.
     setClearPhase("idle");
-    void saveRemoteModelConfig(draft, apiKey === "" ? null : apiKey)
-      .then(() => {
+    void (async () => {
+      try {
+        await saveRemoteModelConfig(draft, apiKey === "" ? null : apiKey);
+      } catch {
+        // A save failure is not "the service didn't respond": the probe
+        // never ran, and the service may be perfectly healthy — what failed
+        // is this phone's write (the keychain or the store), so it gets its
+        // own verdict.
         if (isMountedRef.current) {
-          // The config is stored the moment the save resolves; the ping that
-          // follows only verifies it. A failed ping must not hide the
-          // Remove-service control (or the "key already saved" hint) for a
-          // config that IS there — the recognition gate reads the stored
-          // config, not the ping verdict.
-          setHasSavedConfig(true);
+          setTestPhase("saveFailed");
         }
-        return createRemoteRunModel();
-      })
-      .then(async (runModel) => {
-        if (runModel === null) {
-          throw new Error("no config");
-        }
-        // A one-token completion: proves reachability, auth, and the model
-        // name in one round trip. The empty grammar is load-bearing — it is
-        // what keeps the annotation schema off the wire, so the probe stays a
-        // plain completion instead of an inference the provider must fill a
-        // full annotation JSON for.
-        await runModel({ system: "ping", user: "ping", grammar: "" });
+        return;
+      }
+      if (isMountedRef.current) {
+        // The config is stored the moment the save resolves; the probe that
+        // follows only verifies it. A failed probe must not hide the
+        // Remove-service control (or the "key already saved" hint) for a
+        // config that IS there — the recognition gate reads the stored
+        // config, not the probe verdict.
+        setHasSavedConfig(true);
+      }
+      // The probe's failure is the PROBE's verdict, not the save's — its own
+      // catch, so a rejected request can never be reported as a failed write.
+      try {
+        await verifyRemoteModel();
         if (isMountedRef.current) {
           setTestPhase("passed");
         }
-      })
-      .catch(() => {
+      } catch {
         if (isMountedRef.current) {
           setTestPhase("failed");
         }
-      });
+      }
+    })();
   }, [draft, apiKey]);
 
   return (
@@ -539,7 +594,7 @@ function RemoteEngineConfig() {
         hint={t("settings.engine.baseUrlHint")}
         placeholder="https://"
         value={baseUrl}
-        onChangeText={setBaseUrl}
+        onChangeText={editBaseUrl}
         autoCapitalize="none"
       />
       <FormField
@@ -548,7 +603,7 @@ function RemoteEngineConfig() {
         hint={t("settings.engine.modelHint")}
         placeholder="deepseek-chat"
         value={model}
-        onChangeText={setModel}
+        onChangeText={editModel}
         autoCapitalize="none"
       />
       <FormField
@@ -556,60 +611,74 @@ function RemoteEngineConfig() {
         hint={t("settings.engine.apiKeyHint")}
         placeholder="sk-…"
         value={apiKey}
-        onChangeText={setApiKey}
+        onChangeText={editApiKey}
         autoCapitalize="none"
         autoComplete="off"
         textContentType="password"
         secureTextEntry
       />
-      {/* The form's one action: the section's brand block, grey while the
-          draft cannot save — the button itself is the affordance that says
-          what is still missing. */}
-      <Button
-        size="xs"
-        variant="primary"
-        disabled={!draftValid || isClearing}
-        loading={isTesting}
-        onPress={test}
-      >
-        {t("settings.engine.save")}
-      </Button>
-      {testPhase === "passed" ? (
-        <Text
-          accessibilityLiveRegion="polite"
-          style={[styles.verdictLine, styles.verdictPassed]}
-        >
-          {t("settings.engine.testPassed")}
+      {/* The form's actions: Save and, once a config is stored, Remove share
+          one ButtonGroup row (the same actions-row shape the on-device rows
+          use). Save is ONE element in BOTH states — the group always renders
+          and the Remove button joins it as a second child — so the flip from
+          "unsaved" to "saved" when a save resolves never unmounts Save:
+          remounting it mid-ping drops screen-reader focus on the pressed
+          button and reflows the row under the user's finger. The unified
+          disabled guard (isClearing included) also retires the implicit
+          invariant that clearing implies hasSavedConfig. Every outcome — the
+          removal failure, the test verdicts — sits BELOW the row, the
+          freshest nearest it: each line answers the row, not one button
+          inside it. */}
+      <ButtonGroup>
+        {[
+          <Button
+            key="save"
+            size="xs"
+            variant="primary"
+            disabled={!draftValid || isClearing}
+            loading={isTesting}
+            onPress={test}
+          >
+            {t("settings.engine.save")}
+          </Button>,
+          ...(hasSavedConfig
+            ? [
+                <Button
+                  key="remove"
+                  size="xs"
+                  variant="dangerOutline"
+                  disabled={isTesting}
+                  loading={isClearing}
+                  onPress={clear}
+                >
+                  {t("settings.engine.clear")}
+                </Button>,
+              ]
+            : []),
+        ]}
+      </ButtonGroup>
+      {clearPhase === "failed" ? (
+        // The removal failure comes first: it is the freshest answer to the
+        // row (a failed removal while an older test verdict also stands must
+        // not read as that verdict's footnote).
+        <Text accessibilityLiveRegion="polite" style={styles.clearFailedHint}>
+          {t("settings.engine.clearFailed")}
         </Text>
+      ) : null}
+      {testPhase === "passed" ? (
+        <TestVerdictLine tone="passed">
+          {t("settings.engine.testPassed")}
+        </TestVerdictLine>
       ) : null}
       {testPhase === "failed" ? (
-        <Text
-          accessibilityLiveRegion="polite"
-          style={[styles.verdictLine, styles.verdictFailed]}
-        >
+        <TestVerdictLine tone="failed">
           {t("settings.engine.testFailure")}
-        </Text>
+        </TestVerdictLine>
       ) : null}
-      {hasSavedConfig ? (
-        <>
-          <Button
-            size="xs"
-            variant="dangerOutline"
-            disabled={isTesting}
-            loading={isClearing}
-            onPress={clear}
-          >
-            {t("settings.engine.clear")}
-          </Button>
-          {clearPhase === "failed" ? (
-            <Text
-              accessibilityLiveRegion="polite"
-              style={styles.clearFailedHint}
-            >
-              {t("settings.engine.clearFailed")}
-            </Text>
-          ) : null}
-        </>
+      {testPhase === "saveFailed" ? (
+        <TestVerdictLine tone="failed">
+          {t("settings.engine.saveFailure")}
+        </TestVerdictLine>
       ) : null}
       <View
         style={[
@@ -676,8 +745,9 @@ const styles = StyleSheet.create({
     // tone (see the style prop), so the ink matches the card it sits in.
     ...screenStyles.metaLine,
   },
-  // Anchored to the Remove action it explains, in the shared error-hint voice.
-  // The stack's gap does the spacing; no margin of its own.
+  // The removal failure, on its own line directly under the action row it
+  // answers (above the test verdicts — the freshest failure sits nearest the
+  // row) — the stack's gap does the spacing; no margin of its own.
   clearFailedHint: {
     ...screenStyles.metaLineDanger,
   },

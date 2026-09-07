@@ -82,7 +82,13 @@ export async function createRemoteRunModel(): Promise<RunModel | null> {
         body: JSON.stringify({
           model: config.model,
           temperature: ANNOTATION_INFERENCE.temperature,
-          max_tokens: ANNOTATION_INFERENCE.maxOutputTokens,
+          // The remote output cap mirrors the local runtime's 8192 context
+          // budget: generous enough that a reasoning model's thinking tokens
+          // (which count against the limit) never eat the annotation JSON,
+          // bounded enough that a runaway generation can't bill unboundedly.
+          // The engine's parse + retry loop is the backstop either way — a
+          // truncated answer fails validation and is retried, not believed.
+          max_tokens: ANNOTATION_INFERENCE.contextWindow,
           messages: [
             { role: "system", content: attempt.system },
             { role: "user", content: attempt.user },
@@ -140,4 +146,23 @@ export async function createRemoteRunModel(): Promise<RunModel | null> {
     }
     return content;
   };
+}
+
+/**
+ * Probes the configured endpoint the way the settings Test does: one minimal
+ * completion that proves reachability, auth, and the model name in a single
+ * round trip. The empty grammar is load-bearing — it keeps the annotation
+ * schema off the wire (see the module comment), so the probe measures the
+ * endpoint instead of asking the provider to fill a full annotation JSON.
+ *
+ * Throws when no config is saved or the endpoint does not answer; the caller
+ * maps the outcome to localized copy — the message never reaches the user
+ * raw.
+ */
+export async function verifyRemoteModel(): Promise<void> {
+  const runModel = await createRemoteRunModel();
+  if (runModel === null) {
+    throw new Error("no config");
+  }
+  await runModel({ system: "ping", user: "ping", grammar: "" });
 }

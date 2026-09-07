@@ -212,9 +212,19 @@ export const enMessages = {
       apiKey: "API key",
       apiKeyHint: "Stored only on this phone, never shown again after saving",
       save: "Save service",
-      testPassed: "The service responded",
+      // Saving is the probe's first half (persist, then ping) — this verdict
+      // answers both steps: responded confirms the probe, saved the write.
+      testPassed: "The service responded — saved",
+      // A failed ping still SAVED the config (the save resolved first): the
+      // verdict must say the service is live but unverified, and point at the
+      // Remove control that undoes it — otherwise the user retypes a key
+      // that is already stored, never learning the config went live.
       testFailure:
-        "The service didn't respond. Check the address, the model name, and the API key.",
+        "The service didn't respond. The configuration is saved — check the address, the model name, and the API key, or remove the service.",
+      // A save that failed never reached the probe, so "didn't respond" would
+      // be false — the service may be perfectly healthy. What failed is this
+      // phone's write (the keychain or the store), and the copy says so.
+      saveFailure: "Couldn't save the service on this phone. Try again.",
       clear: "Remove service",
       clearFailed:
         "Couldn't remove the service — it is still saved. Try again.",

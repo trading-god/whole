@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
 import type { RunModel } from "@whole/ocr";
 
-import { createRemoteRunModel } from "@/features/recognition/remote-runner";
+import {
+  createRemoteRunModel,
+  verifyRemoteModel,
+} from "@/features/recognition/remote-runner";
 import { RemoteModelError } from "@/features/recognition/remote-model-error";
 
 const mockLoadRemoteModelConfig = jest.fn<() => Promise<unknown>>();
@@ -157,5 +160,32 @@ describe("createRemoteRunModel", () => {
     await expect(
       runModel({ system: "s", user: "u", grammar: "" }),
     ).rejects.toThrow(RemoteModelError);
+  });
+});
+
+describe("verifyRemoteModel", () => {
+  it("probes with a bare ping that carries no schema", async () => {
+    // The empty grammar is load-bearing: without it the probe would ride
+    // `response_format`, and a provider asked to fill a full annotation JSON
+    // turns a one-second reachability check into a full inference.
+    const fetchSpy = mockCompletion();
+
+    await verifyRemoteModel();
+
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.deepseek.com/v1/chat/completions");
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body.messages).toEqual([
+      { role: "system", content: "ping" },
+      { role: "user", content: "ping" },
+    ]);
+    expect(body).not.toHaveProperty("response_format");
+    fetchSpy.mockRestore();
+  });
+
+  it("throws when no config is saved", async () => {
+    mockLoadRemoteModelConfig.mockResolvedValue(null);
+
+    await expect(verifyRemoteModel()).rejects.toThrow("no config");
   });
 });

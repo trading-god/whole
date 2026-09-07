@@ -88,8 +88,7 @@ const mockLoadRemoteConfig = jest.fn<() => Promise<unknown>>();
 const mockSaveRemoteConfig =
   jest.fn<(config?: unknown, apiKey?: unknown) => Promise<void>>();
 const mockClearRemoteConfig = jest.fn<() => Promise<void>>();
-const mockCreateRemoteRunModel = jest.fn<() => Promise<unknown>>();
-const mockRunRemoteModel = jest.fn<() => Promise<string>>();
+const mockVerifyRemote = jest.fn<() => Promise<void>>();
 
 jest.mock("@/features/on-device-model/model-context", () => ({
   verifyOnDeviceModel: () => mockVerify(),
@@ -155,7 +154,7 @@ jest.mock("@/features/recognition/remote-model-config-store", () => ({
 }));
 
 jest.mock("@/features/recognition/remote-runner", () => ({
-  createRemoteRunModel: () => mockCreateRemoteRunModel(),
+  verifyRemoteModel: () => mockVerifyRemote(),
 }));
 
 // `ScreenHeader`'s back chevron reads it; the screen itself no longer does.
@@ -216,8 +215,7 @@ beforeEach(() => {
   mockLoadRemoteConfig.mockResolvedValue(null);
   mockSaveRemoteConfig.mockResolvedValue(undefined);
   mockClearRemoteConfig.mockResolvedValue(undefined);
-  mockRunRemoteModel.mockResolvedValue("pong");
-  mockCreateRemoteRunModel.mockResolvedValue(mockRunRemoteModel);
+  mockVerifyRemote.mockResolvedValue(undefined);
 });
 
 // Labels are asserted in ENGLISH: `useLocales()` resolves to `en` under
@@ -637,12 +635,13 @@ describe("SettingsScreen", () => {
       });
 
       await waitFor(() => {
-        expect(mockRunRemoteModel).toHaveBeenCalledWith({
-          system: "ping",
-          user: "ping",
-          grammar: "",
-        });
-        expect(screen.getByText("The service responded")).toBeOnTheScreen();
+        // The probe ran, and its passing verdict is on the line below the
+        // actions. (The ping's wire shape lives with the runner, in
+        // remote-runner.test.ts.)
+        expect(mockVerifyRemote).toHaveBeenCalled();
+        expect(
+          screen.getByText("The service responded — saved"),
+        ).toBeOnTheScreen();
         expect(screen.getByText("Remove service")).toBeOnTheScreen();
       });
     });
@@ -650,18 +649,97 @@ describe("SettingsScreen", () => {
     it("reports a remote test failure while keeping the saved service removable", async () => {
       await showRemoteEngine();
       await fillValidRemoteDraft();
-      mockRunRemoteModel.mockRejectedValue(new Error("unauthorized"));
+      mockVerifyRemote.mockRejectedValue(new Error("unauthorized"));
 
       await press("Save service");
 
       await waitFor(() => {
+        // The ping failed, but the save resolved first — the config IS
+        // stored, so the verdict says so and points at the Remove control.
         expect(
           screen.getByText(
-            "The service didn't respond. Check the address, the model name, and the API key.",
+            "The service didn't respond. The configuration is saved — check the address, the model name, and the API key, or remove the service.",
           ),
         ).toBeOnTheScreen();
         expect(screen.getByText("Remove service")).toBeOnTheScreen();
       });
+    });
+
+    it("reports a failed save as this phone's failure, not the service's", async () => {
+      await showRemoteEngine();
+      await fillValidRemoteDraft();
+      mockSaveRemoteConfig.mockRejectedValue(new Error("keychain"));
+
+      await press("Save service");
+
+      // A save that failed never reached the probe: "the service didn't
+      // respond" would be false — the service may be perfectly healthy —
+      // so the save failure gets its own verdict.
+      await waitFor(() => {
+        expect(
+          screen.getByText(
+            "Couldn't save the service on this phone. Try again.",
+          ),
+        ).toBeOnTheScreen();
+      });
+      expect(screen.queryByText(/didn't respond/)).toBeNull();
+    });
+
+    it("does not resurrect a removed config when the mount-time hydration lands late", async () => {
+      // The hydration read is held mid-flight while the user saves a fresh
+      // config and removes it — then the stale snapshot (the config that
+      // existed at mount) resolves. It must not refill the form it just
+      // watched empty: a save or a removal supersedes the read.
+      const pendingHydration = deferred<{
+        baseUrl: string;
+        model: string;
+        apiKey: null;
+      }>();
+      mockLoadRemoteConfig.mockReturnValue(pendingHydration.promise);
+      mockLoadEngine.mockResolvedValue("remote");
+      await renderWithProviders(<SettingsScreen />);
+      await waitFor(() => {
+        expect(screen.getByText("Base URL *")).toBeOnTheScreen();
+      });
+
+      await fillValidRemoteDraft();
+      await press("Save service");
+      await waitFor(() => {
+        expect(screen.getByText("Remove service")).toBeOnTheScreen();
+      });
+      await press("Remove service");
+      await waitFor(() => {
+        expect(screen.queryByText("Remove service")).toBeNull();
+      });
+
+      await act(async () => {
+        pendingHydration.resolve({
+          baseUrl: "https://api.deepseek.com/v1",
+          model: "deepseek-chat",
+          apiKey: null,
+        });
+      });
+
+      expect(screen.getByLabelText("Base URL").props.value).toBe("");
+      expect(screen.getByLabelText("Model").props.value).toBe("");
+    });
+
+    it("drops the test verdict when the user edits the saved draft", async () => {
+      await showRemoteEngine();
+      await fillValidRemoteDraft();
+      await press("Save service");
+      await waitFor(() => {
+        expect(
+          screen.getByText("The service responded — saved"),
+        ).toBeOnTheScreen();
+      });
+
+      // The verdict describes the SAVED config; once the draft changes it no
+      // longer answers what is on screen — endpoint B under a "saved" line
+      // would read as B being saved when only A is on disk.
+      await fireEvent.changeText(screen.getByLabelText("Model"), "other-model");
+
+      expect(screen.queryByText(/The service responded/)).toBeNull();
     });
 
     it("clears a saved remote service with a visible, guarded loading state", async () => {
