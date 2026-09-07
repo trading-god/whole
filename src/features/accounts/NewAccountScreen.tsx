@@ -126,7 +126,19 @@ export default function NewAccountScreen() {
   const handleCreateInstitution = useCallback(
     async (name: string): Promise<string | undefined> => {
       const group = await findOrCreateGroupByName(name);
-      setInstitutions(await listAssetAccountGroups());
+      // The create has committed by the time the re-read below runs, so a
+      // failed re-read must not read as a failed create: fall back to
+      // appending the group so it stays selectable, and let the next full
+      // load restore the canonical list.
+      try {
+        setInstitutions(await listAssetAccountGroups());
+      } catch {
+        setInstitutions((current) =>
+          current.some((existing) => existing.id === group.id)
+            ? current
+            : [...current, group],
+        );
+      }
       return group.id;
     },
     [],
@@ -413,9 +425,9 @@ export default function NewAccountScreen() {
     finishSave();
   };
 
-  const saveLabel = isSaving
-    ? t("newAccount.saving")
-    : t(isMultiAccount ? "multiAccount.saveAll" : "newAccount.saveAccount");
+  const saveLabel = t(
+    isMultiAccount ? "multiAccount.saveAll" : "newAccount.saveAccount",
+  );
 
   return (
     <SafeAreaView style={screenStyles.safeArea}>
@@ -590,6 +602,7 @@ export default function NewAccountScreen() {
             variant="primary"
             elevated
             disabled={!canSave}
+            loading={isSaving}
             onPress={() => void save()}
           >
             {saveLabel}

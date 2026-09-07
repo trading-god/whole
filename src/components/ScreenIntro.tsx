@@ -2,7 +2,12 @@ import { StyleSheet, Text, View } from "react-native";
 
 import { COLORS } from "@/theme/colors";
 import { SPACING } from "@/theme/spacing";
-import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT } from "@/theme/typography";
+import {
+  FONT_SIZE,
+  FONT_WEIGHT,
+  LETTER_SPACING,
+  LINE_HEIGHT,
+} from "@/theme/typography";
 
 // The title + subtitle block every secondary screen opens with — add account,
 // edit account, settings, and both onboarding steps. Owns its spacing and type
@@ -29,13 +34,11 @@ const styles = StyleSheet.create({
     paddingBottom: SPACING.xl,
     paddingTop: SPACING.md,
   },
-  // The screen title is a step above the section headers below it, so it sits
-  // outside the FONT_SIZE scale on its own optical size and tracking.
   title: {
     color: COLORS.ink,
-    fontSize: 28,
+    fontSize: FONT_SIZE.pageTitle,
     fontWeight: FONT_WEIGHT.bold,
-    letterSpacing: -0.8,
+    letterSpacing: LETTER_SPACING.pageTitleTight,
   },
   subtitle: {
     color: COLORS.muted,

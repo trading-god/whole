@@ -21,10 +21,10 @@ import { RecognitionEngineSection } from "@/features/recognition/RecognitionEngi
 import { useAppLocale } from "@/i18n";
 import { useStoredPreference } from "@/storage/use-stored-preference";
 import { COLORS } from "@/theme/colors";
-import { MIN_INTERACTIVE_SIZE } from "@/theme/layout";
-import { cardSurface, screenStyles } from "@/theme/screen-styles";
+import { MIN_INTERACTIVE_SIZE, useResponsiveLayout } from "@/theme/layout";
+import { screenStyles } from "@/theme/screen-styles";
 import { SPACING } from "@/theme/spacing";
-import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT } from "@/theme/typography";
+import { FONT_SIZE, FONT_WEIGHT } from "@/theme/typography";
 
 // What the settings screen has to say.
 //
@@ -41,6 +41,7 @@ const APP_VERSION = Constants.expoConfig?.version ?? "";
 export function SettingsScreen() {
   const { t } = useTranslation();
   const { languageTag } = useAppLocale();
+  const { isCompact } = useResponsiveLayout();
 
   // The display currency, shared with the home screen through the same
   // store; either surface may change it and the other follows on next load.
@@ -67,7 +68,7 @@ export function SettingsScreen() {
         showsVerticalScrollIndicator={false}
       >
         <SectionHeader title={t("settings.display")} />
-        <View style={styles.card}>
+        <View style={screenStyles.formCard}>
           <View style={styles.row}>
             <View style={styles.rowCopy}>
               <Text style={styles.rowTitle}>{t("home.displayCurrency")}</Text>
@@ -84,12 +85,7 @@ export function SettingsScreen() {
             />
           </View>
           <View style={screenStyles.fieldDivider} />
-          <View
-            accessibilityRole="button"
-            accessibilityLabel={t("settings.language")}
-            accessibilityHint={t("settings.changeInSystemSettings")}
-            style={styles.row}
-          >
+          <View style={[styles.row, isCompact && styles.rowCompact]}>
             <View style={styles.rowCopy}>
               <Text style={styles.rowTitle}>{t("settings.language")}</Text>
               <Text style={styles.rowHint}>
@@ -97,9 +93,10 @@ export function SettingsScreen() {
               </Text>
             </View>
             <Button
+              accessibilityHint={t("settings.changeInSystemSettingsHint")}
               size="xs"
               variant="outline"
-              fullWidth={false}
+              fullWidth={isCompact}
               onPress={() => void Linking.openSettings()}
             >
               {t("settings.changeInSystemSettings")}
@@ -108,14 +105,14 @@ export function SettingsScreen() {
         </View>
 
         <SectionHeader title={t("settings.engine.title")} />
-        <View style={styles.card}>
+        <View style={screenStyles.formCard}>
           <View style={styles.engineArea}>
             <RecognitionEngineSection />
           </View>
         </View>
 
         <SectionHeader title={t("settings.about")} />
-        <View style={styles.card}>
+        <View style={screenStyles.formCard}>
           <View style={styles.row}>
             <Text style={styles.rowTitle}>
               {t("settings.version", { version: APP_VERSION })}
@@ -128,10 +125,6 @@ export function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  card: {
-    ...cardSurface,
-    paddingHorizontal: SPACING.lg,
-  },
   engineArea: {
     paddingVertical: SPACING.md,
   },
@@ -142,6 +135,10 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     minHeight: MIN_INTERACTIVE_SIZE,
     paddingVertical: SPACING.md,
+  },
+  rowCompact: {
+    alignItems: "stretch",
+    flexDirection: "column",
   },
   rowCopy: {
     flex: 1,
@@ -154,8 +151,6 @@ const styles = StyleSheet.create({
     fontWeight: FONT_WEIGHT.semibold,
   },
   rowHint: {
-    color: COLORS.muted,
-    fontSize: FONT_SIZE.micro,
-    lineHeight: LINE_HEIGHT.tight,
+    ...screenStyles.metaLine,
   },
 });

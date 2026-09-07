@@ -99,8 +99,51 @@ export function deleteModel(id: OnDeviceModelId): void {
   }
 }
 
+const inFlightDownloads = new Map<
+  OnDeviceModelId,
+  { promise: Promise<void>; listeners: Set<(fraction: number) => void> }
+>();
+
 /**
  * Downloads the model's weights.
+ *
+ * One download per model at a time: while one is in flight, a second start
+ * for the same id JOINS it (progress included) instead of running its own
+ * prologue — which deletes the very `.part` the running download is writing
+ * into. The settings row's download phase is component-local, and the row
+ * unmounts (forgetting it) whenever the user peeks at the other engine card,
+ * so the re-mounted row re-offering "Download" mid-download is a real path,
+ * not a theory.
+ */
+export function downloadModel(
+  id: OnDeviceModelId,
+  onProgress: (fraction: number) => void,
+): Promise<void> {
+  const inFlight = inFlightDownloads.get(id);
+  if (inFlight) {
+    inFlight.listeners.add(onProgress);
+    return inFlight.promise;
+  }
+
+  const listeners = new Set([onProgress]);
+  const report = (fraction: number) => {
+    for (const listener of listeners) {
+      listener(fraction);
+    }
+  };
+  // `.finally` both cleans the registry up and produces the promise every
+  // caller holds, so a rejection is always handled by whoever awaited it.
+  const promise = downloadModelFiles(id, report).finally(() => {
+    inFlightDownloads.delete(id);
+    listeners.clear();
+  });
+  inFlightDownloads.set(id, { promise, listeners });
+  return promise;
+}
+
+/**
+ * The download itself — see `downloadModel` for the one-at-a-time guard
+ * around it.
  *
  * The file lands at `<name>.part` and is MOVED into place only after its
  * size checks out, so an interrupted download never leaves a truncated file
@@ -108,7 +151,7 @@ export function deleteModel(id: OnDeviceModelId): void {
  * itself already stages on iOS; the explicit `.part` covers Android, where
  * the response streams straight into the destination.)
  */
-export async function downloadModel(
+async function downloadModelFiles(
   id: OnDeviceModelId,
   onProgress: (fraction: number) => void,
 ): Promise<void> {

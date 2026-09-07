@@ -9,6 +9,7 @@ import { StyleSheet } from "react-native";
 
 import { COLORS } from "@/theme/colors";
 import { PRESSED_OPACITY_SURFACE } from "@/theme/interaction";
+import { MIN_INTERACTIVE_SIZE } from "@/theme/layout";
 import { CHIP_RADIUS } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
 import { FONT_SIZE, FONT_WEIGHT } from "@/theme/typography";
@@ -19,6 +20,7 @@ export const optionSheetStyles = StyleSheet.create({
     borderRadius: CHIP_RADIUS,
     flexDirection: "row",
     justifyContent: "space-between",
+    minHeight: MIN_INTERACTIVE_SIZE,
     paddingHorizontal: SPACING.md,
     paddingVertical: SPACING.md,
   },

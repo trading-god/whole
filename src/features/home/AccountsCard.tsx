@@ -4,6 +4,7 @@ import { Alert, StyleSheet, Text, View } from "react-native";
 
 import { AccountGroupRow } from "@/features/accounts/AccountGroupRow";
 import { AccountRow } from "@/features/accounts/AccountRow";
+import { ACCOUNT_ROW_HEIGHT } from "@/features/accounts/account-list-constants";
 import {
   type AssetAccount,
   type AssetAccountGroup,
@@ -11,7 +12,7 @@ import {
 import { type Currency } from "@/features/assets/currencies";
 import { type ExchangeRates } from "@/features/assets/currency-conversion";
 import { cardSurface } from "@/theme/screen-styles";
-import { ACCOUNT_ROW_HEIGHT } from "@/theme/sizes";
+import { useResponsiveLayout } from "@/theme/layout";
 import { COLORS } from "@/theme/colors";
 import { FONT_SIZE } from "@/theme/typography";
 
@@ -43,6 +44,11 @@ export function AccountsCard({
   onRemove,
 }: AccountsCardProps) {
   const { t } = useTranslation();
+  // Compactness is read ONCE here and passed to the rows: each row
+  // subscribing to window dimensions itself would re-render every mounted row
+  // on every dimension event (an Android keyboard toggle fires one), which is
+  // exactly the work the rows' `memo` exists to prevent.
+  const { isCompact } = useResponsiveLayout();
   const [activeRowId, setActiveRowId] = useState<string | null>(null);
   // Collapsed group ids — empty by default means every group starts expanded.
   // Component state only (not persisted) for v1; the home screen resets to
@@ -131,6 +137,7 @@ export function AccountsCard({
           displayCurrency={displayCurrency}
           rates={rates}
           isBalanceHidden={isBalanceHidden}
+          isCompact={isCompact}
           isFirst={index === 0}
           isActive={activeRowId === account.id}
           onActivate={setActiveRowId}
@@ -159,6 +166,7 @@ export function AccountsCard({
               isBalanceHidden={isBalanceHidden}
               isExpanded={isExpanded}
               onToggle={() => toggleGroup(group.id)}
+              isCompact={isCompact}
               isFirst={isFirst}
             />
             {isExpanded
@@ -169,9 +177,7 @@ export function AccountsCard({
                     displayCurrency={displayCurrency}
                     rates={rates}
                     isBalanceHidden={isBalanceHidden}
-                    // The header names the institution; a tinted initial on
-                    // every child would only repeat it.
-                    showAvatar={false}
+                    isCompact={isCompact}
                     // Child rows are never the first row — the group
                     // header sits above them and provides separation.
                     isFirst={false}

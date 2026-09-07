@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { Button } from "@/components/Button";
+import { ButtonGroup } from "@/components/ButtonGroup";
 import { FieldShell } from "@/components/FieldShell";
 import { FormField } from "@/components/FormField";
 import { Icon } from "@/components/Icon";
@@ -11,7 +12,8 @@ import { ScrimModal } from "@/components/ScrimModal";
 import { type AssetAccountGroup } from "@/features/assets/asset-repository";
 import { COLORS } from "@/theme/colors";
 import { PRESSED_OPACITY_SURFACE } from "@/theme/interaction";
-import { scrimCardBase } from "@/theme/screen-styles";
+import { MIN_INTERACTIVE_SIZE } from "@/theme/layout";
+import { scrimCardBase, screenStyles } from "@/theme/screen-styles";
 import { SPACING } from "@/theme/spacing";
 import { FONT_SIZE, FONT_WEIGHT, LETTER_SPACING } from "@/theme/typography";
 
@@ -40,7 +42,13 @@ export function InstitutionPicker({
 }: InstitutionPickerProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const [creating, setCreating] = useState(false);
+  // One enum for the create-institution sub-view's lifecycle, in the same
+  // shape as the recognition section's download/clear phases — three separate
+  // booleans (showing / submitting / failed) would make invalid combinations
+  // like "submitting while browsing" representable.
+  const [createView, setCreateView] = useState<
+    "browsing" | "editing" | "submitting" | "failed"
+  >("browsing");
   const [newName, setNewName] = useState("");
 
   const selected = institutions.find(
@@ -48,18 +56,36 @@ export function InstitutionPicker({
   );
   const triggerLabel = selected ? selected.name : t("accountForm.noGroup");
 
+  // Back to the option list, draft name cleared — every exit from the create
+  // sub-view goes through here so no path forgets a field.
+  const resetCreateView = () => {
+    setCreateView("browsing");
+    setNewName("");
+  };
+
   const handleConfirmCreate = async () => {
     const name = newName.trim();
-    if (!name || !onCreate) {
+    if (!name || !onCreate || createView === "submitting") {
       return;
     }
-    const id = await onCreate(name);
+
+    setCreateView("submitting");
+    let id: string | undefined;
+    try {
+      id = await onCreate(name);
+    } catch {
+      id = undefined;
+    }
     if (id) {
       onChange(id);
+      setOpen(false);
+      resetCreateView();
+    } else {
+      // A failed write leaves the sheet open on the name the user typed. The
+      // stored list did not change, so silently closing (or silently doing
+      // nothing) would read as the button ignoring the tap.
+      setCreateView("failed");
     }
-    setOpen(false);
-    setCreating(false);
-    setNewName("");
   };
 
   return (
@@ -67,9 +93,10 @@ export function InstitutionPicker({
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={t("accountForm.group")}
+        accessibilityState={{ expanded: open }}
         accessibilityValue={{ text: triggerLabel }}
         onPress={() => {
-          setCreating(false);
+          resetCreateView();
           setOpen(true);
         }}
         style={({ pressed }) => [
@@ -89,14 +116,16 @@ export function InstitutionPicker({
       <ScrimModal
         accessibilityLabel={t("accountForm.group")}
         onDismiss={() => {
-          setOpen(false);
-          setCreating(false);
+          if (createView !== "submitting") {
+            setOpen(false);
+            resetCreateView();
+          }
         }}
         visible={open}
         cardStyle={styles.card}
       >
         <Text style={styles.title}>{t("accountForm.group")}</Text>
-        {creating ? (
+        {createView !== "browsing" ? (
           <View>
             <FormField
               label={t("accountForm.groupName")}
@@ -104,14 +133,12 @@ export function InstitutionPicker({
               placeholder={t("accountForm.newGroupPlaceholder")}
               value={newName}
             />
-            <View style={styles.createActions}>
+            <ButtonGroup style={styles.createActions}>
               <Button
                 size="sm"
-                variant="ghost"
-                onPress={() => {
-                  setCreating(false);
-                  setNewName("");
-                }}
+                variant="secondary"
+                disabled={createView === "submitting"}
+                onPress={resetCreateView}
               >
                 {t("common.cancel")}
               </Button>
@@ -119,11 +146,17 @@ export function InstitutionPicker({
                 size="sm"
                 variant="primary"
                 disabled={!newName.trim()}
+                loading={createView === "submitting"}
                 onPress={() => void handleConfirmCreate()}
               >
                 {t("accountForm.createGroup")}
               </Button>
-            </View>
+            </ButtonGroup>
+            {createView === "failed" ? (
+              <Text accessibilityLiveRegion="polite" style={styles.createError}>
+                {t("accountForm.createGroupError")}
+              </Text>
+            ) : null}
           </View>
         ) : (
           <View>
@@ -189,7 +222,7 @@ export function InstitutionPicker({
             {onCreate ? (
               <Pressable
                 accessibilityRole="button"
-                onPress={() => setCreating(true)}
+                onPress={() => setCreateView("editing")}
                 style={({ pressed }) => [
                   optionSheetStyles.option,
                   pressed && optionSheetStyles.optionPressed,
@@ -218,7 +251,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: SPACING.sm,
     justifyContent: "space-between",
-    minHeight: 24,
+    minHeight: MIN_INTERACTIVE_SIZE,
   },
   triggerText: {
     color: COLORS.ink,
@@ -254,9 +287,12 @@ const styles = StyleSheet.create({
     marginLeft: SPACING.sm,
   },
   createActions: {
-    flexDirection: "row",
-    gap: SPACING.sm,
-    justifyContent: "flex-end",
     marginTop: SPACING.md,
+  },
+  // Inline and anchored to the create action it explains — the shared
+  // error-hint voice, so a failed write reads like every other field error.
+  createError: {
+    ...screenStyles.metaLineDanger,
+    marginTop: SPACING.sm,
   },
 });

@@ -4,8 +4,8 @@ import { useTranslation } from "react-i18next";
 
 import { formatBytes } from "@/features/on-device-model/format-bytes";
 import { COLORS } from "@/theme/colors";
+import { screenStyles } from "@/theme/screen-styles";
 import { RADIUS } from "@/theme/sizes";
-import { FONT_SIZE, LINE_HEIGHT } from "@/theme/typography";
 
 // The download progress bar: track, brand fill. Animated width (native driver)
 // so the bar moves smoothly between progress ticks instead of stepping — the
@@ -17,7 +17,9 @@ type DownloadProgressBarProps = {
 };
 
 export function DownloadProgressBar({ fraction }: DownloadProgressBarProps) {
+  const { t } = useTranslation();
   const clamped = Math.max(0, Math.min(1, fraction));
+  const percentage = Math.round(clamped * 100);
   const [width] = useState(() => new Animated.Value(clamped));
   useEffect(() => {
     Animated.timing(width, {
@@ -29,11 +31,15 @@ export function DownloadProgressBar({ fraction }: DownloadProgressBarProps) {
 
   return (
     <View
+      accessibilityLabel={t("settings.engine.downloadProgress")}
       accessibilityRole="progressbar"
       accessibilityValue={{
         min: 0,
         max: 100,
-        now: Math.round(clamped * 100),
+        now: percentage,
+        text: t("settings.engine.downloadProgressValue", {
+          percentage,
+        }),
       }}
       style={styles.track}
     >
@@ -85,8 +91,6 @@ const styles = StyleSheet.create({
     height: "100%",
   },
   readout: {
-    color: COLORS.muted,
-    fontSize: FONT_SIZE.micro,
-    lineHeight: LINE_HEIGHT.tight,
+    ...screenStyles.metaLine,
   },
 });

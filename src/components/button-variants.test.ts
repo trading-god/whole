@@ -33,7 +33,7 @@ describe("BUTTON_VARIANTS", () => {
     },
   );
 
-  it.each(["outline", "ghost", "onDark"] as const)(
+  it.each(["dangerGhost", "outline", "ghost", "onDark"] as const)(
     "floats a wash under %s on press",
     (variant) => {
       expect(BUTTON_VARIANTS[variant].backgroundColor).toBe("transparent");
@@ -46,6 +46,11 @@ describe("BUTTON_VARIANTS", () => {
   // `brand` only reaches 2.7:1 against `brandDark`, so the dark-surface variant
   // has to use the accent instead. Pinned because the two look similar enough
   // in a diff to be "simplified" back into one.
+  it("uses danger ink for a quiet destructive action", () => {
+    expect(BUTTON_VARIANTS.dangerGhost.labelColor).toBe(COLORS.danger);
+    expect(BUTTON_VARIANTS.dangerGhost.iconColor).toBe(COLORS.danger);
+  });
+
   it("tints the dark-surface variant with the accent, not the brand", () => {
     expect(BUTTON_VARIANTS.onDark.iconColor).toBe(COLORS.accentOnDark);
     expect(BUTTON_VARIANTS.onDark.iconColor).not.toBe(COLORS.brand);

@@ -11,6 +11,7 @@ import { BrandSplash } from "@/components/BrandSplash";
 import { OnboardingContext } from "@/features/onboarding/onboarding-context";
 import { loadOnboardingCompleted } from "@/features/onboarding/onboarding-store";
 import { removeLegacyModelKeys } from "@/storage/legacy-model-keys";
+import { screenStyles } from "@/theme/screen-styles";
 
 // Hold the splash screen while the onboarding flag is read, so a first-run
 // user never sees a frame of the home screen before the redirect to
@@ -112,7 +113,7 @@ export default function RootLayout() {
   );
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
+    <GestureHandlerRootView style={screenStyles.flex}>
       {/* Restores the query cache from sqlite before the tree renders, so a
           cold start shows the last known exchange rates instead of "—" while
           the network answers. Children are not blocked on the restore: the

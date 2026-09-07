@@ -20,12 +20,18 @@ export type SpinnerProps = {
   size?: number;
   color?: string;
   testID?: string;
+  // Standalone spinners (a screen's loading placeholder, a busy nav chevron)
+  // have no labelled control around them, so they announce themselves through
+  // this label. Spinners inside a Button stay unlabelled — the button already
+  // carries the action's name and `busy` state.
+  accessibilityLabel?: string;
 };
 
 export function Spinner({
   size = 20,
   color = COLORS.ink,
   testID = "spinner",
+  accessibilityLabel,
 }: SpinnerProps) {
   // `useState` with a lazy initialiser rather than `useRef(...).current`:
   // reading a ref during render is what React Compiler refuses, and it bails
@@ -48,6 +54,8 @@ export function Spinner({
 
   return (
     <Animated.View
+      accessibilityLabel={accessibilityLabel}
+      accessibilityRole={accessibilityLabel ? "progressbar" : undefined}
       testID={testID}
       style={{
         transform: [

@@ -7,7 +7,11 @@ export const COLORS = {
   background: "#F4F6F2",
   card: "#FFFFFF",
   ink: "#14231D",
-  muted: "#728078",
+  // Secondary copy still carries information, so it clears 4.5:1 against both
+  // the white card and the off-white screen background at the small sizes used
+  // throughout the app. `subtle` stays reserved for placeholders, disabled
+  // controls and decoration rather than readable prose.
+  muted: "#65726B",
   subtle: "#A8B1AC",
   border: "#E5EAE6",
   brand: "#098765",
@@ -72,6 +76,17 @@ export const COLORS = {
   chartStrokeNegative: "#D77D79",
   chartEndpointRingNegative: "#FFDBD9",
   chartEndpointDotNegative: "#C86D69",
+  // Asset-kind palette. These are presentation tokens rather than domain
+  // mappings: `account-appearance.ts` decides which kind uses which pair.
+  assetCash: "#12815F",
+  assetCashSoft: "#E2F3ED",
+  assetCashChart: "#A9E0C9",
+  assetInvestment: "#215AA8",
+  assetInvestmentSoft: "#E7EFFB",
+  assetInvestmentChart: "#7CBFA8",
+  assetCrypto: "#5A48A8",
+  assetCryptoSoft: "#EEEAFB",
+  assetCryptoChart: "#F0C781",
   // Hairline zero axis behind the growth curve. Growth crosses zero, so the
   // axis has to be visible for "above" and "below" to mean anything.
   chartZeroLine: "rgba(255, 255, 255, 0.16)",

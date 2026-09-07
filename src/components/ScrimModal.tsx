@@ -11,8 +11,9 @@ import {
 } from "react-native";
 import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 
+import { KeyboardAvoidingView } from "@/components/KeyboardAvoidingView";
 import { COLORS } from "@/theme/colors";
-import { modalOverlay } from "@/theme/screen-styles";
+import { modalOverlay, screenStyles } from "@/theme/screen-styles";
 import { SPACING } from "@/theme/spacing";
 
 type ScrimModalProps = {
@@ -26,9 +27,9 @@ type ScrimModalProps = {
   // re-deriving the base — `cardSurface` is not used because its hairline
   // border is intentionally omitted on dialog cards.
   cardStyle: ViewStyle;
-  // Optional label for the scrim region (e.g. the dialog title) and role for
-  // the card content (e.g. "radiogroup" for a picker). Placed where each
-  // consumer had them before extraction, so a11y behavior is unchanged.
+  // Optional label for the sheet card (e.g. the dialog title) and role for
+  // its content (e.g. "radiogroup" for a picker). The scrim is a gesture,
+  // not content, and stays out of the accessibility tree entirely.
   accessibilityLabel?: string;
   accessibilityRole?: AccessibilityRole;
   children: ReactNode;
@@ -71,38 +72,49 @@ export function ScrimModal({
       transparent
       visible={visible}
     >
-      <Pressable
-        accessibilityLabel={accessibilityLabel}
-        style={modalOverlay}
-        onPress={onDismiss}
-      >
-        {/* Swallow taps inside the sheet so only the scrim dismisses the
-            dialog, not taps on the title or content whitespace. */}
+      <KeyboardAvoidingView style={screenStyles.flex}>
+        {/* The scrim is a dismiss gesture, not content. Hidden from the
+            accessibility tree on Android ("no" hides this view only, the
+            sheet inside stays reachable) so TalkBack does not expose a second
+            element announcing the dialog's name; on iOS the sheet's
+            `accessibilityViewIsModal` already contains focus, with the escape
+            gesture as the scrim's accessible twin. */}
         <Pressable
-          accessibilityRole={accessibilityRole}
-          style={[
-            cardStyle,
-            {
-              maxHeight: windowHeight * SHEET_MAX_HEIGHT_RATIO,
-              // The home indicator sits inside the sheet's bottom edge, so the
-              // sheet pads itself past it rather than letting the last option
-              // land under the indicator.
-              paddingBottom: Math.max(bottomInset, SPACING.lg),
-            },
-          ]}
-          onPress={() => undefined}
+          importantForAccessibility="no"
+          style={modalOverlay}
+          onPress={onDismiss}
         >
-          <View style={styles.grabber} />
-          <ScrollView
-            bounces={false}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-            style={styles.body}
+          {/* Swallow taps inside the sheet so only the scrim dismisses the
+              dialog, not taps on the title or content whitespace. */}
+          <Pressable
+            accessibilityLabel={accessibilityLabel}
+            accessibilityRole={accessibilityRole}
+            accessibilityViewIsModal
+            onAccessibilityEscape={onDismiss}
+            style={[
+              cardStyle,
+              {
+                maxHeight: windowHeight * SHEET_MAX_HEIGHT_RATIO,
+                // The home indicator sits inside the sheet's bottom edge, so the
+                // sheet pads itself past it rather than letting the last option
+                // land under the indicator.
+                paddingBottom: Math.max(bottomInset, SPACING.lg),
+              },
+            ]}
+            onPress={() => undefined}
           >
-            {children}
-          </ScrollView>
+            <View style={styles.grabber} />
+            <ScrollView
+              bounces={false}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              style={styles.body}
+            >
+              {children}
+            </ScrollView>
+          </Pressable>
         </Pressable>
-      </Pressable>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

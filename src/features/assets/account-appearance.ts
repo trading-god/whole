@@ -1,5 +1,7 @@
 import { knownAssetKinds, type AssetKind } from "@whole/ocr";
 
+import { COLORS } from "@/theme/colors";
+
 // The asset-kind vocabulary and the last-four pattern live in `@whole/ocr` —
 // the recognizer classifies a kind and extracts a last-four, so it needs the
 // same definitions the app stores against. Re-exported here alongside this
@@ -16,9 +18,12 @@ export {
 // avatar glyph; `tint` is the soft background behind it. Kept here so the
 // repository no longer hard-codes a single appearance for every new account.
 const ASSET_KIND_APPEARANCE = {
-  cash: { color: "#12815F", tint: "#E2F3ED" },
-  investment: { color: "#215AA8", tint: "#E7EFFB" },
-  crypto: { color: "#5A48A8", tint: "#EEEAFB" },
+  cash: { color: COLORS.assetCash, tint: COLORS.assetCashSoft },
+  investment: {
+    color: COLORS.assetInvestment,
+    tint: COLORS.assetInvestmentSoft,
+  },
+  crypto: { color: COLORS.assetCrypto, tint: COLORS.assetCryptoSoft },
 } as const;
 
 export type AccountAppearance = {
@@ -34,9 +39,9 @@ export function getAccountAppearance(kind: AssetKind): AccountAppearance {
 // Kept alongside the avatar appearance so a new kind adds both in one place
 // instead of drifting in a screen-local color map.
 export const ASSET_KIND_DISTRIBUTION_COLORS: Record<AssetKind, string> = {
-  cash: "#A9E0C9",
-  investment: "#7CBFA8",
-  crypto: "#F0C781",
+  cash: COLORS.assetCashChart,
+  investment: COLORS.assetInvestmentChart,
+  crypto: COLORS.assetCryptoChart,
 };
 
 // i18n keys for each asset kind's display label, split by context: the picker

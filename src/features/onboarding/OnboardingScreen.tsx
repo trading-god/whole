@@ -69,8 +69,12 @@ export default function OnboardingScreen() {
           <Text style={screenStyles.wordmark}>{t("common.wordmark")}</Text>
         </View>
 
+        {/* No `automaticallyAdjustKeyboardInsets` here: the ancestor
+            KeyboardAvoidingView already applies the iOS inset, and stacking
+            both lifts the field twice — one blank band above the keyboard. */}
         <ScrollView
           contentContainerStyle={styles.stepContent}
+          keyboardDismissMode="interactive"
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
@@ -95,9 +99,11 @@ export default function OnboardingScreen() {
           <View style={screenStyles.formCard}>
             <FormField
               autoCapitalize="words"
+              autoComplete="name"
               label={t("onboarding.nameLabel")}
               maxLength={USER_NAME_MAX_LENGTH}
               placeholder={t("onboarding.namePlaceholder")}
+              textContentType="name"
               value={name}
               onChangeText={setName}
             />

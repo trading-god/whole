@@ -131,9 +131,17 @@ export function NetWorthCard({
           </View>
           <Text
             adjustsFontSizeToFit
-            minimumFontScale={0.7}
+            // The hero figure may shrink, but only part of the way: this is
+            // the one number the card exists to show, and a 0.7 floor let it
+            // dwindle to fine print on a long localized total. 0.8 keeps it
+            // legible while still absorbing the longest realistic figure; the
+            // compact layout drops the size outright instead.
+            minimumFontScale={0.8}
             numberOfLines={1}
-            style={styles.totalBalance}
+            style={[
+              styles.totalBalance,
+              isCompact && styles.totalBalanceCompact,
+            ]}
           >
             {totalDisplayValue}
           </Text>
@@ -246,7 +254,7 @@ const styles = StyleSheet.create({
     borderRadius: 28,
     overflow: "hidden",
     paddingHorizontal: SPACING.xl,
-    paddingTop: SPACING.sm,
+    paddingTop: SPACING.lg,
   },
   balanceCardTop: {
     alignItems: "flex-start",
@@ -280,7 +288,12 @@ const styles = StyleSheet.create({
     fontWeight: FONT_WEIGHT.bold,
     letterSpacing: LETTER_SPACING.displayTight,
     lineHeight: LINE_HEIGHT.display,
-    marginTop: 2,
+    marginTop: SPACING.sm,
+  },
+  totalBalanceCompact: {
+    fontSize: FONT_SIZE.pageTitle,
+    letterSpacing: LETTER_SPACING.pageTitleTight,
+    lineHeight: LINE_HEIGHT.pageTitle,
   },
   // Replaces the chart and its footer while no account exists. Left-aligned
   // under the total rather than centred in the chart's footprint: it is the

@@ -69,8 +69,3 @@ export const RADIUS: Record<Size, number> = {
 // screen-styles.ts). Hero surfaces such as the home balance card keep a larger
 // literal radius as a deliberate exception.
 export const CARD_RADIUS = 22;
-
-// Account row height — the standard collapsed row's minimum height, shared by
-// AccountRow and the home screen's loading/error placeholders so the accounts
-// card reserves a consistent footprint before any rows render.
-export const ACCOUNT_ROW_HEIGHT = 76;

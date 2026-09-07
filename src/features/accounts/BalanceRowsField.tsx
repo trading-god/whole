@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { ButtonBase } from "@/components/ButtonBase";
+import { IconButton } from "@/components/IconButton";
 import { CurrencyPicker } from "@/features/accounts/CurrencyPicker";
 import { FormField, SIGNED_DECIMAL_KEYBOARD } from "@/components/FormField";
 import { Icon } from "@/components/Icon";
@@ -14,7 +14,6 @@ import {
 import { COLORS } from "@/theme/colors";
 import { MIN_INTERACTIVE_SIZE } from "@/theme/layout";
 import { actionLink, screenStyles } from "@/theme/screen-styles";
-import { CHIP_RADIUS } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
 import { FONT_SIZE } from "@/theme/typography";
 
@@ -91,6 +90,7 @@ export function BalanceRowsField({
             onFocus={() => setEditingRowId(row.id)}
             placeholder="0.00"
             value={row.balance}
+            trailingLayout="responsive"
             trailing={
               <View style={styles.balanceRowTrailing}>
                 <CurrencyPicker
@@ -101,15 +101,15 @@ export function BalanceRowsField({
                   onChange={(currency) => onUpdate(index, { currency })}
                 />
                 {balanceRows.length > 1 ? (
-                  <ButtonBase
+                  <IconButton
                     accessibilityLabel={t("accountForm.removeCurrencyRow")}
-                    hitSlop={10}
+                    hitSlop={{ bottom: 7, left: 0, right: 14, top: 7 }}
+                    iconSize="sm"
+                    name="minus"
                     onPress={() => onRemove(index)}
-                    baseStyle={styles.deleteButton}
-                    pressedStyle={screenStyles.pressed}
-                  >
-                    <Icon name="minus" size="sm" color={COLORS.muted} />
-                  </ButtonBase>
+                    size="xs"
+                    variant="dangerGhost"
+                  />
                 ) : null}
               </View>
             }
@@ -160,21 +160,14 @@ const styles = StyleSheet.create({
     color: COLORS.subtle,
     fontSize: FONT_SIZE.eyebrow,
   },
-  // Trailing slot of a balance row: the currency unit capsule and, when more
-  // than one currency is present, a compact delete button. The 6pt gap is
-  // tight control spacing (not layout rhythm), so it stays literal.
+  // Trailing slot of a balance row: the 28pt currency capsule and a compact
+  // 34pt low-emphasis destructive button. A full spacing token between their
+  // painted boxes leaves room for the currency capsule's 10pt hit slop; zero
+  // remove-button hit slop on that shared edge keeps the two targets separate,
+  // while the outer edges retain the remove button's effective 48pt target.
   balanceRowTrailing: {
     alignItems: "center",
     flexDirection: "row",
-    gap: 6,
-  },
-  // Compact 28pt inline delete (smaller than the 48pt IconButton, which would
-  // raise the row height); hitSlop on the Pressable restores the touch target.
-  deleteButton: {
-    alignItems: "center",
-    borderRadius: CHIP_RADIUS,
-    height: 28,
-    justifyContent: "center",
-    width: 28,
+    gap: SPACING.md,
   },
 });

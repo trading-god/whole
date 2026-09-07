@@ -66,6 +66,8 @@ export function OptionPicker<Value extends string>({
       <Pressable
         accessibilityLabel={dialogTitle}
         accessibilityRole="button"
+        accessibilityState={{ expanded: isOpen }}
+        accessibilityValue={{ text: selected?.label ?? value }}
         hitSlop={trigger.hitSlop}
         onPress={() => setIsOpen(true)}
         style={trigger.style}

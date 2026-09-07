@@ -2,9 +2,11 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { COLORS } from "@/theme/colors";
 import { PRESSED_OPACITY_SURFACE } from "@/theme/interaction";
+import { MIN_INTERACTIVE_SIZE } from "@/theme/layout";
+import { screenStyles } from "@/theme/screen-styles";
 import { RADIUS } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
-import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT } from "@/theme/typography";
+import { FONT_SIZE, FONT_WEIGHT } from "@/theme/typography";
 
 type EngineOptionCardProps = {
   selected: boolean;
@@ -15,27 +17,30 @@ type EngineOptionCardProps = {
   testID?: string;
 };
 
+// The radio mark's outer footprint. The dot that fills a selected mark is
+// exactly half of it. Exported so the config stack below a radio row can
+// align under the mark that explains it (RADIO_ROW_INDENT).
+export const RADIO_MARK_SIZE = 24;
+const RADIO_DOT_SIZE = RADIO_MARK_SIZE / 2;
+
+// How far a radio row's trailing content (progress, cost lines, actions)
+// indents to sit under the copy column: the mark plus the row's horizontal
+// gap. Derived from RADIO_MARK_SIZE so resizing the mark carries the indent
+// with it instead of leaving every config row misaligned.
+export const RADIO_ROW_INDENT = RADIO_MARK_SIZE + SPACING.md;
+
 /**
  * The radio mark: a ring that fills when selected — the same stroke family as
  * the checkmarks elsewhere in the app, rather than a platform checkbox the
  * icon set has no glyph for.
  *
- * Shared by the engine cards (at the card scale) and the model rows inside
- * them (one scale down), so the two levels of the same choice speak one
- * visual language rather than two ring sizes drifting apart.
+ * Shared by the engine cards and the model rows inside them. Both levels keep
+ * the same legible geometry while their surrounding layout conveys hierarchy.
  */
-export function RadioMark({
-  selected,
-  compact,
-}: {
-  selected: boolean;
-  compact?: boolean;
-}) {
+export function RadioMark({ selected }: { selected: boolean }) {
   return (
-    <View style={compact ? styles.radioRingSm : styles.radioRing}>
-      {selected ? (
-        <View style={compact ? styles.radioDotSm : styles.radioDot} />
-      ) : null}
+    <View style={styles.radioRing}>
+      {selected ? <View style={styles.radioDot} /> : null}
     </View>
   );
 }
@@ -59,6 +64,7 @@ export function EngineOptionCard({
     <View style={[styles.card, selected && styles.cardSelected]}>
       <Pressable
         accessibilityLabel={title}
+        accessibilityHint={hint}
         accessibilityRole="radio"
         accessibilityState={{ selected }}
         onPress={onSelect}
@@ -93,6 +99,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flexDirection: "row",
     gap: SPACING.md,
+    minHeight: MIN_INTERACTIVE_SIZE,
     paddingVertical: SPACING.md,
   },
   pressed: {
@@ -101,35 +108,17 @@ const styles = StyleSheet.create({
   radioRing: {
     alignItems: "center",
     borderColor: COLORS.outlineBorder,
-    borderRadius: 10,
+    borderRadius: RADIUS.sm,
     borderWidth: 1.5,
-    height: 20,
+    height: RADIO_MARK_SIZE,
     justifyContent: "center",
-    width: 20,
+    width: RADIO_MARK_SIZE,
   },
   radioDot: {
     backgroundColor: COLORS.brand,
-    borderRadius: 5,
-    height: 10,
-    width: 10,
-  },
-  // The compact twin: one scale down, same stroke family, for radio rows
-  // nested INSIDE a card (the model rows) — 0.8× the mark, not a second
-  // design.
-  radioRingSm: {
-    alignItems: "center",
-    borderColor: COLORS.outlineBorder,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    height: 16,
-    justifyContent: "center",
-    width: 16,
-  },
-  radioDotSm: {
-    backgroundColor: COLORS.brand,
-    borderRadius: 4,
-    height: 8,
-    width: 8,
+    borderRadius: RADIO_DOT_SIZE / 2,
+    height: RADIO_DOT_SIZE,
+    width: RADIO_DOT_SIZE,
   },
   optionCopy: {
     flex: 1,
@@ -142,9 +131,7 @@ const styles = StyleSheet.create({
     fontWeight: FONT_WEIGHT.semibold,
   },
   optionHint: {
-    color: COLORS.muted,
-    fontSize: FONT_SIZE.micro,
-    lineHeight: LINE_HEIGHT.tight,
+    ...screenStyles.metaLine,
   },
   configArea: {
     paddingBottom: SPACING.lg,

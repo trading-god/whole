@@ -39,7 +39,10 @@ type FormFieldProps = {
   // to be widened by hand the moment `SIGNED_DECIMAL_KEYBOARD` needed a second
   // value, and nothing kept it in step with what `TextInput` actually accepts.
   keyboardType?: TextInputProps["keyboardType"];
-  autoCapitalize?: "none" | "sentences" | "words" | "characters";
+  autoCapitalize?: TextInputProps["autoCapitalize"];
+  autoComplete?: TextInputProps["autoComplete"];
+  textContentType?: TextInputProps["textContentType"];
+  secureTextEntry?: TextInputProps["secureTextEntry"];
   maxLength?: number;
   prefix?: string;
   trailing?: ReactNode;
@@ -72,6 +75,9 @@ export function FormField({
   required = false,
   keyboardType = "default",
   autoCapitalize = "sentences",
+  autoComplete,
+  textContentType,
+  secureTextEntry,
   maxLength,
   prefix,
   trailing,
@@ -90,6 +96,11 @@ export function FormField({
   // last-four read exactly like the editable name above it, and the only
   // explanation was a line of grey text underneath.
   const isLocked = editable === false;
+  const trailingContent =
+    trailing ??
+    (isLocked ? (
+      <Icon name="lock" size="sm" color={COLORS.subtle} testID="field-lock" />
+    ) : null);
 
   return (
     <FieldShell label={label} required={required}>
@@ -105,8 +116,11 @@ export function FormField({
           <TextInput
             accessibilityLabel={accessibilityLabel ?? label}
             autoCapitalize={autoCapitalize}
+            autoComplete={autoComplete}
             autoCorrect={false}
             editable={editable}
+            secureTextEntry={secureTextEntry}
+            textContentType={textContentType}
             keyboardType={keyboardType}
             maxLength={maxLength}
             onBlur={onBlur}
@@ -119,24 +133,14 @@ export function FormField({
             value={value}
           />
         </View>
-        {isLocked && !trailing ? (
-          <View style={styles.fieldTrailing}>
-            <Icon
-              name="lock"
-              size="sm"
-              color={COLORS.subtle}
-              testID="field-lock"
-            />
-          </View>
-        ) : null}
-        {trailing ? (
+        {trailingContent ? (
           <View
             style={[
               styles.fieldTrailing,
               stacksTrailing && styles.fieldTrailingStacked,
             ]}
           >
-            {trailing}
+            {trailingContent}
           </View>
         ) : null}
       </View>

@@ -131,13 +131,11 @@ export function SourceImageCleanupModal({
           </Button>
           <Button
             size="md"
-            variant="primary"
-            disabled={isBeingDeleted}
+            variant="danger"
+            loading={isBeingDeleted}
             onPress={() => void handleDelete()}
           >
-            {isBeingDeleted
-              ? t("accountScreenshot.deletingScreenshot")
-              : t("accountScreenshot.deleteScreenshot")}
+            {t("accountScreenshot.deleteScreenshot")}
           </Button>
         </ButtonGroup>
       ) : (

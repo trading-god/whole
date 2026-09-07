@@ -12,6 +12,7 @@ import {
   modelFile,
   modelPresence,
 } from "@/features/on-device-model/model-download";
+import { deferred } from "@/test-support/deferred";
 
 // expo-file-system is the single seam, faked inside the jest.mock factory
 // (class bindings outside it are not initialized when the factory runs).
@@ -249,6 +250,47 @@ describe("downloadModel", () => {
     // the model is complete.
     expect(mockDownloads).toHaveBeenCalled();
     expect(modelPresence("gemma-4-e2b").status).toBe("present");
+  });
+
+  it("joins an in-flight download instead of restarting it", async () => {
+    const model = onDeviceModel("gemma-4-e2b");
+    const { File } = jest.requireMock("expo-file-system") as {
+      File: { fromDownload: (name: string, size: number) => unknown };
+    };
+    const gate = deferred<unknown>();
+    mockDownloads.mockReturnValue(gate.promise);
+
+    const firstProgress: number[] = [];
+    const secondProgress: number[] = [];
+    const first = downloadModel("gemma-4-e2b", (fraction) =>
+      firstProgress.push(fraction),
+    );
+    const second = downloadModel("gemma-4-e2b", (fraction) =>
+      secondProgress.push(fraction),
+    );
+
+    // A second `downloadFileAsync` for the same model would delete the
+    // `.part` the first is still writing into — the join must not start one.
+    expect(mockDownloads).toHaveBeenCalledTimes(1);
+
+    gate.resolve(File.fromDownload(`${model.fileName}.part`, model.sizeBytes));
+    await Promise.all([first, second]);
+
+    // Both callers ride the one download, progress included.
+    expect(firstProgress).toEqual([1]);
+    expect(secondProgress).toEqual([1]);
+    expect(modelPresence("gemma-4-e2b").status).toBe("present");
+
+    // The guard is per-download, not forever: once settled, the next start
+    // runs fresh.
+    mockDownloads.mockImplementation(
+      async (_url: string, destination: string) =>
+        File.fromDownload(destination, model.sizeBytes),
+    );
+    await downloadModel("gemma-4-e2b", () => {
+      // progress ignored
+    });
+    expect(mockDownloads).toHaveBeenCalledTimes(2);
   });
 });
 

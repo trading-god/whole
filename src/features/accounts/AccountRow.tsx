@@ -18,21 +18,29 @@ import Animated, {
 import { scheduleOnRN } from "react-native-worklets";
 
 import { ButtonBase } from "@/components/ButtonBase";
+import { AccountAvatar } from "@/features/accounts/AccountAvatar";
 import {
-  getAccountAppearance,
-  getAccountInitial,
-} from "@/features/assets/account-appearance";
+  ACCOUNT_LIST_BALANCE_COMPACT,
+  ACCOUNT_LIST_BALANCE_MIN_FONT_SCALE,
+  ACCOUNT_LIST_ROW_COMPACT,
+  ACCOUNT_LIST_SEPARATOR_INSET,
+  ACCOUNT_LIST_TRAILING_COMPACT,
+  ACCOUNT_LIST_TRAILING_MAX_WIDTH,
+  ACCOUNT_ROW_HEIGHT,
+} from "@/features/accounts/account-list-constants";
 import {
   type AssetAccount,
   sumBalancesByKindInCurrency,
 } from "@/features/assets/asset-repository";
-import { maskAssetAmount } from "@/features/assets/asset-privacy-store";
+import {
+  ASSET_AMOUNT_MASK,
+  maskAssetAmount,
+} from "@/features/assets/asset-privacy-store";
 import { type ExchangeRates } from "@/features/assets/currency-conversion";
 import { type Currency } from "@/features/assets/currencies";
 import { useAppLocale } from "@/i18n";
 import { COLORS } from "@/theme/colors";
 import { PRESSED_OPACITY } from "@/theme/interaction";
-import { ACCOUNT_ROW_HEIGHT } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
 import {
   FONT_SIZE,
@@ -44,11 +52,6 @@ import {
 // Horizontal travel required to start dragging a row.
 const ACTIVATION_OFFSET = 10;
 const SNAP_CONFIG = { duration: 200, easing: Easing.out(Easing.ease) };
-// The avatar's footprint: its width plus the gap to the identity block. A row
-// without an avatar (a child of an institution group) indents its text by the
-// same amount so every account name in the card starts on one line.
-const AVATAR_SIZE = 44;
-const AVATAR_SLOT_WIDTH = AVATAR_SIZE + SPACING.md;
 
 type AccountRowProps = {
   account: AssetAccount;
@@ -58,11 +61,11 @@ type AccountRowProps = {
   // of the formatted figure. An account whose balance couldn't convert still
   // renders its "—" so missing data isn't mistaken for a hidden amount.
   isBalanceHidden: boolean;
-  // Rows under an institution header drop the avatar: the header already names
-  // where the account lives, and three identical tinted initials under one
-  // "OCBC" said nothing the header hadn't. The text keeps the avatar's indent
-  // so grouped and ungrouped names align.
-  showAvatar?: boolean;
+  // When true, the row renders the compact layout: the figure wraps onto its
+  // own line below the name. Read once by the list owner (AccountsCard) and
+  // passed down, so the rows don't each subscribe to window dimensions — a
+  // keyboard show/hide on Android would otherwise re-render every mounted row.
+  isCompact: boolean;
   isFirst: boolean;
   isActive: boolean;
   onActivate: (id: string | null) => void;
@@ -79,7 +82,7 @@ export const AccountRow = memo(function AccountRow({
   displayCurrency,
   rates,
   isBalanceHidden,
-  showAvatar = true,
+  isCompact,
   isFirst,
   isActive,
   onActivate,
@@ -88,8 +91,6 @@ export const AccountRow = memo(function AccountRow({
 }: AccountRowProps) {
   const { t } = useTranslation();
   const { formatCurrency } = useAppLocale();
-  const appearance = getAccountAppearance(account.kind);
-  const initial = getAccountInitial(account.name);
   // Fold the account's per-currency balances into the display currency so a
   // multi-currency account shows one comparable total. `null` (no balance had
   // a rate) is rendered as a dash below.
@@ -111,6 +112,19 @@ export const AccountRow = memo(function AccountRow({
   const subtitleText = isLiability
     ? `${t("home.liability")} ${currencySubtitle}`.trim()
     : currencySubtitle;
+  const balanceText =
+    convertedTotal !== null
+      ? maskAssetAmount(
+          formatCurrency(convertedTotal, displayCurrency),
+          isBalanceHidden,
+        )
+      : "—";
+  const accessibilityLabel = account.accountLastFourDigits
+    ? `${account.name}, ${ASSET_AMOUNT_MASK} ${account.accountLastFourDigits}`
+    : account.name;
+  const accessibilityValue = subtitleText
+    ? `${balanceText}, ${subtitleText}`
+    : balanceText;
   const [confirming, setConfirming] = useState(false);
   const translateX = useSharedValue(0);
   const startX = useSharedValue(0);
@@ -264,34 +278,21 @@ export const AccountRow = memo(function AccountRow({
           <Animated.View
             accessible
             accessibilityRole="button"
-            accessibilityLabel={account.name}
+            accessibilityLabel={accessibilityLabel}
+            accessibilityValue={{ text: accessibilityValue }}
             accessibilityHint={t("home.openAccountHint")}
             accessibilityActions={[
               { name: "delete", label: t("home.deleteAccount") },
             ]}
             onAccessibilityAction={handleAccessibilityAction}
-            style={[styles.accountRow, rowAnimatedStyle]}
+            style={[
+              styles.accountRow,
+              isCompact && styles.accountRowCompact,
+              rowAnimatedStyle,
+            ]}
           >
-            {showAvatar ? (
-              <View
-                style={[
-                  styles.accountIcon,
-                  { backgroundColor: appearance.tint },
-                ]}
-              >
-                <Text
-                  style={[styles.accountInitial, { color: appearance.color }]}
-                >
-                  {initial}
-                </Text>
-              </View>
-            ) : null}
-            <View
-              style={[
-                styles.accountIdentity,
-                !showAvatar && styles.accountIdentityIndented,
-              ]}
-            >
+            <AccountAvatar kind={account.kind} name={account.name} />
+            <View style={styles.accountIdentity}>
               <Text
                 ellipsizeMode="tail"
                 numberOfLines={2}
@@ -301,26 +302,34 @@ export const AccountRow = memo(function AccountRow({
               </Text>
               {account.accountLastFourDigits ? (
                 <Text style={styles.accountNumber}>
-                  **** {account.accountLastFourDigits}
+                  {ASSET_AMOUNT_MASK} {account.accountLastFourDigits}
                 </Text>
               ) : null}
             </View>
-            <View style={styles.accountValue}>
+            <View
+              style={[
+                styles.accountValue,
+                isCompact && styles.accountValueCompact,
+              ]}
+            >
               <Text
                 numberOfLines={1}
+                // Shrinks before it clips (see
+                // ACCOUNT_LIST_BALANCE_MIN_FONT_SCALE): a tail-ellipsised
+                // balance cuts the least-significant digits and shows a figure
+                // that is simply wrong, while a smaller one is still the right
+                // number. The compact layout already gives the figure its own
+                // full-width line, so this floor is only the wide-layout last
+                // resort.
                 adjustsFontSizeToFit
-                minimumFontScale={0.5}
+                minimumFontScale={ACCOUNT_LIST_BALANCE_MIN_FONT_SCALE}
                 style={[
                   styles.accountBalance,
+                  isCompact && ACCOUNT_LIST_BALANCE_COMPACT,
                   isLiability && styles.accountBalanceLiability,
                 ]}
               >
-                {convertedTotal !== null
-                  ? maskAssetAmount(
-                      formatCurrency(convertedTotal, displayCurrency),
-                      isBalanceHidden,
-                    )
-                  : "—"}
+                {balanceText}
               </Text>
               {subtitleText ? (
                 <Text style={styles.accountCurrency}>{subtitleText}</Text>
@@ -373,26 +382,14 @@ const styles = StyleSheet.create({
     minHeight: ACCOUNT_ROW_HEIGHT,
     paddingHorizontal: SPACING.lg,
   },
-  accountIcon: {
-    alignItems: "center",
-    borderRadius: 14,
-    flexShrink: 0,
-    height: AVATAR_SIZE,
-    justifyContent: "center",
-    width: AVATAR_SIZE,
-  },
-  accountInitial: {
-    fontSize: FONT_SIZE.bodySm,
-    fontWeight: FONT_WEIGHT.extrabold,
+  accountRowCompact: {
+    ...ACCOUNT_LIST_ROW_COMPACT,
   },
   accountIdentity: {
     flex: 1,
     flexShrink: 1,
     marginLeft: SPACING.md,
     minWidth: 0,
-  },
-  accountIdentityIndented: {
-    marginLeft: AVATAR_SLOT_WIDTH,
   },
   accountName: {
     color: COLORS.ink,
@@ -409,13 +406,17 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
     flexShrink: 0,
     marginLeft: SPACING.sm,
+    maxWidth: ACCOUNT_LIST_TRAILING_MAX_WIDTH,
+  },
+  accountValueCompact: {
+    ...ACCOUNT_LIST_TRAILING_COMPACT,
   },
   accountBalance: {
     color: COLORS.ink,
     fontSize: FONT_SIZE.body,
     fontVariant: FONT_VARIANT.tabular,
     fontWeight: FONT_WEIGHT.bold,
-    maxWidth: 150,
+    maxWidth: "100%",
   },
   accountBalanceLiability: {
     color: COLORS.caution,
@@ -430,6 +431,6 @@ const styles = StyleSheet.create({
   separator: {
     backgroundColor: COLORS.border,
     height: StyleSheet.hairlineWidth,
-    marginLeft: SPACING.lg + AVATAR_SLOT_WIDTH,
+    marginLeft: ACCOUNT_LIST_SEPARATOR_INSET,
   },
 });
