@@ -331,8 +331,9 @@ Settings (radio-card section, `recognition/RecognitionEngineSection.tsx`):
   a stored flag. The selected model is `on-device-model-store.ts`
   (kv-store, E2B default); `selectOnDeviceModel` in `model-context.ts`
   releases the context on a switch so two models are never warm at once.
-  `assets/models/` (Git LFS, the old E2B split) stays in the repo for the
-  eval harness and local dev.
+  The weights live nowhere in the repo — the eval harness takes its gguf
+  through `WHOLE_GGUF_PATH` (see `packages/ocr-eval/README.md`); fetch one
+  from the unsloth HF repos the catalog points at when needed.
 - **Remote** (`remote-runner.ts`): the user's own OpenAI-compatible
   endpoint (base URL + model + API key; key in `expo-secure-store`, the
   rest in kv-store — `remote-model-config-store.ts`). No GBNF exists over

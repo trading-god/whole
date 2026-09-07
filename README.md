@@ -51,21 +51,22 @@ read off the screenshot, never the image itself.
 
 - Node.js 22.13 or newer
 - pnpm 11.11.0, as pinned in `package.json`
-- Git LFS — `assets/models/` holds the on-device weights (~3 GB) for the
-  recognition evals and local development; the app itself downloads its model
-  on demand
+- The on-device weights are not part of the repo — the app downloads its
+  model on demand, and the recognition evals expect `WHOLE_GGUF_PATH` to
+  point at a local gguf (see `packages/ocr-eval/README.md`)
 - An iOS simulator or Android emulator
 
 ### Install
 
 ```bash
-git lfs pull
 pnpm install
 ```
 
 The weights are only needed by the recognition evals (`WHOLE_GGUF_PATH=…
-pnpm eval:ocr:llama`) and local development of the on-device engine — the app
-downloads its model on demand, from Settings.
+pnpm eval:ocr:llama`) and local development of the on-device engine — fetch
+the gguf yourself when you need it, e.g. unsloth's
+`gemma-4-E2B-it-Q4_K_M.gguf`. The app downloads its model on demand, from
+Settings.
 
 ### Run
 

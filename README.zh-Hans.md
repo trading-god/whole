@@ -34,17 +34,16 @@ Whole 只面向移动端：账户识别依赖原生图片选择器和媒体库�
 
 - Node.js 22.13 或更高版本
 - `package.json` 中固定的 pnpm 11.11.0
-- Git LFS——`assets/models/` 存放端侧模型权重（约 3 GB），供识别回归评测与本地开发使用；应用本身按需下载模型
+- 端侧模型权重不在仓库里——应用本身按需下载；识别回归评测需要用 `WHOLE_GGUF_PATH` 指向本地 gguf 文件（见 `packages/ocr-eval/README.md`）
 - iOS 模拟器或 Android 模拟器
 
 ### 安装依赖
 
 ```bash
-git lfs pull
 pnpm install
 ```
 
-模型权重只有识别回归评测（`WHOLE_GGUF_PATH=… pnpm eval:ocr:llama`）和端侧引擎的本地开发需要——应用自身在设置中按需下载模型。
+模型权重只有识别回归评测（`WHOLE_GGUF_PATH=… pnpm eval:ocr:llama`）和端侧引擎的本地开发需要——仓库不附带权重文件，需要时自行下载 gguf（如 unsloth 的 `gemma-4-E2B-it-Q4_K_M.gguf`）；应用自身在设置中按需下载模型。
 
 ### 运行
 
