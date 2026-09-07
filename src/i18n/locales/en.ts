@@ -178,6 +178,11 @@ export const enMessages = {
       download: "Download",
       downloadHint: "Downloads {{model}}, using {{size}} of storage",
       downloading: "Downloading…",
+      // The pause/resume toggle on an in-flight download: each label names the
+      // state it switches TO, matching the "verb + noun" shape of "Download".
+      pauseDownload: "Pause download",
+      resumeDownload: "Resume download",
+      paused: "Paused",
       downloadProgress: "Model download progress",
       downloadProgressValue: "{{percentage}}% downloaded",
       downloadPercentValue: "{{percentage}}%",
@@ -189,12 +194,19 @@ export const enMessages = {
       // they are what the E2B/E4B choice actually turns on for the device.
       modelCosts: "{{size}} storage · about {{ram}} memory to run",
       deleteModel: "Delete model",
+      // The deletion confirm. The weights are the largest thing on disk this
+      // app ever writes, so the dialog states what leaves and that a later
+      // use means re-downloading it — the confirm button reuses the trigger's
+      // own label, keeping the action's name the same through the flow.
+      deleteModelTitle: "Delete {{model}}?",
+      deleteModelMessage:
+        "The downloaded files ({{size}}) will be removed from this device. You can download the model again anytime.",
       partialDownload: "{{size}} of {{total}}",
       // The remote engine's form. Labels say what to paste, in the words a
       // provider's console uses.
       baseUrl: "Base URL",
       baseUrlHint:
-        "Your provider's https:// address, e.g. https://api.deepseek.com/v1",
+        "Your provider's https:// address, e.g. https://api.deepseek.com/v1. A local service may use http://.",
       model: "Model",
       modelHint: "The model name your provider serves, e.g. deepseek-chat",
       apiKey: "API key",

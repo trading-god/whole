@@ -53,13 +53,13 @@ export function modelFile(id: OnDeviceModelId): File {
   return new File(modelDirectory(id), model.fileName);
 }
 
-/** The native path one model's `.part` lands at, as a string the downloader takes. */
-function partialPath(id: OnDeviceModelId): string {
+/** The `.part` file a download lands in before the rename into place. */
+function partialFile(id: OnDeviceModelId): File {
   const model = onDeviceModel(id);
   // Derived through the same `modelDirectory` every other path in this module
   // uses, so the layout has one source: a hand-built string beside it is how
   // the native destination and the JS-side rename drift apart.
-  return new File(modelDirectory(id), `${model.fileName}.part`).uri;
+  return new File(modelDirectory(id), `${model.fileName}.part`);
 }
 
 export type ModelPresence =
@@ -122,7 +122,7 @@ export function modelPresence(id: OnDeviceModelId): ModelPresence {
 
 /** What one model's download is doing, as the settings row renders it. */
 export type DownloadSnapshot = {
-  phase: "idle" | "downloading" | "failed";
+  phase: "idle" | "downloading" | "paused" | "failed";
   /** 0..1 across the model's `sizeBytes`. */
   fraction: number;
 };
@@ -133,6 +133,10 @@ const snapshots = new Map<OnDeviceModelId, DownloadSnapshot>();
 const listeners = new Map<
   OnDeviceModelId,
   Set<(snapshot: DownloadSnapshot) => void>
+>();
+const presenceListeners = new Map<
+  OnDeviceModelId,
+  Set<(presence: ModelPresence) => void>
 >();
 // One task per model at a time — the same guard the settings row's
 // component-local phase used to provide, now enforced where the transfer
@@ -172,10 +176,44 @@ export function observeModelDownload(
   };
 }
 
+/**
+ * Subscribes to one model's presence on disk — the same contract
+ * `observeModelDownload` carries for the snapshot: the listener fires
+ * immediately with the current presence, then after every change this module
+ * makes of the model's file (a settled download's rename, a delete). The
+ * settings row rides this instead of re-reading on a download-phase proxy or
+ * remembering a manual refresh per call site, so the row is a pure view over
+ * the same disk the recognition gate reads.
+ */
+export function observeModelPresence(
+  id: OnDeviceModelId,
+  listener: (presence: ModelPresence) => void,
+): () => void {
+  const set = presenceListeners.get(id) ?? new Set();
+  set.add(listener);
+  presenceListeners.set(id, set);
+  listener(modelPresence(id));
+  return () => {
+    set.delete(listener);
+    if (set.size === 0) {
+      presenceListeners.delete(id);
+    }
+  };
+}
+
+/** Tells presence listeners the model's file on disk just changed. */
+function publishPresence(id: OnDeviceModelId): void {
+  const presence = modelPresence(id);
+  for (const listener of presenceListeners.get(id) ?? []) {
+    listener(presence);
+  }
+}
+
 function publish(id: OnDeviceModelId, snapshot: DownloadSnapshot): void {
+  const current = snapshots.get(id);
   if (
-    snapshots.get(id)?.phase === snapshot.phase &&
-    snapshots.get(id)?.fraction === snapshot.fraction
+    current?.phase === snapshot.phase &&
+    current?.fraction === snapshot.fraction
   ) {
     return;
   }
@@ -185,11 +223,134 @@ function publish(id: OnDeviceModelId, snapshot: DownloadSnapshot): void {
   }
 }
 
-function reportProgress(id: OnDeviceModelId, bytesDownloaded: number): void {
+/** Flips the phase while keeping the fraction the row already renders. */
+function publishPhase(
+  id: OnDeviceModelId,
+  phase: DownloadSnapshot["phase"],
+): void {
+  publish(id, { phase, fraction: modelDownloadState(id).fraction });
+}
+
+/** Bytes → the 0..1 fraction across the model's size, clamped both ways. */
+function fractionOf(id: OnDeviceModelId, bytesDownloaded: number): number {
   const { sizeBytes } = onDeviceModel(id);
+  return Math.min(Math.max(bytesDownloaded, 0), sizeBytes) / sizeBytes;
+}
+
+function reportProgress(id: OnDeviceModelId, bytesDownloaded: number): void {
+  // A paused row ignores progress: events already in flight when the pause
+  // landed (the bridge delivers in order, but the pause call itself is async)
+  // would otherwise flip the row straight back to "downloading".
+  if (modelDownloadState(id).phase === "paused") {
+    return;
+  }
   publish(id, {
     phase: "downloading",
-    fraction: Math.min(Math.max(bytesDownloaded, 0), sizeBytes) / sizeBytes,
+    fraction: fractionOf(id, bytesDownloaded),
+  });
+}
+
+/**
+ * The marker a USER pause leaves in the model's directory: a task found
+ * PAUSED after a relaunch is parked at rest only when this marker says the
+ * pause was deliberate. Without it, Android's force-stop recovery — the
+ * library parks a transfer the system killed as PAUSED so `resumeTask`
+ * works (`restoreRecoverableDownloads`, Downloader.kt) — would be
+ * indistinguishable from the user's own pause, and a killed-mid-transfer
+ * download would silently stall instead of continuing. Named with the
+ * model id so no two models' markers can be confused (each lives in its
+ * own directory; the id keeps the name unique on its own).
+ */
+function userPausedMarker(id: OnDeviceModelId): File {
+  return new File(modelDirectory(id), `${id}.user-paused`);
+}
+
+/** Marks the model's download as paused BY THE USER (best-effort). */
+function markUserPaused(id: OnDeviceModelId): void {
+  try {
+    const marker = userPausedMarker(id);
+    if (!marker.exists) {
+      marker.create();
+    }
+  } catch {
+    // The marker only refines the relaunch path; a failed write must not
+    // fail the pause itself.
+  }
+}
+
+/** Clears the user-pause marker (best-effort): resume, restart, settle. */
+function clearUserPaused(id: OnDeviceModelId): void {
+  try {
+    const marker = userPausedMarker(id);
+    if (marker.exists) {
+      marker.delete();
+    }
+  } catch {
+    // A stale marker parks a reattached task one launch too long; the
+    // next transition clears it.
+  }
+}
+
+/**
+ * Pauses the model's in-flight download — the transfer keeps its bytes and
+ * its task (`resumeModelDownload` continues from them; a `.part` on disk is
+ * never a restart). Only a DOWNLOADING task can pause: anything else is a
+ * no-op, which is what a double-press of the button lands as.
+ */
+export function pauseModelDownload(id: OnDeviceModelId): void {
+  if (modelDownloadState(id).phase !== "downloading") {
+    return;
+  }
+  const task = activeTasks.get(id);
+  if (!task) {
+    return;
+  }
+  // Publish first: the phase flip is what the row renders NOW, and a pause
+  // event arriving after this point is already covered by `reportProgress`
+  // ignoring progress while paused.
+  publishPhase(id, "paused");
+  markUserPaused(id);
+  void task.pause().catch(() => {
+    // A pause that failed means one of two things. Either the task settled
+    // first — its done/error handler publishes the real next state over
+    // this one — or the transfer is still running and the pause simply did
+    // not take (the library marks the task PAUSED before the native call
+    // and never rolls it back). In that second case the phase flip above
+    // would swallow every further progress tick (`reportProgress` ignores
+    // progress while paused) and freeze the row at "Paused" for the rest
+    // of the transfer: un-pause it, so the ticks flow again — and drop
+    // the marker, so a later relaunch does not park a transfer that was
+    // never really paused.
+    if (modelDownloadState(id).phase === "paused") {
+      clearUserPaused(id);
+      publishPhase(id, "downloading");
+    }
+  });
+}
+
+/**
+ * Continues a paused download from where it stopped. Only a PAUSED task can
+ * resume; anything else is a no-op (the same double-press guard).
+ */
+export function resumeModelDownload(id: OnDeviceModelId): void {
+  if (modelDownloadState(id).phase !== "paused") {
+    return;
+  }
+  const task = activeTasks.get(id);
+  if (!task) {
+    return;
+  }
+  publishPhase(id, "downloading");
+  clearUserPaused(id);
+  void task.resume().catch(() => {
+    // A resume that failed surfaces as failed: the retry offer is the
+    // recovery, the same discipline the transfer-error path follows. But
+    // only for THIS task: a rejection landing after the task already
+    // settled (the done handler ran while the resume was in flight) must
+    // not publish "failed" over the settle.
+    if (activeTasks.get(id) === task) {
+      failTask(id, task);
+    }
   });
 }
 
@@ -207,54 +368,61 @@ function reportProgress(id: OnDeviceModelId, bytesDownloaded: number): void {
  */
 export function startModelDownload(id: OnDeviceModelId): void {
   if (reattachRun) {
-    // The reattach is mid-flight: its task list is what makes the
-    // `activeTasks.has` guard below truthful. Wait for it to settle —
-    // either way it settles — then re-enter through this same entry; the
-    // guard itself turns a start for a model the reattach adopted into the
-    // no-op it should be.
+    // The reattach is mid-flight: its task list is what makes the guards
+    // below truthful. Wait for it to settle — either way it settles — then
+    // re-enter through this same entry; the guards turn a start for a model
+    // the reattach adopted (or one whose transfer settled while the app was
+    // dead) into the no-op it should be.
     const run = reattachRun;
-    void run.then(
-      () => startModelDownload(id),
-      () => startModelDownload(id),
-    );
+    const reEnter = () => startModelDownload(id);
+    void run.then(reEnter, reEnter);
     return;
   }
   if (activeTasks.has(id)) {
+    return;
+  }
+  // Presence is the truth: a start landing on an already-present model (a
+  // download that settled between the row's render and the tap, or any
+  // programmatic caller) keeps the verified weights instead of deleting and
+  // re-downloading every byte. A wrong-sized leftover reads as partial and
+  // is deleted by `modelPresence` itself, so the transfer below starts from
+  // a clean destination either way.
+  if (modelPresence(id).status === "present") {
     return;
   }
   const model = onDeviceModel(id);
   const dir = modelDirectory(id);
   dir.create({ intermediates: true, idempotent: true });
 
-  // A wrong-sized leftover (a download interrupted at rename time) would
-  // make the post-download `move` below throw rather than replace — and a
-  // stale `.part` would make the native download land beside it — so both
-  // go before the fresh transfer starts.
-  const destination = modelFile(id);
-  if (destination.exists) {
-    destination.delete();
-  }
-  const stalePartial = new File(dir, `${model.fileName}.part`);
+  // A stale `.part` would make the native download land beside it, so it
+  // goes before the fresh transfer starts. The user-pause marker goes too: a
+  // fresh start is not a pause.
+  const stalePartial = partialFile(id);
   if (stalePartial.exists) {
     stalePartial.delete();
   }
+  clearUserPaused(id);
 
   publish(id, { phase: "downloading", fraction: 0 });
   try {
     const task = createDownloadTask({
       id,
       url: model.url,
-      destination: partialPath(id),
+      destination: partialFile(id).uri,
     });
     activeTasks.set(id, task);
     wireTaskHandlers(task);
     task.start();
   } catch {
     // A task that could not even be created (the native module not linked —
-    // a stale dev client — or a bridge failure) must land in the same
-    // failed phase a transfer error does: the row re-offers Download, and
-    // the store never sticks at a "downloading" nothing will settle. The
-    // prologue above already cleaned the disk, so a retry starts clean.
+    // a stale dev client — or a bridge failure), or one whose `start()`
+    // threw after the bookkeeping above, must land in the same failed
+    // phase a transfer error does — and must RELEASE the one-download
+    // guard: a task that threw after `activeTasks.set` would otherwise
+    // block every later start with no done/error event ever coming to
+    // clear it. The prologue above already cleaned the disk, so a retry
+    // starts clean.
+    activeTasks.delete(id);
     publish(id, { phase: "failed", fraction: 0 });
   }
 }
@@ -276,6 +444,18 @@ function signalJobDone(task: DownloadTask): void {
   // invalidated) must not surface as unhandled — the catch discipline every
   // fire-and-forget native call here follows.
   void Promise.resolve(completeHandler(task.id)).catch(() => {});
+}
+
+/**
+ * Retires a task that can no longer make progress and lands the row in the
+ * failed phase: the one recovery the settings row offers for every failure
+ * is retrying the download. Shared by the transfer-error path and the
+ * refused-resume paths, so they cannot drift apart.
+ */
+function failTask(id: OnDeviceModelId, task: DownloadTask): void {
+  activeTasks.delete(id);
+  publish(id, { phase: "failed", fraction: 0 });
+  signalJobDone(task);
 }
 
 /**
@@ -317,6 +497,11 @@ function wireTaskHandlers(task: DownloadTask): void {
     })
     .error(() => {
       if (!isLive()) {
+        // A retired task's tail (iOS delivers deleteModel's stop as
+        // `downloadFailed`) still owes the session-wide handshake — a
+        // background wake that delivered it would otherwise idle to the
+        // OS's own timeout instead of being released here.
+        signalJobDone(task);
         return;
       }
       // The technical reason stays out of the UI — localized copy only
@@ -326,9 +511,7 @@ function wireTaskHandlers(task: DownloadTask): void {
       // recovers a force-stopped download's paused state from the on-disk
       // byte count (see Downloader.kt) — deleting the partial file here
       // would throw away exactly the bytes a resume needs.
-      activeTasks.delete(id);
-      publish(id, { phase: "failed", fraction: 0 });
-      signalJobDone(task);
+      failTask(id, task);
     });
 }
 
@@ -353,18 +536,30 @@ export async function reattachModelDownloads(): Promise<void> {
   // The run is the gate starts wait behind: it is in place before the first
   // await can resolve, so no start slips past an `activeTasks` the reattach
   // has not populated yet, and it clears once the run settles so later
-  // starts run fresh.
-  const run = adoptExistingTasks();
+  // starts run fresh. The gate is also idempotent: a second call while one
+  // run is still in flight (a layout remount behind the error boundary)
+  // JOINS it rather than starting a parallel adoption — two runs would
+  // double-settle a DONE task (the second finds the `.part` already moved
+  // and publishes "failed" over the first's idle) and the first's cleanup
+  // would clear the gate while the second is still running.
+  const run = reattachRun ?? adoptExistingTasks();
   reattachRun = run;
   try {
     await run;
   } finally {
-    reattachRun = null;
+    if (reattachRun === run) {
+      reattachRun = null;
+    }
   }
 }
 
 async function adoptExistingTasks(): Promise<void> {
   const tasks = await getExistingDownloadTasks();
+  // DONE tasks settled below, in list order: their session-wide handshake
+  // is owed only after the whole pass, when `activeTasks` reflects every
+  // live task this run adopted (signalling mid-pass would tell iOS "all
+  // events processed" while adoptions are still pending).
+  const settledTasks: DownloadTask[] = [];
   for (const task of tasks) {
     const id = task.id as OnDeviceModelId;
     if (!ON_DEVICE_MODEL_SCHEMA.safeParse(id).success) {
@@ -381,25 +576,44 @@ async function adoptExistingTasks(): Promise<void> {
       // run the settlement here rather than parking a phantom download in
       // `activeTasks` (which would also block a fresh start).
       await settleCompletedDownload(id);
+      settledTasks.push(task);
       continue;
     }
     // Where the transfer already is: a live task reports its own byte count,
     // so the first rendered fraction is the truth on disk, not a restart to 0.
-    reportProgress(id, task.bytesDownloaded);
     activeTasks.set(id, task);
     wireTaskHandlers(task);
+    // A pause THIS app wrote (see `userPausedMarker`): the user asked for
+    // at-rest, and a relaunch must not undo it — the row offers Resume,
+    // continuing from the bytes on disk.
+    const atRest = task.state === "PAUSED" && userPausedMarker(id).exists;
+    if (atRest) {
+      publish(id, {
+        phase: "paused",
+        fraction: fractionOf(id, task.bytesDownloaded),
+      });
+      continue;
+    }
+    reportProgress(id, task.bytesDownloaded);
     if (task.state === "PAUSED") {
-      // A paused task never reports another event until resumed — adopting it
-      // as "downloading" would strand the row at a bar that never moves.
-      // Resume it instead; the wired handlers take it from there.
+      // No marker: the pause is the library's own recovery, not a choice.
+      // Android parks a transfer the system killed mid-flight as PAUSED
+      // precisely so `resumeTask` can continue it
+      // (`restoreRecoverableDownloads`, Downloader.kt) — on iOS the
+      // equivalent task surfaces as still running, and a user pause always
+      // leaves the marker. Continuing the download is what "background
+      // downloads survive the app" promises; parking it here would stall a
+      // multi-GB transfer until the user happened to open Settings.
       void task.resume().catch(() => {
-        // A resume that failed surfaces as failed: the retry offer is the
-        // recovery, same as a transfer error.
-        activeTasks.delete(id);
-        publish(id, { phase: "failed", fraction: 0 });
-        signalJobDone(task);
+        // A resume that failed surfaces as failed: the retry offer is
+        // the recovery, the same discipline the transfer-error path
+        // follows.
+        failTask(id, task);
       });
     }
+  }
+  for (const task of settledTasks) {
+    signalJobDone(task);
   }
 }
 
@@ -412,9 +626,8 @@ async function adoptExistingTasks(): Promise<void> {
  */
 async function settleCompletedDownload(id: OnDeviceModelId): Promise<void> {
   const model = onDeviceModel(id);
-  const dir = modelDirectory(id);
   try {
-    const partial = new File(dir, `${model.fileName}.part`);
+    const partial = partialFile(id);
     const actual = partial.size;
     if (actual !== model.sizeBytes) {
       partial.delete();
@@ -422,25 +635,24 @@ async function settleCompletedDownload(id: OnDeviceModelId): Promise<void> {
         `Downloaded ${model.name} as ${actual} bytes, expected ${model.sizeBytes}.`,
       );
     }
-    await moveIntoPlace(partial, id);
+    // The rename from `.part` to the loadable file, overwriting any leftover
+    // at the destination (a wrong-sized file an interrupted settlement
+    // stranded there) — `move` does not overwrite by default, and the throw
+    // would strand a fully-downloaded file behind it. Same directory, so a
+    // rename: atomic, no second copy of the file.
+    await partial.move(modelFile(id), { overwrite: true });
+    publish(id, { phase: "idle", fraction: 1 });
+    // The disk changed — presence listeners re-read, which is what swaps the
+    // settings row's progress bar for its Test/Delete actions.
+    publishPresence(id);
   } catch {
     publish(id, { phase: "failed", fraction: 0 });
+  } finally {
+    // The transfer finished — even one that raced a pause (the wt case:
+    // done landing after the user pressed Pause) is no longer paused, and
+    // a marker left behind would park the next relaunch's reattach.
+    clearUserPaused(id);
   }
-}
-
-/**
- * The rename from `.part` to the loadable file, overwriting any leftover at
- * the destination (a wrong-sized file an interrupted settlement stranded
- * there) — `move` does not overwrite by default, and the throw would strand
- * a fully-downloaded file behind it.
- */
-async function moveIntoPlace(
-  partial: File,
-  id: OnDeviceModelId,
-): Promise<void> {
-  // Same directory, so a rename — atomic, no second copy of the file.
-  await partial.move(modelFile(id), { overwrite: true });
-  publish(id, { phase: "idle", fraction: 1 });
 }
 
 /** Deletes one model's directory. No-op when absent. */
@@ -460,4 +672,8 @@ export function deleteModel(id: OnDeviceModelId): void {
   if (dir.exists) {
     dir.delete();
   }
+  // The disk changed — or did not, for an absent model: the re-read keeps
+  // subscribed rows current (the row swaps back to its download offer)
+  // without any caller remembering a manual refresh.
+  publishPresence(id);
 }

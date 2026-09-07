@@ -339,7 +339,16 @@ Settings (radio-card section, `recognition/RecognitionEngineSection.tsx`):
   rest in kv-store — `remote-model-config-store.ts`). No GBNF exists over
   HTTP, so the same annotation JSON schema rides as
   `response_format.json_schema` and the engine's parse/retry loop is the
-  backstop. Config must be `https://` (ATS allows no cleartext).
+  backstop. A URL scheme is required and only `http`/`https` pass; `http://`
+  exists for LOCAL services (Ollama, LM Studio) — `NSAllowsLocalNetworking`
+  in `app.json` (iOS) and the network security config written by
+  `config/plugins/with-android-local-cleartext.js` (Android, which blocks all
+  cleartext in release builds otherwise) are what let those cleartext
+  requests through, and every PUBLIC endpoint still has to answer `https://`
+  or the request itself fails. Android's config cannot express iOS's
+  whole-local-network allowance, so its cleartext hosts are loopback only
+  (`localhost`, `127.0.0.1`, `10.0.2.2`) — a LAN-IP endpoint stays
+  https-only there.
 
 `engine-store.ts` holds the choice (kv-store, `"on-device"` default).
 `screenshot-recognition.ts` gates on the CHOSEN engine being ready — the

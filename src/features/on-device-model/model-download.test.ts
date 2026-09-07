@@ -10,14 +10,18 @@ import {
 // require, per AGENTS.md): its download store is deliberately module-scope —
 // that is what makes a download survive the settings screen — so state from
 // one test would leak into the next through the static import.
-let modelDirectory: typeof import("@/features/on-device-model/model-download").modelDirectory;
-let modelFile: typeof import("@/features/on-device-model/model-download").modelFile;
-let modelPresence: typeof import("@/features/on-device-model/model-download").modelPresence;
-let modelDownloadState: typeof import("@/features/on-device-model/model-download").modelDownloadState;
-let observeModelDownload: typeof import("@/features/on-device-model/model-download").observeModelDownload;
-let startModelDownload: typeof import("@/features/on-device-model/model-download").startModelDownload;
-let reattachModelDownloads: typeof import("@/features/on-device-model/model-download").reattachModelDownloads;
-let deleteModel: typeof import("@/features/on-device-model/model-download").deleteModel;
+type ModelDownload = typeof import("@/features/on-device-model/model-download");
+let modelDirectory: ModelDownload["modelDirectory"];
+let modelFile: ModelDownload["modelFile"];
+let modelPresence: ModelDownload["modelPresence"];
+let modelDownloadState: ModelDownload["modelDownloadState"];
+let observeModelDownload: ModelDownload["observeModelDownload"];
+let observeModelPresence: ModelDownload["observeModelPresence"];
+let startModelDownload: ModelDownload["startModelDownload"];
+let pauseModelDownload: ModelDownload["pauseModelDownload"];
+let resumeModelDownload: ModelDownload["resumeModelDownload"];
+let reattachModelDownloads: ModelDownload["reattachModelDownloads"];
+let deleteModel: ModelDownload["deleteModel"];
 
 // Two seams, each faked inside its jest.mock factory (class bindings outside
 // a factory are not initialized when the factory runs):
@@ -51,6 +55,7 @@ type FakeTask = {
   started: boolean;
   stopped: boolean;
   resumed: boolean;
+  paused: boolean;
   /** The library's task.state, as getExistingDownloadTasks reports it. */
   state: "PENDING" | "DOWNLOADING" | "PAUSED" | "DONE" | "FAILED" | "STOPPED";
   bytesDownloaded: number;
@@ -65,6 +70,20 @@ let mockLastTask: FakeTask | null = null;
 // When set, the next createDownloadTask call throws — the native module
 // failing to initialize, as a stale dev client would.
 let mockCreateTaskShouldThrow: Error | null = null;
+// When set, the next task.start() call throws AFTER the task exists — a
+// bridge method missing on a stale dev client, the case that poisons the
+// one-download guard if the start's catch does not retire the task.
+let mockStartShouldThrow: Error | null = null;
+// When set, the next task.resume() call rejects — the transfer refusing to
+// continue (a session invalidated under us, an expired resume token).
+let mockResumeShouldReject: Error | null = null;
+// When set, the next task.resume() stays pending until the test calls the
+// `reject` it receives — the "rejection lands late" race (after whatever
+// ran meanwhile, e.g. the transfer's own settlement).
+let mockResumeDeferred: { reject?: (error: Error) => void } | null = null;
+// When set, the next task.pause() call rejects — the pause failing to take
+// while the transfer keeps running.
+let mockPauseShouldReject: Error | null = null;
 let mockMakeTask: (
   id: string,
   state?: FakeTask["state"],
@@ -80,6 +99,7 @@ jest.mock("@kesha-antonov/react-native-background-downloader", () => {
     started = false;
     stopped = false;
     resumed = false;
+    paused = false;
     state: FakeTask["state"] = "PENDING";
     bytesDownloaded = 0;
     constructor(
@@ -104,14 +124,40 @@ jest.mock("@kesha-antonov/react-native-background-downloader", () => {
       return this;
     }
     start(): void {
+      if (mockStartShouldThrow) {
+        const error = mockStartShouldThrow;
+        mockStartShouldThrow = null;
+        throw error;
+      }
       this.started = true;
     }
     stop(): Promise<void> {
       this.stopped = true;
       return Promise.resolve();
     }
+    pause(): Promise<void> {
+      this.paused = true;
+      if (mockPauseShouldReject) {
+        const error = mockPauseShouldReject;
+        mockPauseShouldReject = null;
+        return Promise.reject(error);
+      }
+      return Promise.resolve();
+    }
     resume(): Promise<void> {
       this.resumed = true;
+      if (mockResumeShouldReject) {
+        const error = mockResumeShouldReject;
+        mockResumeShouldReject = null;
+        return Promise.reject(error);
+      }
+      if (mockResumeDeferred) {
+        const deferred = mockResumeDeferred;
+        mockResumeDeferred = null;
+        return new Promise((_resolve, reject) => {
+          deferred.reject = reject;
+        });
+      }
       return Promise.resolve();
     }
   }
@@ -162,6 +208,9 @@ jest.mock("expo-file-system", () => {
     get uri(): string {
       return `file:///docs/whole_models/<model>/${this.name}`;
     }
+    create(): void {
+      mockFiles.set(this.name, { exists: true, size: 0, deleted: false });
+    }
     move(destination: MockFile): Promise<void> {
       const partial = mockFiles.get(this.name);
       if (partial) {
@@ -206,12 +255,18 @@ const stage = (name: string, size: number) => {
   mockFiles.set(name, { exists: true, size, deleted: false });
 };
 
+// The marker file a user pause leaves beside the `.part` (`userPausedMarker`
+// in the module): staged like any other file when a test needs a pause the
+// app itself wrote before the process died.
+const userPausedMarkerName = (id: "gemma-4-e2b" | "gemma-4-e4b") =>
+  `${id}.user-paused`;
+
 // Delivers one model's download to a completed state through the fake task:
 // fires progress ticks, lands the `.part`, and awaits the done handler —
 // which is async in the store (the rename awaits the bridge) — so the
 // assertions after it see the settled state.
-const deliver = async (task: FakeTask, id: "gemma-4-e2b" | "gemma-4-e4b") => {
-  const model = onDeviceModel(id);
+const deliver = async (task: FakeTask) => {
+  const model = onDeviceModel(task.id as "gemma-4-e2b" | "gemma-4-e4b");
   task.handlers.progress?.({
     bytesDownloaded: Math.floor(model.sizeBytes / 2),
   });
@@ -225,6 +280,10 @@ beforeEach(() => {
   mockDirectories.clear();
   mockLastTask = null;
   mockCreateTaskShouldThrow = null;
+  mockStartShouldThrow = null;
+  mockResumeShouldReject = null;
+  mockResumeDeferred = null;
+  mockPauseShouldReject = null;
   mockExistingTasks.length = 0;
   jest.resetModules();
   const fresh = jest.requireActual(
@@ -235,7 +294,10 @@ beforeEach(() => {
   modelPresence = fresh.modelPresence;
   modelDownloadState = fresh.modelDownloadState;
   observeModelDownload = fresh.observeModelDownload;
+  observeModelPresence = fresh.observeModelPresence;
   startModelDownload = fresh.startModelDownload;
+  pauseModelDownload = fresh.pauseModelDownload;
+  resumeModelDownload = fresh.resumeModelDownload;
   reattachModelDownloads = fresh.reattachModelDownloads;
   deleteModel = fresh.deleteModel;
 });
@@ -325,8 +387,7 @@ describe("startModelDownload", () => {
   it("moves the completed .part into place and settles to idle", async () => {
     const model = onDeviceModel("gemma-4-e2b");
     startModelDownload("gemma-4-e2b");
-
-    await deliver(mockLastTask!, "gemma-4-e2b");
+    await deliver(mockLastTask!);
 
     expect(mockFiles.get(model.fileName)?.exists).toBe(true);
     expect(modelPresence("gemma-4-e2b").status).toBe("present");
@@ -338,7 +399,7 @@ describe("startModelDownload", () => {
 
   it("signals the OS the job is over once the file lands", async () => {
     startModelDownload("gemma-4-e2b");
-    await deliver(mockLastTask!, "gemma-4-e2b");
+    await deliver(mockLastTask!);
 
     expect(mockCompleteHandler).toHaveBeenCalledWith("gemma-4-e2b");
   });
@@ -362,7 +423,7 @@ describe("startModelDownload", () => {
     stage(`${model.fileName}.part`, 7); // stale partial
 
     startModelDownload("gemma-4-e2b");
-    await deliver(mockLastTask!, "gemma-4-e2b");
+    await deliver(mockLastTask!);
 
     expect(mockLastTask?.started).toBe(true);
     expect(modelPresence("gemma-4-e2b").status).toBe("present");
@@ -393,12 +454,52 @@ describe("startModelDownload", () => {
     expect(mockLastTask?.started).toBe(true);
   });
 
-  it("starts fresh once the previous download settled", async () => {
-    startModelDownload("gemma-4-e2b");
-    await deliver(mockLastTask!, "gemma-4-e2b");
+  it("releases the one-download guard when start() throws after the task exists", () => {
+    // A bridge method missing on a stale dev client throws from
+    // task.start() AFTER the task was booked into activeTasks: without a
+    // retirement in the catch, every later start would no-op at the guard
+    // with no done/error event ever coming to clear it — Download dead
+    // until an app restart.
+    mockStartShouldThrow = new Error("download is not a function");
 
+    expect(() => startModelDownload("gemma-4-e2b")).not.toThrow();
+    expect(modelDownloadState("gemma-4-e2b").phase).toBe("failed");
+
+    // The poisoned entry is gone: a retry creates and starts a fresh task.
     startModelDownload("gemma-4-e2b");
-    expect(mockLastTask).not.toBeNull();
+    expect(mockLastTask?.started).toBe(true);
+  });
+
+  it("keeps a settled model instead of re-downloading it", async () => {
+    startModelDownload("gemma-4-e2b");
+    await deliver(mockLastTask!);
+    const settled = mockLastTask;
+
+    // A start landing on a present model — a stale render's Download button,
+    // a programmatic caller — keeps the verified weights: the gigabytes on
+    // disk are the point of the download.
+    startModelDownload("gemma-4-e2b");
+
+    expect(mockLastTask).toBe(settled);
+    expect(modelDownloadState("gemma-4-e2b")).toEqual({
+      phase: "idle",
+      fraction: 1,
+    });
+  });
+
+  it("starts fresh once the previous download settled and the model was removed", async () => {
+    startModelDownload("gemma-4-e2b");
+    await deliver(mockLastTask!);
+    const settled = mockLastTask;
+    // The fake's directory delete does not cascade into its file map, so the
+    // file entry goes by hand — the point is that the model is gone.
+    mockFiles.delete(onDeviceModel("gemma-4-e2b").fileName);
+    deleteModel("gemma-4-e2b");
+
+    // The settle released the one-download guard: with the model gone, a
+    // new start creates and starts its own task.
+    startModelDownload("gemma-4-e2b");
+    expect(mockLastTask).not.toBe(settled);
     expect(mockLastTask?.started).toBe(true);
   });
 
@@ -435,6 +536,211 @@ describe("startModelDownload", () => {
 
     mockLastTask?.handlers.progress?.({ bytesDownloaded: model.sizeBytes / 2 });
     expect(seen).toEqual([0, 0.25]);
+  });
+});
+
+describe("pauseModelDownload and resumeModelDownload", () => {
+  it("pauses a downloading task at its current fraction", () => {
+    const model = onDeviceModel("gemma-4-e2b");
+    startModelDownload("gemma-4-e2b");
+    mockLastTask?.handlers.progress?.({
+      bytesDownloaded: Math.floor(model.sizeBytes / 3),
+    });
+
+    pauseModelDownload("gemma-4-e2b");
+
+    expect(mockLastTask?.paused).toBe(true);
+    expect(modelDownloadState("gemma-4-e2b")).toEqual({
+      phase: "paused",
+      fraction: 1 / 3,
+    });
+  });
+
+  it("ignores progress events that raced the pause", () => {
+    const model = onDeviceModel("gemma-4-e2b");
+    startModelDownload("gemma-4-e2b");
+    mockLastTask?.handlers.progress?.({
+      bytesDownloaded: Math.floor(model.sizeBytes / 3),
+    });
+    pauseModelDownload("gemma-4-e2b");
+
+    // In flight when the pause landed — the bridge delivers in order, but
+    // the pause call itself is async: the row must not flip straight back.
+    mockLastTask?.handlers.progress?.({
+      bytesDownloaded: Math.floor(model.sizeBytes / 2),
+    });
+
+    expect(modelDownloadState("gemma-4-e2b").phase).toBe("paused");
+    expect(modelDownloadState("gemma-4-e2b").fraction).toBeCloseTo(1 / 3);
+  });
+
+  it("is a no-op unless the download is running — a double-press", () => {
+    pauseModelDownload("gemma-4-e2b");
+    expect(modelDownloadState("gemma-4-e2b").phase).toBe("idle");
+
+    startModelDownload("gemma-4-e2b");
+    pauseModelDownload("gemma-4-e2b");
+    pauseModelDownload("gemma-4-e2b");
+    expect(modelDownloadState("gemma-4-e2b").phase).toBe("paused");
+  });
+
+  it("resumes a paused task, continuing at its fraction", () => {
+    const model = onDeviceModel("gemma-4-e2b");
+    startModelDownload("gemma-4-e2b");
+    mockLastTask?.handlers.progress?.({
+      bytesDownloaded: Math.floor(model.sizeBytes / 3),
+    });
+    pauseModelDownload("gemma-4-e2b");
+
+    resumeModelDownload("gemma-4-e2b");
+
+    expect(mockLastTask?.resumed).toBe(true);
+    expect(modelDownloadState("gemma-4-e2b")).toEqual({
+      phase: "downloading",
+      fraction: 1 / 3,
+    });
+  });
+
+  it("is a no-op unless the download is paused — a double-press", () => {
+    startModelDownload("gemma-4-e2b");
+
+    resumeModelDownload("gemma-4-e2b");
+
+    expect(modelDownloadState("gemma-4-e2b").phase).toBe("downloading");
+    expect(mockLastTask?.resumed).toBe(false);
+  });
+
+  it("lands in failed when the transfer refuses to resume", async () => {
+    startModelDownload("gemma-4-e2b");
+    pauseModelDownload("gemma-4-e2b");
+    mockResumeShouldReject = new Error("session gone");
+
+    resumeModelDownload("gemma-4-e2b");
+    await Promise.resolve(); // let the rejection land
+
+    expect(modelDownloadState("gemma-4-e2b").phase).toBe("failed");
+    // The refused task is retired: a fresh start runs instead of resuming
+    // the dead one forever.
+    startModelDownload("gemma-4-e2b");
+    expect(mockLastTask?.started).toBe(true);
+  });
+
+  it("still settles a download that finished as the pause landed", async () => {
+    const model = onDeviceModel("gemma-4-e2b");
+    startModelDownload("gemma-4-e2b");
+    pauseModelDownload("gemma-4-e2b");
+
+    // The pause raced the transfer's own completion: the done event is the
+    // truth, and the row must land on present — not sit "paused" beside a
+    // finished file.
+    stage(`${model.fileName}.part`, model.sizeBytes);
+    await mockLastTask?.handlers.done?.();
+
+    expect(modelPresence("gemma-4-e2b").status).toBe("present");
+    expect(modelDownloadState("gemma-4-e2b")).toEqual({
+      phase: "idle",
+      fraction: 1,
+    });
+    // The settle also cleared the pause's marker: the transfer finished,
+    // so a later relaunch must not reattach it as at-rest.
+    expect(mockFiles.get(userPausedMarkerName("gemma-4-e2b"))?.exists).toBe(
+      false,
+    );
+  });
+
+  it("un-pauses the row when the pause fails to take, so progress flows again", async () => {
+    const model = onDeviceModel("gemma-4-e2b");
+    startModelDownload("gemma-4-e2b");
+    mockLastTask?.handlers.progress?.({
+      bytesDownloaded: Math.floor(model.sizeBytes / 3),
+    });
+
+    // The library marks the task PAUSED before the native call and never
+    // rolls back: a rejected pause with the transfer still running would
+    // otherwise freeze the row at "Paused" — reportProgress ignores
+    // progress while paused — for the rest of the transfer.
+    mockPauseShouldReject = new Error("pause refused");
+    pauseModelDownload("gemma-4-e2b");
+    await Promise.resolve(); // let the rejection land
+
+    expect(modelDownloadState("gemma-4-e2b").phase).toBe("downloading");
+
+    // And the ticks flow again.
+    mockLastTask?.handlers.progress?.({
+      bytesDownloaded: Math.floor(model.sizeBytes / 2),
+    });
+    expect(modelDownloadState("gemma-4-e2b").phase).toBe("downloading");
+    expect(modelDownloadState("gemma-4-e2b").fraction).toBeCloseTo(0.5);
+  });
+
+  it("does not publish failed over a settle that landed while the resume was in flight", async () => {
+    const model = onDeviceModel("gemma-4-e2b");
+    startModelDownload("gemma-4-e2b");
+    pauseModelDownload("gemma-4-e2b");
+
+    // The user taps Resume; the transfer was already finishing. The done
+    // event settles the model (moves the file, publishes idle), and only
+    // THEN the resume rejects — the task is over. The rejection must not
+    // flip the row to "failed" for a model that is present on disk.
+    mockResumeDeferred = {};
+    const lateRejection = mockResumeDeferred;
+    resumeModelDownload("gemma-4-e2b");
+    stage(`${model.fileName}.part`, model.sizeBytes);
+    await mockLastTask?.handlers.done?.();
+    expect(modelPresence("gemma-4-e2b").status).toBe("present");
+    expect(modelDownloadState("gemma-4-e2b")).toEqual({
+      phase: "idle",
+      fraction: 1,
+    });
+
+    lateRejection.reject?.(new Error("task already completed"));
+    await Promise.resolve(); // let the rejection land
+
+    expect(modelDownloadState("gemma-4-e2b").phase).toBe("idle");
+  });
+});
+
+describe("observeModelPresence", () => {
+  it("reports the current presence on subscribe and after a settle", async () => {
+    const seen: string[] = [];
+    observeModelPresence("gemma-4-e2b", (presence) =>
+      seen.push(presence.status),
+    );
+
+    // The immediate current-state delivery: nothing is on disk yet.
+    expect(seen).toEqual(["absent"]);
+
+    startModelDownload("gemma-4-e2b");
+    await deliver(mockLastTask!);
+
+    // The settle's rename is the change that ends in present — and the
+    // listener saw it without anyone re-reading by hand.
+    expect(seen).toEqual(["absent", "present"]);
+  });
+
+  it("notifies after a delete, and lets the subscriber go", () => {
+    const model = onDeviceModel("gemma-4-e2b");
+    mockDirectories.add(model.id);
+    stage(model.fileName, model.sizeBytes);
+    const seen: string[] = [];
+    const unsubscribe = observeModelPresence("gemma-4-e2b", (presence) =>
+      seen.push(presence.status),
+    );
+
+    // The fake's file map is separate from its directory set, so the file
+    // entry goes by hand — a real Directory.delete removes everything under
+    // it, and the delete's re-read lands on absent.
+    mockFiles.delete(model.fileName);
+    deleteModel("gemma-4-e2b");
+    expect(seen).toEqual(["present", "absent"]);
+
+    unsubscribe();
+    stage(model.fileName, model.sizeBytes);
+    mockFiles.delete(model.fileName);
+    deleteModel("gemma-4-e2b");
+
+    // Unsubscribed: the second delete's re-read never arrives.
+    expect(seen).toEqual(["present", "absent"]);
   });
 });
 
@@ -491,6 +797,10 @@ describe("reattachModelDownloads", () => {
       phase: "idle",
       fraction: 1,
     });
+    // And the session-wide handshake ran: a background relaunch woken to
+    // deliver the completion is released the moment the JS work finishes,
+    // not held to the OS's own timeout.
+    expect(mockCompleteHandler).toHaveBeenCalledWith("gemma-4-e2b");
   });
 
   it("fails a dead-completed download whose bytes do not check out", async () => {
@@ -505,19 +815,51 @@ describe("reattachModelDownloads", () => {
     expect(modelPresence("gemma-4-e2b").status).toBe("absent");
   });
 
-  it("resumes a paused task instead of parking it", async () => {
+  it("keeps a task the user paused AT REST across a relaunch", async () => {
     const model = onDeviceModel("gemma-4-e2b");
     mockDirectories.add("whole_models");
     stage(`${model.fileName}.part`, Math.floor(model.sizeBytes / 4));
+    // The pause was the user's: the app wrote its marker before dying.
+    stage(userPausedMarkerName("gemma-4-e2b"), 0);
     mockExistingTasks.push(
       mockMakeTask!("gemma-4-e2b", "PAUSED", Math.floor(model.sizeBytes / 4)),
     );
 
     await reattachModelDownloads();
 
-    // A paused task never reports another event on its own — the resume is
-    // what makes the adoption live rather than a bar frozen at its starting
-    // fraction.
+    // Auto-resuming here would undo the user's pause the moment they next
+    // opened the app. The row offers Resume.
+    expect(mockExistingTasks[0]?.resumed).toBe(false);
+    expect(modelDownloadState("gemma-4-e2b").phase).toBe("paused");
+    expect(modelDownloadState("gemma-4-e2b").fraction).toBeCloseTo(0.25);
+
+    // And resuming later continues the SAME task, from the bytes it
+    // reports, clearing the marker so a later relaunch does not park the
+    // download again.
+    resumeModelDownload("gemma-4-e2b");
+    expect(mockExistingTasks[0]?.resumed).toBe(true);
+    expect(modelDownloadState("gemma-4-e2b").phase).toBe("downloading");
+    expect(mockFiles.get(userPausedMarkerName("gemma-4-e2b"))?.exists).toBe(
+      false,
+    );
+  });
+
+  it("resumes a transfer the system killed mid-flight, not one the user paused", async () => {
+    const model = onDeviceModel("gemma-4-e2b");
+    mockDirectories.add("whole_models");
+    stage(`${model.fileName}.part`, Math.floor(model.sizeBytes / 4));
+    // NO user-pause marker: the library parked a force-stopped transfer as
+    // PAUSED (Android's restoreRecoverableDownloads) precisely so
+    // resumeTask can continue it.
+    mockExistingTasks.push(
+      mockMakeTask!("gemma-4-e2b", "PAUSED", Math.floor(model.sizeBytes / 4)),
+    );
+
+    await reattachModelDownloads();
+
+    // The download the user started is supposed to survive the process
+    // dying — parking it here would stall a multi-GB transfer until the
+    // user happened to open Settings.
     expect(mockExistingTasks[0]?.resumed).toBe(true);
     expect(modelDownloadState("gemma-4-e2b").phase).toBe("downloading");
     expect(modelDownloadState("gemma-4-e2b").fraction).toBeCloseTo(0.25);
@@ -570,6 +912,60 @@ describe("reattachModelDownloads", () => {
     // The queued start found the adopted task and became a no-op.
     expect(mockLastTask).toBeNull();
     expect(modelDownloadState("gemma-4-e2b").phase).toBe("downloading");
+  });
+
+  it("keeps the model a DONE reattach settled when a queued start re-enters", async () => {
+    // The DONE variant of the launch-time hole: the reattach settles a
+    // transfer that finished while the app was dead — moving the file
+    // into place, publishing idle — and only then does the Download tap
+    // that queued behind it re-enter. The re-entry must recognize the
+    // settle instead of deleting the freshly installed weights and
+    // re-downloading every byte.
+    const model = onDeviceModel("gemma-4-e2b");
+    mockDirectories.add("whole_models");
+    stage(`${model.fileName}.part`, model.sizeBytes);
+    mockExistingTasks.push(
+      mockMakeTask!("gemma-4-e2b", "DONE", model.sizeBytes),
+    );
+
+    const reattaching = reattachModelDownloads();
+    startModelDownload("gemma-4-e2b"); // queues behind the reattach
+    expect(mockLastTask).toBeNull();
+
+    await reattaching;
+
+    // The settle stands: no second task was created and the file is
+    // present — not "Downloading… 0%" over a deleted model.
+    expect(mockLastTask).toBeNull();
+    expect(modelPresence("gemma-4-e2b").status).toBe("present");
+    expect(modelDownloadState("gemma-4-e2b")).toEqual({
+      phase: "idle",
+      fraction: 1,
+    });
+  });
+
+  it("joins an in-flight reattach instead of racing it with a second run", async () => {
+    // A remount behind the error boundary can call reattachModelDownloads
+    // while the first run's bridge query is still in flight: the second
+    // call must JOIN it, not start a parallel adoption — two runs would
+    // double-settle a DONE task (the second finds the `.part` already
+    // moved and publishes "failed" over the first's idle).
+    const model = onDeviceModel("gemma-4-e2b");
+    mockDirectories.add("whole_models");
+    stage(`${model.fileName}.part`, model.sizeBytes);
+    mockExistingTasks.push(
+      mockMakeTask!("gemma-4-e2b", "DONE", model.sizeBytes),
+    );
+
+    const first = reattachModelDownloads();
+    const second = reattachModelDownloads();
+    await Promise.all([first, second]);
+
+    expect(modelPresence("gemma-4-e2b").status).toBe("present");
+    expect(modelDownloadState("gemma-4-e2b")).toEqual({
+      phase: "idle",
+      fraction: 1,
+    });
   });
 
   it("runs a queued start fresh when the reattach found nothing for it", async () => {

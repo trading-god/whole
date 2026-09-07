@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
+import { Alert } from "react-native";
 
 import { SettingsScreen } from "@/features/settings/SettingsScreen";
 import { deferred } from "@/test-support/deferred";
@@ -14,7 +15,15 @@ const mockVerify = jest.fn<() => Promise<void>>();
 const mockSelectOnDeviceModel = jest.fn<(id?: unknown) => Promise<void>>();
 const mockModelPresence = jest.fn<(id?: unknown) => { status: string }>();
 const mockStartModelDownload = jest.fn<(id: unknown) => void>();
+const mockPauseModelDownload = jest.fn<(id: unknown) => void>();
+const mockResumeModelDownload = jest.fn<(id: unknown) => void>();
 const mockDeleteModel = jest.fn<(id: unknown) => void>();
+// The deletion confirm rides the native alert (the multi-account replace
+// confirm's pattern). A spy, not a module mock: the component holds the
+// `Alert` OBJECT and resolves `.alert` at call time, so replacing the method
+// reaches it — and jest-expo's own Alert mock is a no-op, so calling through
+// is safe in the suite.
+const mockAlertAlert = jest.spyOn(Alert, "alert");
 // The module-level download store, faked at the same seam the component
 // consumes: observeModelDownload reports the current snapshot immediately
 // and on every publish, per model id — which is what re-mounting rows ride.
@@ -22,18 +31,28 @@ const mockDeleteModel = jest.fn<(id: unknown) => void>();
 // snapshot through useSyncExternalStore, which compares by identity — a
 // fresh literal per call would loop it forever.
 const IDLE_SNAPSHOT = { phase: "idle", fraction: 0 } as const;
-const mockSnapshots = new Map<string, { phase: string; fraction: number }>();
+type FakeSnapshot = { phase: string; fraction: number };
+const mockSnapshots = new Map<string, FakeSnapshot>();
 const mockDownloadListeners = new Map<
   string,
-  Set<(snapshot: { phase: string; fraction: number }) => void>
+  Set<(snapshot: FakeSnapshot) => void>
 >();
-const emitDownloadSnapshot = (
-  id: string,
-  snapshot: { phase: string; fraction: number },
-) => {
+const emitDownloadSnapshot = (id: string, snapshot: FakeSnapshot) => {
   mockSnapshots.set(id, snapshot);
   for (const listener of mockDownloadListeners.get(id) ?? []) {
     listener(snapshot);
+  }
+};
+// The presence side of the same fake: observeModelPresence reports the
+// current disk state immediately and after each change the row cannot see on
+// its own (a settle's rename, a delete), which is what re-mounting rows ride.
+const mockPresenceListeners = new Map<
+  string,
+  Set<(presence: { status: string }) => void>
+>();
+const emitModelPresence = (id: string, presence: { status: string }) => {
+  for (const listener of mockPresenceListeners.get(id) ?? []) {
+    listener(presence);
   }
 };
 const mockLoadEngine = jest.fn<() => Promise<"on-device" | "remote">>();
@@ -61,7 +80,7 @@ jest.mock("@/features/on-device-model/model-download", () => ({
     mockSnapshots.get(id as string) ?? IDLE_SNAPSHOT,
   observeModelDownload: (
     id: unknown,
-    listener: (snapshot: { phase: string; fraction: number }) => void,
+    listener: (snapshot: FakeSnapshot) => void,
   ) => {
     const key = id as string;
     const set = mockDownloadListeners.get(key) ?? new Set();
@@ -75,9 +94,26 @@ jest.mock("@/features/on-device-model/model-download", () => ({
       }
     };
   },
+  observeModelPresence: (
+    id: unknown,
+    listener: (presence: { status: string }) => void,
+  ) => {
+    const key = id as string;
+    const set = mockPresenceListeners.get(key) ?? new Set();
+    set.add(listener);
+    mockPresenceListeners.set(key, set);
+    listener(mockModelPresence(id));
+    return () => {
+      set.delete(listener);
+      if (set.size === 0) {
+        mockPresenceListeners.delete(key);
+      }
+    };
+  },
   startModelDownload: (id: unknown) => mockStartModelDownload(id),
+  pauseModelDownload: (id: unknown) => mockPauseModelDownload(id),
+  resumeModelDownload: (id: unknown) => mockResumeModelDownload(id),
   deleteModel: (id: unknown) => mockDeleteModel(id),
-  reattachModelDownloads: () => Promise.resolve(),
 }));
 
 const mockLoadOnDeviceModelId =
@@ -132,7 +168,7 @@ const showRemoteEngine = async () => {
   mockLoadEngine.mockResolvedValue("remote");
   await renderWithProviders(<SettingsScreen />);
   await waitFor(() => {
-    expect(screen.getByText("Base URL")).toBeOnTheScreen();
+    expect(screen.getByText("Base URL *")).toBeOnTheScreen();
   });
 };
 
@@ -163,6 +199,7 @@ beforeEach(() => {
   });
   mockSnapshots.clear();
   mockDownloadListeners.clear();
+  mockPresenceListeners.clear();
   mockLoadEngine.mockResolvedValue("on-device");
   mockSaveEngine.mockResolvedValue(undefined);
   mockLoadRemoteConfig.mockResolvedValue(null);
@@ -305,8 +342,8 @@ describe("SettingsScreen", () => {
     });
 
     it("runs a download to completion and lands on the downloaded state", async () => {
-      // Initial render: absent. After the download settles, the presence
-      // re-read reports present.
+      // Initial render: absent. After the download settles, the disk holds
+      // the model and the presence subscription carries that to the row.
       mockModelPresence.mockReturnValue({ status: "absent" });
       mockStartModelDownload.mockImplementation((id) => {
         emitDownloadSnapshot(id as string, {
@@ -315,6 +352,7 @@ describe("SettingsScreen", () => {
         });
         mockModelPresence.mockReturnValue({ status: "present" });
         emitDownloadSnapshot(id as string, { phase: "idle", fraction: 0 });
+        emitModelPresence(id as string, { status: "present" });
       });
 
       await renderWithProviders(<SettingsScreen />);
@@ -327,6 +365,29 @@ describe("SettingsScreen", () => {
         expect(mockStartModelDownload).toHaveBeenCalledTimes(1);
         expect(screen.getByText("Test")).toBeTruthy();
       });
+    });
+
+    it("pauses a running download and offers to resume it", async () => {
+      mockModelPresence.mockReturnValue({ status: "absent" });
+
+      await renderWithProviders(<SettingsScreen />);
+      await fireEvent.press(screen.getAllByText("Download")[0]);
+      await waitFor(() => {
+        expect(screen.getByText("Downloading…")).toBeOnTheScreen();
+      });
+
+      await press("Pause download");
+
+      expect(mockPauseModelDownload).toHaveBeenCalledWith("gemma-4-e2b");
+      // The store is what flips the phase; the test drives it as the real
+      // store would, then asserts the row answers with the resume offer.
+      await act(() => {
+        emitDownloadSnapshot("gemma-4-e2b", { phase: "paused", fraction: 0.4 });
+      });
+
+      expect(screen.getByText("Paused")).toBeOnTheScreen();
+      await press("Resume download");
+      expect(mockResumeModelDownload).toHaveBeenCalledWith("gemma-4-e2b");
     });
 
     it("reports a failed download with the retry copy", async () => {
@@ -379,7 +440,7 @@ describe("SettingsScreen", () => {
       });
     });
 
-    it("deletes the model when asked", async () => {
+    it("asks for confirmation before deleting the model", async () => {
       mockModelPresence.mockReturnValueOnce({ status: "present" });
       mockModelPresence.mockReturnValueOnce({ status: "absent" });
 
@@ -387,6 +448,19 @@ describe("SettingsScreen", () => {
 
       await press("Delete model");
 
+      // The press only ASKS: the weights are the gigabytes the user
+      // deliberately downloaded, so nothing is deleted yet.
+      expect(mockDeleteModel).not.toHaveBeenCalled();
+      const buttons = mockAlertAlert.mock.calls.at(-1)?.[2];
+      expect(buttons?.[0]).toMatchObject({ style: "cancel", text: "Cancel" });
+
+      // Confirming runs the deletion the row always performed — under the
+      // trigger's own label, so the action keeps one name through the flow.
+      const confirm = buttons?.find((button) => button.style === "destructive");
+      expect(confirm?.text).toBe("Delete model");
+      await act(() => {
+        confirm?.onPress?.();
+      });
       expect(mockDeleteModel).toHaveBeenCalledTimes(1);
     });
 
@@ -398,7 +472,7 @@ describe("SettingsScreen", () => {
       expect(mockSaveEngine).toHaveBeenCalledWith("remote");
       // The remote form appears inside the now-selected card.
       await waitFor(() => {
-        expect(screen.getByText("Base URL")).toBeTruthy();
+        expect(screen.getByText("Base URL *")).toBeTruthy();
       });
     });
 
@@ -426,9 +500,10 @@ describe("SettingsScreen", () => {
       const save = screen.getByText("Save service").parent;
       expect(save?.props.accessibilityState).toEqual({ disabled: true });
 
+      // No scheme: ambiguous to paste, so the draft stays unsavable.
       await fireEvent.changeText(
         screen.getByLabelText("Base URL"),
-        "http://api.example.com/v1",
+        "api.example.com/v1",
       );
       await fireEvent.changeText(
         screen.getByLabelText("Model"),
@@ -445,6 +520,34 @@ describe("SettingsScreen", () => {
           screen.getByText("Save service").parent?.props.accessibilityState,
         ).toEqual({ disabled: false });
       });
+    });
+
+    it("accepts a local http:// endpoint", async () => {
+      await showRemoteEngine();
+
+      await fireEvent.changeText(
+        screen.getByLabelText("Base URL"),
+        "http://localhost:11434/v1",
+      );
+      await fireEvent.changeText(screen.getByLabelText("Model"), "llama3.2");
+
+      // Cleartext is for LOCAL services (Ollama and friends); the schema
+      // allows it and ATS is what keeps public endpoints on https.
+      await waitFor(() => {
+        expect(
+          screen.getByText("Save service").parent?.props.accessibilityState,
+        ).toEqual({ disabled: false });
+      });
+    });
+
+    it("marks the two required fields, leaving the optional key unmarked", async () => {
+      await showRemoteEngine();
+
+      expect(screen.getByLabelText("Base URL, Required")).toBeOnTheScreen();
+      expect(screen.getByLabelText("Model, Required")).toBeOnTheScreen();
+      // The API key is optional — a local endpoint needs none.
+      expect(screen.queryByLabelText("API key, Required")).toBeNull();
+      expect(screen.getByLabelText("API key")).toBeOnTheScreen();
     });
 
     it("configures the API key as a secure credential field", async () => {

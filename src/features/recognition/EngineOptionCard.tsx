@@ -17,10 +17,10 @@ type EngineOptionCardProps = {
   testID?: string;
 };
 
-// The radio mark's outer footprint. The dot that fills a selected mark is
-// exactly half of it. Exported so the config stack below a radio row can
-// align under the mark that explains it (RADIO_ROW_INDENT).
-export const RADIO_MARK_SIZE = 24;
+// The radio mark's outer footprint; the dot that fills a selected mark is
+// exactly half of it. RADIO_ROW_INDENT derives from it below, so resizing
+// the mark carries the indent with it.
+const RADIO_MARK_SIZE = 24;
 const RADIO_DOT_SIZE = RADIO_MARK_SIZE / 2;
 
 // How far a radio row's trailing content (progress, cost lines, actions)
@@ -37,11 +37,61 @@ export const RADIO_ROW_INDENT = RADIO_MARK_SIZE + SPACING.md;
  * Shared by the engine cards and the model rows inside them. Both levels keep
  * the same legible geometry while their surrounding layout conveys hierarchy.
  */
-export function RadioMark({ selected }: { selected: boolean }) {
+function RadioMark({ selected }: { selected: boolean }) {
   return (
     <View style={styles.radioRing}>
       {selected ? <View style={styles.radioDot} /> : null}
     </View>
+  );
+}
+
+/**
+ * One selectable radio row: the mark, a two-line copy column (title over
+ * hint), the whole row the target. The shared head of BOTH radio levels —
+ * the engine cards and the model rows inside them — so the a11y wiring
+ * (role, label, hint, selected state), the press feedback, and the row
+ * rhythm live in exactly one place. `compact` is the hierarchy the inner
+ * level renders at: a touch less breathing room, one size down in type.
+ */
+export function RadioOptionRow({
+  selected,
+  label,
+  hint,
+  onSelect,
+  compact = false,
+  testID,
+}: {
+  selected: boolean;
+  label: string;
+  hint: string;
+  onSelect: () => void;
+  compact?: boolean;
+  testID?: string;
+}) {
+  return (
+    <Pressable
+      accessibilityLabel={label}
+      accessibilityHint={hint}
+      accessibilityRole="radio"
+      accessibilityState={{ selected }}
+      onPress={onSelect}
+      style={({ pressed }) => [
+        styles.optionRow,
+        compact && styles.optionRowCompact,
+        pressed && styles.pressed,
+      ]}
+      testID={testID}
+    >
+      <RadioMark selected={selected} />
+      <View style={styles.optionCopy}>
+        <Text
+          style={[styles.optionTitle, compact && styles.optionTitleCompact]}
+        >
+          {label}
+        </Text>
+        <Text style={styles.optionHint}>{hint}</Text>
+      </View>
+    </Pressable>
   );
 }
 
@@ -62,21 +112,13 @@ export function EngineOptionCard({
 }: EngineOptionCardProps) {
   return (
     <View style={[styles.card, selected && styles.cardSelected]}>
-      <Pressable
-        accessibilityLabel={title}
-        accessibilityHint={hint}
-        accessibilityRole="radio"
-        accessibilityState={{ selected }}
-        onPress={onSelect}
-        style={({ pressed }) => [styles.optionRow, pressed && styles.pressed]}
+      <RadioOptionRow
+        selected={selected}
+        label={title}
+        hint={hint}
+        onSelect={onSelect}
         testID={testID}
-      >
-        <RadioMark selected={selected} />
-        <View style={styles.optionCopy}>
-          <Text style={styles.optionTitle}>{title}</Text>
-          <Text style={styles.optionHint}>{hint}</Text>
-        </View>
-      </Pressable>
+      />
       {selected && children ? (
         <View style={styles.configArea}>{children}</View>
       ) : null}
@@ -101,6 +143,10 @@ const styles = StyleSheet.create({
     gap: SPACING.md,
     minHeight: MIN_INTERACTIVE_SIZE,
     paddingVertical: SPACING.md,
+  },
+  // The inner radio level's hierarchy: one notch less breathing room.
+  optionRowCompact: {
+    paddingVertical: SPACING.sm,
   },
   pressed: {
     opacity: PRESSED_OPACITY_SURFACE,
@@ -129,6 +175,9 @@ const styles = StyleSheet.create({
     color: COLORS.ink,
     fontSize: FONT_SIZE.body,
     fontWeight: FONT_WEIGHT.semibold,
+  },
+  optionTitleCompact: {
+    fontSize: FONT_SIZE.bodySm,
   },
   optionHint: {
     ...screenStyles.metaLine,

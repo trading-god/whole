@@ -9,6 +9,7 @@ export type ButtonVariant =
   | "secondary"
   | "danger"
   | "dangerGhost"
+  | "dangerOutline"
   | "outline"
   | "ghost"
   | "onDark";
@@ -36,6 +37,10 @@ type ButtonVariantStyle = {
  *   delete), and its white-on-red carries the same weight as `primary`.
  * - `dangerGhost` — the low-emphasis destructive twin: danger ink without a
  *   filled red block competing with the primary action beside it.
+ * - `dangerOutline` — the destructive twin of `outline`: the same hairline
+ *   shape, danger ink on the border and label, for a destructive action that
+ *   must sit in a row of outline buttons and still be told apart from them
+ *   at a glance (delete-model beside test, remove-service beside save).
  * - `outline` — transparent over a hairline; pressing floats a pale fill in,
  *   which is what makes the press legible without a colour to dim.
  * - `ghost` — text only; pressing floats a soft brand-tinted fill in.
@@ -63,6 +68,13 @@ export const BUTTON_VARIANTS: Record<ButtonVariant, ButtonVariantStyle> = {
   },
   dangerGhost: {
     backgroundColor: "transparent",
+    labelColor: COLORS.danger,
+    iconColor: COLORS.danger,
+    pressedStyle: { backgroundColor: COLORS.surfaceMuted },
+  },
+  dangerOutline: {
+    backgroundColor: "transparent",
+    border: { color: COLORS.danger, width: 1 },
     labelColor: COLORS.danger,
     iconColor: COLORS.danger,
     pressedStyle: { backgroundColor: COLORS.surfaceMuted },

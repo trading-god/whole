@@ -12,9 +12,13 @@ import { RADIUS } from "@/theme/sizes";
 // one motion this flow needs, and the one that answers the user's "is it
 // moving?" glance.
 
+// Clamps to 0..1 — the one range both the bar's width and the readout's
+// percentages render.
+const clampFraction = (fraction: number) => Math.max(0, Math.min(1, fraction));
+
 /** 0..1 → 0..100, the one percentage derivation the bar and readout share. */
 const fractionToPercent = (fraction: number) =>
-  Math.round(Math.max(0, Math.min(1, fraction)) * 100);
+  Math.round(clampFraction(fraction) * 100);
 
 type DownloadProgressBarProps = {
   /** 0..1 across the whole file. */
@@ -24,7 +28,7 @@ type DownloadProgressBarProps = {
 export function DownloadProgressBar({ fraction }: DownloadProgressBarProps) {
   const { t } = useTranslation();
   const percentage = fractionToPercent(fraction);
-  const clamped = Math.max(0, Math.min(1, fraction));
+  const clamped = clampFraction(fraction);
   const [width] = useState(() => new Animated.Value(clamped));
   useEffect(() => {
     Animated.timing(width, {

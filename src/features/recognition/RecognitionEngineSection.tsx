@@ -5,10 +5,9 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, StyleSheet, Text, View } from "react-native";
 
 import { Button } from "@/components/Button";
 import { ButtonGroup } from "@/components/ButtonGroup";
@@ -22,9 +21,10 @@ import {
 } from "@/features/on-device-model/on-device-catalog";
 import {
   deleteModel,
-  modelDownloadState,
   modelPresence,
-  observeModelDownload,
+  observeModelPresence,
+  pauseModelDownload,
+  resumeModelDownload,
   startModelDownload,
 } from "@/features/on-device-model/model-download";
 import {
@@ -35,13 +35,14 @@ import {
   loadOnDeviceModelId,
   saveOnDeviceModelId,
 } from "@/features/on-device-model/on-device-model-store";
+import { useModelDownload } from "@/features/on-device-model/use-model-download";
 import {
   DownloadByteReadout,
   DownloadProgressBar,
 } from "@/features/recognition/DownloadProgressBar";
 import {
   EngineOptionCard,
-  RadioMark,
+  RadioOptionRow,
   RADIO_ROW_INDENT,
 } from "@/features/recognition/EngineOptionCard";
 import {
@@ -61,13 +62,11 @@ import {
 import { createRemoteRunModel } from "@/features/recognition/remote-runner";
 import { useStoredPreference } from "@/storage/use-stored-preference";
 import { COLORS } from "@/theme/colors";
-import { PRESSED_OPACITY_SURFACE } from "@/theme/interaction";
-import { MIN_INTERACTIVE_SIZE } from "@/theme/layout";
 import { screenStyles } from "@/theme/screen-styles";
 import { TONES } from "@/theme/tones";
 import { RADIUS } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
-import { FONT_SIZE, FONT_WEIGHT } from "@/theme/typography";
+import { FONT_WEIGHT } from "@/theme/typography";
 
 // The recognition engine section: which model answers the annotation turn.
 //
@@ -173,22 +172,6 @@ function OnDeviceEngineConfig() {
   );
 }
 
-/**
- * One model's download snapshot, as React state. `useSyncExternalStore` over
- * the download store — the store's `observe`/`modelDownloadState` pair IS a
- * subscribe/getSnapshot, and the hook form means every consumer gets the
- * tear-safe read instead of re-implementing the subscription (and its
- * render→effect gap) per call site.
- */
-function useModelDownload(id: OnDeviceModelId) {
-  const subscribe = useCallback(
-    (listener: () => void) => observeModelDownload(id, listener),
-    [id],
-  );
-  const getSnapshot = useCallback(() => modelDownloadState(id), [id]);
-  return useSyncExternalStore(subscribe, getSnapshot);
-}
-
 // One model row: radio select + the cost lines + the download lifecycle.
 //
 // Costs are stated in the row itself — storage (the download's bill) and
@@ -211,89 +194,106 @@ function ModelRow({
   });
 
   const [presence, setPresence] = useState(() => modelPresence(model.id));
-  const refreshPresence = useCallback(() => {
-    setPresence(modelPresence(model.id));
-  }, [model.id]);
+  // Presence is disk state the download module owns: the subscription — not
+  // a download-phase proxy, not a manual refresh after the delete — is what
+  // keeps this copy current. It fires on subscribe and after every change of
+  // the model's file (a settle's rename, a delete), so the row is a pure
+  // view over the same disk the recognition gate reads. The reducer keeps
+  // the old object on an unchanged status, so the subscribe-time callback
+  // costs no re-render.
+  useEffect(
+    () =>
+      observeModelPresence(model.id, (next) => {
+        setPresence((prev) => (prev.status === next.status ? prev : next));
+      }),
+    [model.id],
+  );
 
   // The download status lives OUTSIDE the row (model-download): the transfer
   // must survive this component unmounting — the user leaving the settings
   // screen, the engine card collapsing, or the app backgrounding — and a row
   // re-mounting mid-download must find it still running, progress included.
   // Unmounting cancels only the SUBSCRIPTION, never the download.
-  // `useSyncExternalStore` (the app's existing pattern for module-scope
-  // stores, see `useResponsiveLayout`): the store's publish-then-notify
-  // contract is exactly a subscribe/getSnapshot pair, and it closes the
-  // render→effect gap a hand-rolled subscription leaves — a settling publish
-  // landing in that gap would otherwise be the LAST event, leaving the row
-  // "Downloading…" forever.
   const download = useModelDownload(model.id);
-  // The presence re-read rides a second subscription beside the hook above,
-  // deliberately: it listens for the phase TRANSITION (an event — the disk
-  // changed), not the value. A settle's phase flip can be folded away by
-  // React's event batching (a start publishes "downloading" and a fast
-  // settle publishes "idle" within one tick), so a re-read derived from the
-  // rendered value would never run — the subscription's listener fires per
-  // publish, transition or not.
-  useEffect(
-    () =>
-      observeModelDownload(model.id, (snapshot) => {
-        // A settled download changed the disk: re-read presence so the row
-        // swaps its progress bar for the Test/Delete actions (or the retry
-        // offer) the moment the transfer lands.
-        if (snapshot.phase !== "downloading") {
-          refreshPresence();
-        }
-      }),
-    [model.id, refreshPresence],
-  );
 
+  // Deleting is confirm-then-do: the weights are the gigabytes the user
+  // deliberately downloaded, and a stray tap on a small ghost button must not
+  // undo that. The native alert pattern the multi-account replace confirm
+  // already uses (cancel + destructive); the destructive button keeps the
+  // trigger's own label so the action has one name through the flow. The
+  // confirm handler only deletes — refreshing the row is the presence
+  // subscription's job.
   const deleteWeights = useCallback(() => {
-    deleteModel(model.id);
-    refreshPresence();
-  }, [model.id, refreshPresence]);
-
-  // One row head, three bodies. The radio head is identical across the
-  // download lifecycle (absent → downloading → present), so it renders once
-  // here and only the body below it switches — an accessibility or layout
-  // change to the head then can't drift between states.
-  let body: ReactNode;
-  if (download.phase === "downloading") {
-    body = (
-      <View style={styles.progressStack}>
-        <DownloadProgressBar fraction={download.fraction} />
-        <DownloadByteReadout
-          fraction={download.fraction}
-          totalBytes={model.sizeBytes}
-        />
-        <Text style={styles.hint}>{t("settings.engine.downloading")}</Text>
-      </View>
+    Alert.alert(
+      t("settings.engine.deleteModelTitle", { model: model.name }),
+      t("settings.engine.deleteModelMessage", {
+        size: formatBytes(model.sizeBytes),
+      }),
+      [
+        { style: "cancel", text: t("common.cancel") },
+        {
+          style: "destructive",
+          text: t("settings.engine.deleteModel"),
+          onPress: () => {
+            deleteModel(model.id);
+          },
+        },
+      ],
     );
-  } else if (presence.status === "present") {
+  }, [model.id, model.name, model.sizeBytes, t]);
+
+  // One row head, three bodies. The head — radio, name, and the cost line —
+  // is the shared `RadioOptionRow` at its compact size, identical across the
+  // download lifecycle (absent → downloading → present), so it renders once
+  // here and only the body below it switches; an accessibility or layout
+  // change to the head then can't drift between states. The body indents to
+  // sit under the copy column (RADIO_ROW_INDENT) — progress, actions, and
+  // error copy share that one left edge.
+  let body: ReactNode;
+  if (download.phase === "downloading" || download.phase === "paused") {
+    // One control, two labels: pause and resume are the same toggle, its
+    // colour stating which way it pushes — brand to continue the download,
+    // neutral to hold it. The paused row KEEPS its bar: the bytes on disk
+    // are real, and hiding them would read as "restarts from zero" — the
+    // opposite of the truth.
+    const paused = download.phase === "paused";
     body = (
       <>
-        <Text style={styles.costLine}>{modelCosts}</Text>
-        {selected ? (
-          <ButtonGroup style={styles.modelActions}>
-            <ModelTestButton />
-            <Button
-              size="sm"
-              variant="dangerGhost"
-              fullWidth={false}
-              onPress={deleteWeights}
-            >
-              {t("settings.engine.deleteModel")}
-            </Button>
-          </ButtonGroup>
-        ) : null}
+        <View style={styles.progressStack}>
+          <DownloadProgressBar fraction={download.fraction} />
+          <DownloadByteReadout
+            fraction={download.fraction}
+            totalBytes={model.sizeBytes}
+          />
+          <Text style={styles.hint}>
+            {paused
+              ? t("settings.engine.paused")
+              : t("settings.engine.downloading")}
+          </Text>
+        </View>
+        <Button
+          size="xs"
+          variant={paused ? "primary" : "secondary"}
+          onPress={
+            paused
+              ? () => resumeModelDownload(model.id)
+              : () => pauseModelDownload(model.id)
+          }
+        >
+          {paused
+            ? t("settings.engine.resumeDownload")
+            : t("settings.engine.pauseDownload")}
+        </Button>
       </>
     );
+  } else if (presence.status === "present") {
+    body = selected ? <ModelActionsRow onDelete={deleteWeights} /> : null;
   } else {
-    // Absent or partial: the download offer, with what it costs stated up
-    // front. A failed pass re-offers the download, which starts over from the
-    // beginning — the downloader replaces whatever partial file is there.
+    // Absent or partial: the download offer. A failed pass re-offers the
+    // download, which starts over from the beginning — the downloader
+    // replaces whatever partial file is there.
     body = (
       <>
-        <Text style={styles.costLine}>{modelCosts}</Text>
         {download.phase === "failed" ? (
           <Text style={styles.downloadError}>
             {t("settings.engine.downloadFailed")}
@@ -304,7 +304,7 @@ function ModelRow({
             model: model.name,
             size: formatBytes(model.sizeBytes),
           })}
-          size="sm"
+          size="xs"
           variant="primary"
           onPress={() => startModelDownload(model.id)}
         >
@@ -318,52 +318,25 @@ function ModelRow({
   // lifecycle regardless of selection.
   return (
     <View style={styles.modelRow} testID={`model-row-${model.id}`}>
-      <PressableRow
+      <RadioOptionRow
+        compact
         selected={selected}
-        onSelect={onSelect}
-        name={model.name}
+        label={model.name}
         hint={modelCosts}
+        onSelect={onSelect}
       />
-      {body}
+      <View style={styles.modelBody}>{body}</View>
     </View>
   );
 }
 
-// The select-able head of a model row: the radio and the name. Pressing it
-// selects the model; the download lifecycle below it is NOT part of the
-// target, so tapping Download does not also flip the selection.
-function PressableRow({
-  selected,
-  onSelect,
-  name,
-  hint,
-}: {
-  selected: boolean;
-  onSelect: () => void;
-  name: string;
-  hint: string;
-}) {
-  return (
-    <Pressable
-      accessibilityLabel={name}
-      accessibilityHint={hint}
-      accessibilityRole="radio"
-      accessibilityState={{ selected }}
-      onPress={onSelect}
-      style={({ pressed }) => [
-        styles.modelSelectRow,
-        pressed && styles.pressed,
-      ]}
-    >
-      <RadioMark selected={selected} />
-      <Text style={styles.modelName}>{name}</Text>
-    </Pressable>
-  );
-}
-
-// The Test button for the SELECTED model — the context it probes is the
-// one bound to the current model id, so only the selected row offers it.
-function ModelTestButton() {
+// The present model's actions: Test and Delete as two equal-width blocks
+// sharing the row (ButtonGroup), the verdict on its own line below — the
+// failure copy runs two lines, and inline between the buttons it would rag
+// the row. The pair's colour IS the semantics: brand for the action you
+// want (verify the model works), the danger hairline for the one you
+// shouldn't want (AGENTS.md: red is reserved for destructive).
+function ModelActionsRow({ onDelete }: { onDelete: () => void }) {
   const { t } = useTranslation();
   const [testPhase, setTestPhase] = useState<TestPhase>("idle");
   const isMountedRef = useRef(true);
@@ -373,6 +346,9 @@ function ModelTestButton() {
       isMountedRef.current = false;
     };
   }, []);
+  // The Test button probes the SELECTED model's context — only a present,
+  // selected row renders this component, so the verdict answers the row the
+  // user is looking at.
   const test = useCallback(() => {
     setTestPhase("testing");
     void verifyOnDeviceModel()
@@ -389,23 +365,27 @@ function ModelTestButton() {
   }, []);
 
   return (
-    <View style={styles.testRow}>
-      <Button
-        size="sm"
-        variant="ghost"
-        fullWidth={false}
-        loading={testPhase === "testing"}
-        onPress={test}
-      >
-        {t("settings.onDevice.test")}
-      </Button>
+    <>
+      <ButtonGroup>
+        <Button
+          size="xs"
+          variant="primary"
+          loading={testPhase === "testing"}
+          onPress={test}
+        >
+          {t("settings.onDevice.test")}
+        </Button>
+        <Button size="xs" variant="dangerOutline" onPress={onDelete}>
+          {t("settings.engine.deleteModel")}
+        </Button>
+      </ButtonGroup>
       {testPhase === "passed" ? (
         // Announced, not just shown: the verdict is the answer to the tap, and
         // the deleted SettingsScreen verdict carried the live region — losing
         // it in the move silenced the outcome for screen-reader users.
         <Text
           accessibilityLiveRegion="polite"
-          style={[styles.verdict, styles.verdictPassed]}
+          style={[styles.verdictLine, styles.verdictPassed]}
         >
           {t("settings.onDevice.testPassed")}
         </Text>
@@ -413,12 +393,12 @@ function ModelTestButton() {
       {testPhase === "failed" ? (
         <Text
           accessibilityLiveRegion="polite"
-          style={[styles.verdict, styles.verdictFailed]}
+          style={[styles.verdictLine, styles.verdictFailed]}
         >
           {t("settings.onDevice.testFailure")}
         </Text>
       ) : null}
-    </View>
+    </>
   );
 }
 
@@ -548,8 +528,13 @@ function RemoteEngineConfig() {
 
   return (
     <View style={styles.configStack}>
+      {/* `required` on the two fields the schema demands (FieldShell paints
+          the red mark); the API key is deliberately optional — a local
+          endpoint (Ollama, LM Studio) needs none, and the hint already says
+          where the key lives once given. */}
       <FormField
         label={t("settings.engine.baseUrl")}
+        required
         hint={t("settings.engine.baseUrlHint")}
         placeholder="https://"
         value={baseUrl}
@@ -558,6 +543,7 @@ function RemoteEngineConfig() {
       />
       <FormField
         label={t("settings.engine.model")}
+        required
         hint={t("settings.engine.modelHint")}
         placeholder="deepseek-chat"
         value={model}
@@ -575,40 +561,39 @@ function RemoteEngineConfig() {
         textContentType="password"
         secureTextEntry
       />
-      <View style={styles.testRow}>
-        <Button
-          size="sm"
-          variant={draftValid ? "primary" : "secondary"}
-          fullWidth={false}
-          disabled={!draftValid || isClearing}
-          loading={isTesting}
-          onPress={test}
+      {/* The form's one action: the section's brand block, grey while the
+          draft cannot save — the button itself is the affordance that says
+          what is still missing. */}
+      <Button
+        size="xs"
+        variant="primary"
+        disabled={!draftValid || isClearing}
+        loading={isTesting}
+        onPress={test}
+      >
+        {t("settings.engine.save")}
+      </Button>
+      {testPhase === "passed" ? (
+        <Text
+          accessibilityLiveRegion="polite"
+          style={[styles.verdictLine, styles.verdictPassed]}
         >
-          {t("settings.engine.save")}
-        </Button>
-        {testPhase === "passed" ? (
-          <Text
-            accessibilityLiveRegion="polite"
-            style={[styles.verdict, styles.verdictPassed]}
-          >
-            {t("settings.engine.testPassed")}
-          </Text>
-        ) : null}
-        {testPhase === "failed" ? (
-          <Text
-            accessibilityLiveRegion="polite"
-            style={[styles.verdict, styles.verdictFailed]}
-          >
-            {t("settings.engine.testFailure")}
-          </Text>
-        ) : null}
-      </View>
+          {t("settings.engine.testPassed")}
+        </Text>
+      ) : null}
+      {testPhase === "failed" ? (
+        <Text
+          accessibilityLiveRegion="polite"
+          style={[styles.verdictLine, styles.verdictFailed]}
+        >
+          {t("settings.engine.testFailure")}
+        </Text>
+      ) : null}
       {hasSavedConfig ? (
-        <View style={styles.clearStack}>
+        <>
           <Button
-            size="sm"
-            variant="dangerGhost"
-            fullWidth={false}
+            size="xs"
+            variant="dangerOutline"
             disabled={isTesting}
             loading={isClearing}
             onPress={clear}
@@ -623,7 +608,7 @@ function RemoteEngineConfig() {
               {t("settings.engine.clearFailed")}
             </Text>
           ) : null}
-        </View>
+        </>
       ) : null}
       <View
         style={[
@@ -652,27 +637,15 @@ const styles = StyleSheet.create({
   modelRow: {
     gap: SPACING.sm,
   },
-  progressStack: {
+  // The row's trailing content sits under the copy column (see
+  // RADIO_ROW_INDENT): progress, actions, and error copy share that one
+  // left edge, and the gap keeps the rhythm the row itself uses.
+  modelBody: {
     gap: SPACING.sm,
     paddingLeft: RADIO_ROW_INDENT,
   },
-  modelSelectRow: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: SPACING.md,
-    minHeight: MIN_INTERACTIVE_SIZE,
-  },
-  pressed: {
-    opacity: PRESSED_OPACITY_SURFACE,
-  },
-  modelName: {
-    color: COLORS.ink,
-    fontSize: FONT_SIZE.bodySm,
-    fontWeight: FONT_WEIGHT.semibold,
-  },
-  costLine: {
-    ...screenStyles.metaLine,
-    paddingLeft: RADIO_ROW_INDENT,
+  progressStack: {
+    gap: SPACING.sm,
   },
   hint: {
     ...screenStyles.metaLine,
@@ -680,19 +653,10 @@ const styles = StyleSheet.create({
   downloadError: {
     ...screenStyles.metaLineDanger,
   },
-  modelActions: {
-    paddingLeft: RADIO_ROW_INDENT,
-  },
-  testRow: {
-    alignItems: "center",
-    flexDirection: "row",
-    flex: 1,
-    flexWrap: "wrap",
-    gap: SPACING.md,
-  },
-  verdict: {
+  // A test verdict on its own line under the action row: the failure copy
+  // runs two lines, so it gets the full row width rather than sharing one.
+  verdictLine: {
     ...screenStyles.metaLine,
-    flex: 1,
   },
   verdictPassed: {
     color: COLORS.brand,
@@ -714,12 +678,9 @@ const styles = StyleSheet.create({
     // tone (see the style prop), so the ink matches the card it sits in.
     ...screenStyles.metaLine,
   },
-  clearStack: {
-    alignItems: "flex-start",
-  },
   // Anchored to the Remove action it explains, in the shared error-hint voice.
+  // The stack's gap does the spacing; no margin of its own.
   clearFailedHint: {
     ...screenStyles.metaLineDanger,
-    marginTop: SPACING.xs,
   },
 });
