@@ -11,6 +11,11 @@ import { RADIUS } from "@/theme/sizes";
 // so the bar moves smoothly between progress ticks instead of stepping — the
 // one motion this flow needs, and the one that answers the user's "is it
 // moving?" glance.
+
+/** 0..1 → 0..100, the one percentage derivation the bar and readout share. */
+const fractionToPercent = (fraction: number) =>
+  Math.round(Math.max(0, Math.min(1, fraction)) * 100);
+
 type DownloadProgressBarProps = {
   /** 0..1 across the whole file. */
   fraction: number;
@@ -18,8 +23,8 @@ type DownloadProgressBarProps = {
 
 export function DownloadProgressBar({ fraction }: DownloadProgressBarProps) {
   const { t } = useTranslation();
+  const percentage = fractionToPercent(fraction);
   const clamped = Math.max(0, Math.min(1, fraction));
-  const percentage = Math.round(clamped * 100);
   const [width] = useState(() => new Animated.Value(clamped));
   useEffect(() => {
     Animated.timing(width, {
@@ -61,12 +66,10 @@ export function DownloadProgressBar({ fraction }: DownloadProgressBarProps) {
 /** The readout row under the bar: bytes at the left, percentage at the right. */
 export function DownloadByteReadout({
   fraction,
-  sizeBytes,
   totalBytes,
 }: {
   /** 0..1 across the whole file. */
   fraction: number;
-  sizeBytes: number;
   totalBytes: number;
 }) {
   const { t } = useTranslation();
@@ -74,13 +77,13 @@ export function DownloadByteReadout({
     <View style={styles.readoutRow}>
       <Text style={styles.readout}>
         {t("settings.engine.partialDownload", {
-          size: formatBytes(sizeBytes),
+          size: formatBytes(Math.round(fraction * totalBytes)),
           total: formatBytes(totalBytes),
         })}
       </Text>
       <Text style={styles.readout}>
         {t("settings.engine.downloadPercentValue", {
-          percentage: Math.round(Math.max(0, Math.min(1, fraction)) * 100),
+          percentage: fractionToPercent(fraction),
         })}
       </Text>
     </View>

@@ -39,8 +39,21 @@ const mockDirectories = new Set<string>();
 
 type FakeHandlers = {
   progress?: (info: { bytesDownloaded: number }) => void;
-  done?: () => void;
+  // The real handler is async (the settlement awaits the rename), so a test
+  // firing it awaits the settled state.
+  done?: () => void | Promise<void>;
   error?: (info: { error: string; errorCode: number }) => void;
+};
+
+type FakeTask = {
+  id: string;
+  handlers: FakeHandlers;
+  started: boolean;
+  stopped: boolean;
+  resumed: boolean;
+  /** The library's task.state, as getExistingDownloadTasks reports it. */
+  state: "PENDING" | "DOWNLOADING" | "PAUSED" | "DONE" | "FAILED" | "STOPPED";
+  bytesDownloaded: number;
 };
 
 // The task the last createDownloadTask call returned, so a test can fire its
@@ -48,14 +61,16 @@ type FakeHandlers = {
 // factory (jest hoists factory calls above class declarations — an out-of-scope
 // class is a TDZ error even with the mock- prefix allowance); this helper is
 // how tests construct the same fake for `getExistingDownloadTasks`.
-let mockLastTask: ReturnType<typeof mockMakeTask> | null = null;
-let mockMakeTask: (id: string) => {
-  id: string;
-  handlers: FakeHandlers;
-  started: boolean;
-  stopped: boolean;
-};
-const mockExistingTasks: ReturnType<typeof mockMakeTask>[] = [];
+let mockLastTask: FakeTask | null = null;
+// When set, the next createDownloadTask call throws — the native module
+// failing to initialize, as a stale dev client would.
+let mockCreateTaskShouldThrow: Error | null = null;
+let mockMakeTask: (
+  id: string,
+  state?: FakeTask["state"],
+  bytesDownloaded?: number,
+) => FakeTask;
+const mockExistingTasks: FakeTask[] = [];
 const mockCompleteHandler = jest.fn<(jobId: string) => Promise<void>>();
 
 jest.mock("@kesha-antonov/react-native-background-downloader", () => {
@@ -64,8 +79,17 @@ jest.mock("@kesha-antonov/react-native-background-downloader", () => {
     readonly handlers: FakeHandlers = {};
     started = false;
     stopped = false;
-    constructor(id: string) {
+    resumed = false;
+    state: FakeTask["state"] = "PENDING";
+    bytesDownloaded = 0;
+    constructor(
+      id: string,
+      state: FakeTask["state"] = "PENDING",
+      bytesDownloaded = 0,
+    ) {
       this.id = id;
+      this.state = state;
+      this.bytesDownloaded = bytesDownloaded;
     }
     progress(handler: FakeHandlers["progress"]): this {
       this.handlers.progress = handler;
@@ -86,10 +110,20 @@ jest.mock("@kesha-antonov/react-native-background-downloader", () => {
       this.stopped = true;
       return Promise.resolve();
     }
+    resume(): Promise<void> {
+      this.resumed = true;
+      return Promise.resolve();
+    }
   }
-  mockMakeTask = (id: string) => new MockDownloadTask(id);
+  mockMakeTask = (id, state, bytesDownloaded) =>
+    new MockDownloadTask(id, state, bytesDownloaded);
   return {
     createDownloadTask: ({ id }: { id: string }) => {
+      if (mockCreateTaskShouldThrow) {
+        const error = mockCreateTaskShouldThrow;
+        mockCreateTaskShouldThrow = null;
+        throw error;
+      }
       const task = new MockDownloadTask(id);
       mockLastTask = task;
       return task;
@@ -173,16 +207,10 @@ const stage = (name: string, size: number) => {
 };
 
 // Delivers one model's download to a completed state through the fake task:
-// fires progress ticks, lands the `.part`, and invokes the done handler —
-// what the native layer would do for a successful transfer.
-// Delivers one model's download to a completed state through the fake task:
 // fires progress ticks, lands the `.part`, and awaits the done handler —
 // which is async in the store (the rename awaits the bridge) — so the
 // assertions after it see the settled state.
-const deliver = async (
-  task: ReturnType<typeof mockMakeTask>,
-  id: "gemma-4-e2b" | "gemma-4-e4b",
-) => {
+const deliver = async (task: FakeTask, id: "gemma-4-e2b" | "gemma-4-e4b") => {
   const model = onDeviceModel(id);
   task.handlers.progress?.({
     bytesDownloaded: Math.floor(model.sizeBytes / 2),
@@ -196,6 +224,7 @@ beforeEach(() => {
   mockFiles.clear();
   mockDirectories.clear();
   mockLastTask = null;
+  mockCreateTaskShouldThrow = null;
   mockExistingTasks.length = 0;
   jest.resetModules();
   const fresh = jest.requireActual(
@@ -349,6 +378,21 @@ describe("startModelDownload", () => {
     expect(first?.started).toBe(true);
   });
 
+  it("lands in failed when the task cannot even be created", () => {
+    // The native module not linked (a stale dev client) throws inside
+    // createDownloadTask: the store must settle to failed — re-offering
+    // Download — rather than sticking at "downloading" with nothing that
+    // will ever tick.
+    mockCreateTaskShouldThrow = new Error("not linked");
+
+    expect(() => startModelDownload("gemma-4-e2b")).not.toThrow();
+    expect(modelDownloadState("gemma-4-e2b").phase).toBe("failed");
+
+    // And the failed start does not poison the next one.
+    startModelDownload("gemma-4-e2b");
+    expect(mockLastTask?.started).toBe(true);
+  });
+
   it("starts fresh once the previous download settled", async () => {
     startModelDownload("gemma-4-e2b");
     await deliver(mockLastTask!, "gemma-4-e2b");
@@ -399,12 +443,22 @@ describe("reattachModelDownloads", () => {
     const model = onDeviceModel("gemma-4-e2b");
     // A leftover from a previous process: the native session was still
     // transferring, half the file is already in the `.part`.
+    mockDirectories.add("whole_models");
     stage(`${model.fileName}.part`, Math.floor(model.sizeBytes / 2));
-    mockExistingTasks.push(mockMakeTask!("gemma-4-e2b"));
+    mockExistingTasks.push(
+      mockMakeTask!(
+        "gemma-4-e2b",
+        "DOWNLOADING",
+        Math.floor(model.sizeBytes / 2),
+      ),
+    );
 
     await reattachModelDownloads();
 
     expect(modelDownloadState("gemma-4-e2b").phase).toBe("downloading");
+    // The first rendered fraction is the transfer's own byte count, not a
+    // restart to 0 — the row must not claim progress was lost.
+    expect(modelDownloadState("gemma-4-e2b").fraction).toBeCloseTo(0.5);
     // The reattached task was NOT restarted — it is the same task, with new
     // handlers wired, and the download can continue from where it is.
     expect(mockExistingTasks[0]?.started).toBe(false);
@@ -413,24 +467,81 @@ describe("reattachModelDownloads", () => {
       bytesDownloaded: model.sizeBytes,
     });
     stage(`${model.fileName}.part`, model.sizeBytes);
-    mockExistingTasks[0]?.handlers.done?.();
+    await mockExistingTasks[0]?.handlers.done?.();
 
     expect(modelPresence("gemma-4-e2b").status).toBe("present");
   });
 
-  it("ignores ids the catalog no longer knows", async () => {
-    mockExistingTasks.push(mockMakeTask!("gemma-3-nano"));
+  it("settles a download that completed while the app was dead", async () => {
+    const model = onDeviceModel("gemma-4-e2b");
+    // The transfer finished with no JS attached: the bytes are all in the
+    // `.part`, and no event will ever fire for the task again.
+    mockDirectories.add("whole_models");
+    stage(`${model.fileName}.part`, model.sizeBytes);
+    mockExistingTasks.push(
+      mockMakeTask!("gemma-4-e2b", "DONE", model.sizeBytes),
+    );
 
     await reattachModelDownloads();
 
+    // The settlement ran on the spot: the file moved into place and the
+    // store settled — not a phantom "downloading" that can never finish.
+    expect(modelPresence("gemma-4-e2b").status).toBe("present");
+    expect(modelDownloadState("gemma-4-e2b")).toEqual({
+      phase: "idle",
+      fraction: 1,
+    });
+  });
+
+  it("fails a dead-completed download whose bytes do not check out", async () => {
+    const model = onDeviceModel("gemma-4-e2b");
+    mockDirectories.add("whole_models");
+    stage(`${model.fileName}.part`, 999);
+    mockExistingTasks.push(mockMakeTask!("gemma-4-e2b", "DONE", 999));
+
+    await reattachModelDownloads();
+
+    expect(modelDownloadState("gemma-4-e2b").phase).toBe("failed");
+    expect(modelPresence("gemma-4-e2b").status).toBe("absent");
+  });
+
+  it("resumes a paused task instead of parking it", async () => {
+    const model = onDeviceModel("gemma-4-e2b");
+    mockDirectories.add("whole_models");
+    stage(`${model.fileName}.part`, Math.floor(model.sizeBytes / 4));
+    mockExistingTasks.push(
+      mockMakeTask!("gemma-4-e2b", "PAUSED", Math.floor(model.sizeBytes / 4)),
+    );
+
+    await reattachModelDownloads();
+
+    // A paused task never reports another event on its own — the resume is
+    // what makes the adoption live rather than a bar frozen at its starting
+    // fraction.
+    expect(mockExistingTasks[0]?.resumed).toBe(true);
+    expect(modelDownloadState("gemma-4-e2b").phase).toBe("downloading");
+    expect(modelDownloadState("gemma-4-e2b").fraction).toBeCloseTo(0.25);
+  });
+
+  it("stops ids the catalog no longer knows", async () => {
+    mockDirectories.add("whole_models");
+    const orphan = mockMakeTask!("gemma-3-nano", "DOWNLOADING", 0);
+    mockExistingTasks.push(orphan);
+
+    await reattachModelDownloads();
+
+    // An orphaned native transfer is stopped, not silently left running for
+    // a model this build can neither install nor clean up after.
+    expect(orphan.stopped).toBe(true);
     expect(modelDownloadState("gemma-4-e2b").phase).toBe("idle");
-    expect(mockExistingTasks[0]?.handlers.done).toBeUndefined();
+    expect(orphan.handlers.done).toBeUndefined();
   });
 
   it("does not double-adopt a model that is already active", async () => {
+    mockDirectories.add("whole_models");
     startModelDownload("gemma-4-e2b");
     const live = mockLastTask;
-    mockExistingTasks.push(mockMakeTask!("gemma-4-e2b"));
+    mockExistingTasks.push(mockMakeTask!("gemma-4-e2b", "DOWNLOADING", 0));
 
     await reattachModelDownloads();
 
@@ -438,6 +549,46 @@ describe("reattachModelDownloads", () => {
     // rewire them.
     expect(live?.handlers.done).toBeDefined();
     expect(mockExistingTasks[0]?.handlers.done).toBeUndefined();
+  });
+
+  it("defers a start that lands mid-reattach instead of racing it", async () => {
+    // The launch-time hole: the user reaches Settings before the reattach's
+    // bridge call resolves and taps Download. A start that ran immediately
+    // would delete the OS-resident task's `.part` and start a second native
+    // task beside it — the queue behind the reattach closes the window.
+    mockDirectories.add("whole_models");
+    mockExistingTasks.push(mockMakeTask!("gemma-4-e2b", "DOWNLOADING", 0));
+    const reattaching = reattachModelDownloads();
+
+    startModelDownload("gemma-4-e2b");
+    // Still mid-reattach: no task was created, and the OS-resident one was
+    // not disturbed.
+    expect(mockLastTask).toBeNull();
+
+    await reattaching;
+
+    // The queued start found the adopted task and became a no-op.
+    expect(mockLastTask).toBeNull();
+    expect(modelDownloadState("gemma-4-e2b").phase).toBe("downloading");
+  });
+
+  it("runs a queued start fresh when the reattach found nothing for it", async () => {
+    mockDirectories.add("whole_models");
+    const reattaching = reattachModelDownloads();
+    startModelDownload("gemma-4-e2b");
+    await reattaching;
+
+    // No OS-resident task for the model: the queued start ran after the
+    // reattach settled, creating its own.
+    expect(mockLastTask?.started).toBe(true);
+  });
+
+  it("skips the native query entirely when no download ever ran", async () => {
+    // The models root does not exist: nothing was ever downloaded, so there
+    // is no OS-side session to consult — the launch-path cost is skipped.
+    reattachModelDownloads();
+    await Promise.resolve();
+    expect(modelDownloadState("gemma-4-e2b").phase).toBe("idle");
   });
 });
 
@@ -454,6 +605,29 @@ describe("deleteModel", () => {
     expect(task.stopped).toBe(true);
     expect(mockDirectories.has(model.id)).toBe(false);
     expect(modelDownloadState("gemma-4-e2b").phase).toBe("idle");
+  });
+
+  it("ignores the stopped task's late events instead of re-publishing", () => {
+    // iOS delivers the cancel as `downloadFailed`, and a done event may
+    // already be queued when the user taps Delete: a retired task's tail
+    // must not flip the row back to a progress bar or a spurious failure.
+    const model = onDeviceModel("gemma-4-e2b");
+    startModelDownload("gemma-4-e2b");
+    const task = mockLastTask!;
+
+    deleteModel("gemma-4-e2b");
+    task.handlers.error?.({ error: "cancelled", errorCode: -999 });
+    task.handlers.progress?.({ bytesDownloaded: model.sizeBytes });
+    stage(`${model.fileName}.part`, model.sizeBytes);
+    void task.handlers.done?.();
+
+    expect(modelDownloadState("gemma-4-e2b")).toEqual({
+      phase: "idle",
+      fraction: 0,
+    });
+    // And the directory the delete removed was not resurrected by a late
+    // settlement re-creating it for the move.
+    expect(mockFiles.get(model.fileName)?.exists).toBeFalsy();
   });
 
   it("is a no-op when the model is absent", () => {

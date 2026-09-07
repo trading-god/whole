@@ -18,6 +18,10 @@ const mockDeleteModel = jest.fn<(id: unknown) => void>();
 // The module-level download store, faked at the same seam the component
 // consumes: observeModelDownload reports the current snapshot immediately
 // and on every publish, per model id — which is what re-mounting rows ride.
+// The IDLE default is a shared, STABLE object: the component reads the
+// snapshot through useSyncExternalStore, which compares by identity — a
+// fresh literal per call would loop it forever.
+const IDLE_SNAPSHOT = { phase: "idle", fraction: 0 } as const;
 const mockSnapshots = new Map<string, { phase: string; fraction: number }>();
 const mockDownloadListeners = new Map<
   string,
@@ -54,7 +58,7 @@ jest.mock("@/features/on-device-model/model-context", () => ({
 jest.mock("@/features/on-device-model/model-download", () => ({
   modelPresence: (id: unknown) => mockModelPresence(id),
   modelDownloadState: (id: unknown) =>
-    mockSnapshots.get(id as string) ?? { phase: "idle", fraction: 0 },
+    mockSnapshots.get(id as string) ?? IDLE_SNAPSHOT,
   observeModelDownload: (
     id: unknown,
     listener: (snapshot: { phase: string; fraction: number }) => void,
@@ -63,7 +67,7 @@ jest.mock("@/features/on-device-model/model-download", () => ({
     const set = mockDownloadListeners.get(key) ?? new Set();
     set.add(listener);
     mockDownloadListeners.set(key, set);
-    listener(mockSnapshots.get(key) ?? { phase: "idle", fraction: 0 });
+    listener(mockSnapshots.get(key) ?? IDLE_SNAPSHOT);
     return () => {
       set.delete(listener);
       if (set.size === 0) {

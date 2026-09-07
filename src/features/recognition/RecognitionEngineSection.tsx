@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, StyleSheet, Text, View } from "react-native";
@@ -172,6 +173,22 @@ function OnDeviceEngineConfig() {
   );
 }
 
+/**
+ * One model's download snapshot, as React state. `useSyncExternalStore` over
+ * the download store — the store's `observe`/`modelDownloadState` pair IS a
+ * subscribe/getSnapshot, and the hook form means every consumer gets the
+ * tear-safe read instead of re-implementing the subscription (and its
+ * render→effect gap) per call site.
+ */
+function useModelDownload(id: OnDeviceModelId) {
+  const subscribe = useCallback(
+    (listener: () => void) => observeModelDownload(id, listener),
+    [id],
+  );
+  const getSnapshot = useCallback(() => modelDownloadState(id), [id]);
+  return useSyncExternalStore(subscribe, getSnapshot);
+}
+
 // One model row: radio select + the cost lines + the download lifecycle.
 //
 // Costs are stated in the row itself — storage (the download's bill) and
@@ -203,11 +220,23 @@ function ModelRow({
   // screen, the engine card collapsing, or the app backgrounding — and a row
   // re-mounting mid-download must find it still running, progress included.
   // Unmounting cancels only the SUBSCRIPTION, never the download.
-  const [download, setDownload] = useState(() => modelDownloadState(model.id));
+  // `useSyncExternalStore` (the app's existing pattern for module-scope
+  // stores, see `useResponsiveLayout`): the store's publish-then-notify
+  // contract is exactly a subscribe/getSnapshot pair, and it closes the
+  // render→effect gap a hand-rolled subscription leaves — a settling publish
+  // landing in that gap would otherwise be the LAST event, leaving the row
+  // "Downloading…" forever.
+  const download = useModelDownload(model.id);
+  // The presence re-read rides a second subscription beside the hook above,
+  // deliberately: it listens for the phase TRANSITION (an event — the disk
+  // changed), not the value. A settle's phase flip can be folded away by
+  // React's event batching (a start publishes "downloading" and a fast
+  // settle publishes "idle" within one tick), so a re-read derived from the
+  // rendered value would never run — the subscription's listener fires per
+  // publish, transition or not.
   useEffect(
     () =>
       observeModelDownload(model.id, (snapshot) => {
-        setDownload(snapshot);
         // A settled download changed the disk: re-read presence so the row
         // swaps its progress bar for the Test/Delete actions (or the retry
         // offer) the moment the transfer lands.
@@ -234,7 +263,6 @@ function ModelRow({
         <DownloadProgressBar fraction={download.fraction} />
         <DownloadByteReadout
           fraction={download.fraction}
-          sizeBytes={Math.round(download.fraction * model.sizeBytes)}
           totalBytes={model.sizeBytes}
         />
         <Text style={styles.hint}>{t("settings.engine.downloading")}</Text>
