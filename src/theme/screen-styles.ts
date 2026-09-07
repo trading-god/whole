@@ -124,6 +124,26 @@ export const screenStyles = StyleSheet.create({
     fontSize: FONT_SIZE.micro,
     fontWeight: FONT_WEIGHT.semibold,
   },
+  // Muted meta line — secondary copy that still carries information (engine
+  // hints, cost lines, download readouts, settings row hints), set at body-sm
+  // so it stays legible. `subtle` stays reserved for placeholder copy. The
+  // danger twin below serves the same role beside a failed action. Both are
+  // one step up from `formHint`/`errorHint` (micro), which annotate fields;
+  // these annotate a whole row or card.
+  metaLine: {
+    color: COLORS.muted,
+    fontSize: FONT_SIZE.bodySm,
+    lineHeight: LINE_HEIGHT.body,
+  },
+  // An async action's failure note — the danger twin of `metaLine`, anchored
+  // to the action it explains (a failed download, a failed removal). Distinct
+  // from `errorHint`, which sits under the field it blocks. Callers spread
+  // this and add only their own spacing.
+  metaLineDanger: {
+    color: COLORS.danger,
+    fontSize: FONT_SIZE.bodySm,
+    lineHeight: LINE_HEIGHT.body,
+  },
   pressed: {
     opacity: PRESSED_OPACITY_SURFACE,
   },

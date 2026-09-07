@@ -127,7 +127,7 @@ export function Button({
       accessibilityHint={accessibilityHint}
       accessibilityRole={accessibilityRole}
       accessibilityState={
-        loading ? { busy: true, ...accessibilityState } : accessibilityState
+        loading ? { ...accessibilityState, busy: true } : accessibilityState
       }
       // Defaulted from the size, so a compact control never ships a
       // target smaller than `MIN_INTERACTIVE_SIZE`. A caller may still

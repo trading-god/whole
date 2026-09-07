@@ -122,6 +122,7 @@ export const enMessages = {
     group: "Institution",
     noGroup: "No institution",
     createGroup: "Create institution",
+    createGroupError: "Couldn't create the institution. Try again.",
     groupName: "Institution name",
     newGroupPlaceholder: "Enter an institution name",
     // The multi-account wizard asks for the institution once, above the paged
@@ -136,7 +137,6 @@ export const enMessages = {
       "Choose an account screenshot, then complete and confirm the account details.",
     accountInformation: "Account details",
     formHint: "Complete or edit the details using the account screenshot",
-    saving: "Saving…",
     saveAccount: "Save account",
     saveErrorTitle: "Unable to save",
     saveErrorMessage: "The account could not be saved. Try again later.",
@@ -153,6 +153,7 @@ export const enMessages = {
     language: "Language",
     languageFollowsSystem: "Follows the system setting",
     changeInSystemSettings: "Change in system settings",
+    changeInSystemSettingsHint: "Opens Whole's system settings",
     about: "About",
     version: "Version {{version}}",
     onDevice: {
@@ -171,10 +172,14 @@ export const enMessages = {
       remote: "Cloud model service",
       remoteHint:
         "Stronger results, needs internet — the screenshot's text is sent to your service",
+      modelChoice: "On-device model choice",
       // The local engine's download flow. "Download" is one word for one
       // action, reused everywhere the action appears.
       download: "Download",
+      downloadHint: "Downloads {{model}}, using {{size}} of storage",
       downloading: "Downloading…",
+      downloadProgress: "Model download progress",
+      downloadProgressValue: "{{percentage}}% downloaded",
       // A retry starts over from the beginning (the downloader replaces the
       // partial file), so the copy must not promise kept progress.
       downloadFailed:
@@ -194,11 +199,12 @@ export const enMessages = {
       apiKey: "API key",
       apiKeyHint: "Stored only on this phone, never shown again after saving",
       save: "Save service",
-      testing: "Testing…",
       testPassed: "The service responded",
       testFailure:
         "The service didn't respond. Check the address, the model name, and the API key.",
       clear: "Remove service",
+      clearFailed:
+        "Couldn't remove the service — it is still saved. Try again.",
       // The opt-in, stated plainly once. This is the sentence the whole
       // remote engine's privacy posture hangs on.
       remotePrivacy:
@@ -255,7 +261,6 @@ export const enMessages = {
     cleanupManualPhotoLibrary:
       "The account screenshot has done its job. Delete it from your photo library whenever you no longer need it.",
     keepScreenshot: "Keep screenshot",
-    deletingScreenshot: "Deleting…",
     deleteScreenshot: "Delete screenshot",
     acknowledge: "Got it",
     deletionErrorTitle: "Unable to delete account screenshot",
@@ -277,8 +282,8 @@ export const enMessages = {
       "The last four digits can't be changed after the account is created",
     lastFourDigitsOptional:
       "Optional — fill in the last four digits if the account has a card number",
-    saving: "Saving…",
     saveAccount: "Save changes",
+    loading: "Loading the account",
     conflictTitle: "Account already exists",
     conflictMessage:
       'Another account named "{{name}}" has the same last four digits. Use a different name.',

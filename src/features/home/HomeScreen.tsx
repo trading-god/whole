@@ -45,6 +45,7 @@ import { loadUserName } from "@/features/user/user-store";
 import { useAppLocale } from "@/i18n";
 import { useStoredPreference } from "@/storage/use-stored-preference";
 import { COLORS } from "@/theme/colors";
+import { useResponsiveLayout } from "@/theme/layout";
 import { screenStyles } from "@/theme/screen-styles";
 import { SPACING } from "@/theme/spacing";
 import { FONT_SIZE, FONT_WEIGHT, LETTER_SPACING } from "@/theme/typography";
@@ -78,6 +79,7 @@ function HomeScreenBody() {
   const { formatCurrency, languageTag } = useAppLocale();
   const { t } = useTranslation();
   const router = useRouter();
+  const { isCompact } = useResponsiveLayout();
   const {
     accounts,
     groups,
@@ -265,14 +267,13 @@ function HomeScreenBody() {
         }
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.header}>
+        <View style={[styles.header, isCompact && styles.headerCompact]}>
           <View style={styles.headerCopy}>
             <Text style={screenStyles.wordmark}>{t("common.wordmark")}</Text>
             <Text
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.6}
-              style={styles.greeting}
+              numberOfLines={isCompact ? 2 : 1}
+              ellipsizeMode="tail"
+              style={[styles.greeting, isCompact && styles.greetingCompact]}
             >
               {userName
                 ? t("home.greeting", { name: userName })
@@ -378,6 +379,10 @@ const styles = StyleSheet.create({
     paddingBottom: SPACING.lg,
     paddingTop: SPACING.md,
   },
+  headerCompact: {
+    alignItems: "flex-start",
+    flexDirection: "column",
+  },
   headerCopy: {
     flex: 1,
     minWidth: 0,
@@ -397,6 +402,10 @@ const styles = StyleSheet.create({
     fontWeight: FONT_WEIGHT.bold,
     letterSpacing: LETTER_SPACING.headingTight,
     marginTop: SPACING.sm,
+  },
+  greetingCompact: {
+    fontSize: FONT_SIZE.title,
+    letterSpacing: LETTER_SPACING.tight,
   },
   sectionMeta: {
     color: COLORS.muted,

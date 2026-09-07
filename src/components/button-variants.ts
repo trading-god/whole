@@ -5,7 +5,13 @@ import { PRESSED_OPACITY } from "@/theme/interaction";
 import { ELEVATED_SHADOW } from "@/theme/shadow";
 
 export type ButtonVariant =
-  "primary" | "secondary" | "danger" | "outline" | "ghost" | "onDark";
+  | "primary"
+  | "secondary"
+  | "danger"
+  | "dangerGhost"
+  | "outline"
+  | "ghost"
+  | "onDark";
 
 type ButtonVariantStyle = {
   /** The container fill. */
@@ -28,6 +34,8 @@ type ButtonVariantStyle = {
  * - `primary` / `secondary` / `danger` — filled; pressing lowers the opacity
  *   so the fill is still readable. `danger` is for destructive actions (clear,
  *   delete), and its white-on-red carries the same weight as `primary`.
+ * - `dangerGhost` — the low-emphasis destructive twin: danger ink without a
+ *   filled red block competing with the primary action beside it.
  * - `outline` — transparent over a hairline; pressing floats a pale fill in,
  *   which is what makes the press legible without a colour to dim.
  * - `ghost` — text only; pressing floats a soft brand-tinted fill in.
@@ -52,6 +60,12 @@ export const BUTTON_VARIANTS: Record<ButtonVariant, ButtonVariantStyle> = {
     labelColor: COLORS.white,
     iconColor: COLORS.white,
     pressedStyle: { opacity: PRESSED_OPACITY },
+  },
+  dangerGhost: {
+    backgroundColor: "transparent",
+    labelColor: COLORS.danger,
+    iconColor: COLORS.danger,
+    pressedStyle: { backgroundColor: COLORS.surfaceMuted },
   },
   outline: {
     backgroundColor: "transparent",

@@ -37,6 +37,8 @@ export const FONT_SIZE = {
   title: 20,
   // Greeting, not-found title.
   heading: 24,
+  // Secondary-screen page title, one step above section headers.
+  pageTitle: 28,
   // Launch-screen brand wordmark.
   brand: 26,
   // Total-balance hero figure.
@@ -59,6 +61,9 @@ export const LINE_HEIGHT = {
   eyebrow: 17,
   // 14pt body copy (1.5×).
   body: 21,
+  // 28pt secondary-screen page title (1.14× — a large numeral, tighter than
+  // prose body).
+  pageTitle: 32,
   // 34pt hero figure (1.06× — intentionally tight for a large numeral).
   display: 36,
 } as const;
@@ -68,6 +73,8 @@ export const LETTER_SPACING = {
   displayTight: -1.5,
   // 24pt greeting.
   headingTight: -0.6,
+  // 28pt secondary-screen page title.
+  pageTitleTight: -0.8,
   // 17pt section header.
   tight: -0.2,
   // 12pt eyebrows / trigger text / picker title.

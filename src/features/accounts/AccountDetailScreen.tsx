@@ -2,14 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ActivityIndicator,
-  Alert,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AccountEditorFields } from "@/features/accounts/AccountEditorFields";
@@ -22,6 +15,7 @@ import { KeyboardAvoidingView } from "@/components/KeyboardAvoidingView";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { ScreenIntro } from "@/components/ScreenIntro";
 import { SectionHeader } from "@/components/SectionHeader";
+import { Spinner } from "@/components/Spinner";
 import { SourceImageCleanupModal } from "@/features/accounts/SourceImageCleanupModal";
 import { useSourceImageCleanup } from "@/features/accounts/use-source-image-cleanup";
 import {
@@ -170,7 +164,19 @@ export default function AccountDetailScreen() {
   const handleCreateInstitution = useCallback(
     async (name: string): Promise<string | undefined> => {
       const group = await findOrCreateGroupByName(name);
-      setGroups(await listAssetAccountGroups());
+      // The create has committed by the time the re-read below runs, so a
+      // failed re-read must not read as a failed create: fall back to
+      // appending the group so it stays selectable, and let the next full
+      // load restore the canonical list.
+      try {
+        setGroups(await listAssetAccountGroups());
+      } catch {
+        setGroups((current) =>
+          current.some((existing) => existing.id === group.id)
+            ? current
+            : [...current, group],
+        );
+      }
       return group.id;
     },
     [],
@@ -256,7 +262,10 @@ export default function AccountDetailScreen() {
 
         {account === null ? (
           <View style={styles.loadingContainer}>
-            <ActivityIndicator color={COLORS.brand} size="small" />
+            <Spinner
+              accessibilityLabel={t("accountDetail.loading")}
+              color={COLORS.brand}
+            />
           </View>
         ) : (
           <ScrollView
@@ -322,11 +331,10 @@ export default function AccountDetailScreen() {
             variant="primary"
             elevated
             disabled={!canSave}
+            loading={isSaving}
             onPress={() => void saveAccount()}
           >
-            {isSaving
-              ? t("accountDetail.saving")
-              : t("accountDetail.saveAccount")}
+            {t("accountDetail.saveAccount")}
           </Button>
         </View>
       </KeyboardAvoidingView>

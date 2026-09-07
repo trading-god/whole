@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
-import { fireEvent, screen, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
 
 import { SettingsScreen } from "@/features/settings/SettingsScreen";
+import { deferred } from "@/test-support/deferred";
 import { renderWithProviders } from "@/test-support/render";
 import { onDeviceModel } from "@/features/on-device-model/on-device-catalog";
 import { formatBytes } from "@/features/on-device-model/format-bytes";
@@ -21,9 +22,11 @@ const mockLoadEngine = jest.fn<() => Promise<"on-device" | "remote">>();
 const mockSaveEngine =
   jest.fn<(engine: "on-device" | "remote") => Promise<void>>();
 const mockLoadRemoteConfig = jest.fn<() => Promise<unknown>>();
-const mockSaveRemoteConfig = jest.fn<() => Promise<void>>();
+const mockSaveRemoteConfig =
+  jest.fn<(config?: unknown, apiKey?: unknown) => Promise<void>>();
 const mockClearRemoteConfig = jest.fn<() => Promise<void>>();
 const mockCreateRemoteRunModel = jest.fn<() => Promise<unknown>>();
+const mockRunRemoteModel = jest.fn<() => Promise<string>>();
 
 jest.mock("@/features/on-device-model/model-context", () => ({
   verifyOnDeviceModel: () => mockVerify(),
@@ -63,7 +66,8 @@ jest.mock("@/features/recognition/engine-store", () => ({
 // faked.
 jest.mock("@/features/recognition/remote-model-config-store", () => ({
   loadRemoteModelConfig: () => mockLoadRemoteConfig(),
-  saveRemoteModelConfig: () => mockSaveRemoteConfig(),
+  saveRemoteModelConfig: (config: unknown, apiKey: unknown) =>
+    mockSaveRemoteConfig(config, apiKey),
   clearRemoteModelConfig: () => mockClearRemoteConfig(),
 }));
 
@@ -88,6 +92,23 @@ const press = async (label: string) => {
   await fireEvent.press(screen.getByText(label));
 };
 
+const showRemoteEngine = async () => {
+  mockLoadEngine.mockResolvedValue("remote");
+  await renderWithProviders(<SettingsScreen />);
+  await waitFor(() => {
+    expect(screen.getByText("Base URL")).toBeOnTheScreen();
+  });
+};
+
+const fillValidRemoteDraft = async () => {
+  await fireEvent.changeText(
+    screen.getByLabelText("Base URL"),
+    "https://api.example.com/v1/",
+  );
+  await fireEvent.changeText(screen.getByLabelText("Model"), "example-model");
+  await fireEvent.changeText(screen.getByLabelText("API key"), "secret-key");
+};
+
 beforeEach(() => {
   // `clearAllMocks`, not `resetAllMocks`: resetting would also reset the
   // jest-expo native-module mocks — expo-localization's `getLocales` among
@@ -105,6 +126,8 @@ beforeEach(() => {
   mockLoadRemoteConfig.mockResolvedValue(null);
   mockSaveRemoteConfig.mockResolvedValue(undefined);
   mockClearRemoteConfig.mockResolvedValue(undefined);
+  mockRunRemoteModel.mockResolvedValue("pong");
+  mockCreateRemoteRunModel.mockResolvedValue(mockRunRemoteModel);
 });
 
 // Labels are asserted in ENGLISH: `useLocales()` resolves to `en` under
@@ -124,6 +147,30 @@ describe("SettingsScreen", () => {
       expect(screen.getByText("On-device model")).toBeTruthy();
       expect(screen.getByText("Cloud model service")).toBeTruthy();
       expect(screen.getByText(/Stronger results/)).toBeTruthy();
+    });
+
+    it("exposes separate radio groups with selected states and useful hints", async () => {
+      await renderWithProviders(<SettingsScreen />);
+
+      const engineGroup = screen.getByLabelText("Recognition engine");
+      const modelGroup = screen.getByLabelText("On-device model choice");
+      expect(engineGroup.props.accessibilityRole).toBe("radiogroup");
+      expect(modelGroup.props.accessibilityRole).toBe("radiogroup");
+
+      const localEngine = screen.getByLabelText("On-device model");
+      const remoteEngine = screen.getByLabelText("Cloud model service");
+      expect(localEngine.props.accessibilityState).toEqual({ selected: true });
+      expect(remoteEngine.props.accessibilityState).toEqual({
+        selected: false,
+      });
+      expect(remoteEngine.props.accessibilityHint).toContain("needs internet");
+
+      const smallModel = screen.getByLabelText("Gemma 4 E2B");
+      expect(smallModel.props.accessibilityRole).toBe("radio");
+      expect(smallModel.props.accessibilityState).toEqual({ selected: true });
+      expect(smallModel.props.accessibilityHint).toBe(
+        `${formatBytes(E2B.sizeBytes)} storage · about ${formatBytes(E2B.ramBytes)} memory to run`,
+      );
     });
 
     it("lists both models with their storage and memory costs", async () => {
@@ -176,6 +223,48 @@ describe("SettingsScreen", () => {
       await renderWithProviders(<SettingsScreen />);
 
       expect(screen.getAllByText("Download")).toHaveLength(1);
+    });
+
+    it("shows byte and accessible percentage progress while downloading", async () => {
+      mockModelPresence.mockReturnValue({ status: "absent" });
+      const pendingDownload = deferred<void>();
+      let reportProgress: ((fraction: number) => void) | undefined;
+      mockDownloadModel.mockImplementation(async (_id, onProgress) => {
+        reportProgress = onProgress;
+        return pendingDownload.promise;
+      });
+
+      await renderWithProviders(<SettingsScreen />);
+      await fireEvent.press(screen.getAllByText("Download")[0]);
+
+      expect(screen.getByText("Downloading…")).toBeOnTheScreen();
+      expect(
+        screen.getByText(`0 B of ${formatBytes(E2B.sizeBytes)}`),
+      ).toBeOnTheScreen();
+
+      await act(() => {
+        reportProgress?.(0.42);
+      });
+
+      await waitFor(() => {
+        const progress = screen.getByLabelText("Model download progress");
+        expect(progress.props.accessibilityRole).toBe("progressbar");
+        expect(progress.props.accessibilityValue).toEqual({
+          min: 0,
+          max: 100,
+          now: 42,
+          text: "42% downloaded",
+        });
+        expect(
+          screen.getByText(
+            `${formatBytes(Math.round(E2B.sizeBytes * 0.42))} of ${formatBytes(E2B.sizeBytes)}`,
+          ),
+        ).toBeOnTheScreen();
+      });
+
+      await act(() => {
+        pendingDownload.resolve();
+      });
     });
 
     it("runs a download to completion and lands on the downloaded state", async () => {
@@ -281,6 +370,164 @@ describe("SettingsScreen", () => {
         ).toBeTruthy();
         expect(screen.getByDisplayValue("deepseek-chat")).toBeTruthy();
       });
+    });
+
+    it("keeps save unavailable until the remote draft is valid", async () => {
+      await showRemoteEngine();
+
+      const save = screen.getByText("Save service").parent;
+      expect(save?.props.accessibilityState).toEqual({ disabled: true });
+
+      await fireEvent.changeText(
+        screen.getByLabelText("Base URL"),
+        "http://api.example.com/v1",
+      );
+      await fireEvent.changeText(
+        screen.getByLabelText("Model"),
+        "example-model",
+      );
+      expect(save?.props.accessibilityState).toEqual({ disabled: true });
+
+      await fireEvent.changeText(
+        screen.getByLabelText("Base URL"),
+        "https://api.example.com/v1",
+      );
+      await waitFor(() => {
+        expect(
+          screen.getByText("Save service").parent?.props.accessibilityState,
+        ).toEqual({ disabled: false });
+      });
+    });
+
+    it("configures the API key as a secure credential field", async () => {
+      await showRemoteEngine();
+
+      const apiKey = screen.getByLabelText("API key");
+      expect(apiKey.props.secureTextEntry).toBe(true);
+      expect(apiKey.props.textContentType).toBe("password");
+      expect(apiKey.props.autoComplete).toBe("off");
+      expect(apiKey.props.autoCapitalize).toBe("none");
+    });
+
+    it("saves a normalized remote config, blocks duplicate presses, and reports success", async () => {
+      await showRemoteEngine();
+      await fillValidRemoteDraft();
+      const pendingSave = deferred<void>();
+      mockSaveRemoteConfig.mockReturnValue(pendingSave.promise);
+
+      await press("Save service");
+
+      expect(mockSaveRemoteConfig).toHaveBeenCalledWith(
+        {
+          baseUrl: "https://api.example.com/v1",
+          model: "example-model",
+        },
+        "secret-key",
+      );
+      // The label stays "Save service" while busy — the spinner says the rest
+      // (the pattern every other busy button in the app now follows).
+      const saveButton = screen.getByText("Save service").parent;
+      expect(saveButton?.props.accessibilityState).toEqual({
+        busy: true,
+        disabled: true,
+      });
+      await fireEvent.press(saveButton!);
+      expect(mockSaveRemoteConfig).toHaveBeenCalledTimes(1);
+
+      await act(() => {
+        pendingSave.resolve();
+      });
+
+      await waitFor(() => {
+        expect(mockRunRemoteModel).toHaveBeenCalledWith({
+          system: "ping",
+          user: "ping",
+          grammar: "",
+        });
+        expect(screen.getByText("The service responded")).toBeOnTheScreen();
+        expect(screen.getByText("Remove service")).toBeOnTheScreen();
+      });
+    });
+
+    it("reports a remote test failure while keeping the saved service removable", async () => {
+      await showRemoteEngine();
+      await fillValidRemoteDraft();
+      mockRunRemoteModel.mockRejectedValue(new Error("unauthorized"));
+
+      await press("Save service");
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(
+            "The service didn't respond. Check the address, the model name, and the API key.",
+          ),
+        ).toBeOnTheScreen();
+        expect(screen.getByText("Remove service")).toBeOnTheScreen();
+      });
+    });
+
+    it("clears a saved remote service with a visible, guarded loading state", async () => {
+      mockLoadRemoteConfig.mockResolvedValue({
+        baseUrl: "https://api.deepseek.com/v1",
+        model: "deepseek-chat",
+        apiKey: "stored-secret",
+      });
+      const pendingClear = deferred<void>();
+      mockClearRemoteConfig.mockReturnValue(pendingClear.promise);
+      await showRemoteEngine();
+      await waitFor(() => {
+        expect(screen.getByText("Remove service")).toBeOnTheScreen();
+      });
+
+      await press("Remove service");
+
+      // The label stays "Remove service" while busy — the spinner says the
+      // rest.
+      const removeButton = screen.getByText("Remove service").parent;
+      expect(removeButton?.props.accessibilityState).toEqual({
+        busy: true,
+        disabled: true,
+      });
+      await fireEvent.press(removeButton!);
+      expect(mockClearRemoteConfig).toHaveBeenCalledTimes(1);
+
+      await act(() => {
+        pendingClear.resolve();
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByText("Remove service")).toBeNull();
+        expect(screen.getByLabelText("Base URL").props.value).toBe("");
+        expect(screen.getByLabelText("Model").props.value).toBe("");
+        expect(screen.getByLabelText("API key").props.value).toBe("");
+      });
+    });
+
+    it("restores the remove action when clearing the remote service fails", async () => {
+      mockLoadRemoteConfig.mockResolvedValue({
+        baseUrl: "https://api.deepseek.com/v1",
+        model: "deepseek-chat",
+        apiKey: "stored-secret",
+      });
+      mockClearRemoteConfig.mockRejectedValue(new Error("keychain"));
+      await showRemoteEngine();
+      await waitFor(() => {
+        expect(screen.getByText("Remove service")).toBeOnTheScreen();
+      });
+
+      await press("Remove service");
+
+      await waitFor(() => {
+        // The verdict says BOTH halves: the removal failed, and the service
+        // is still saved — the button returning alone would read as a no-op.
+        expect(
+          screen.getByText(
+            "Couldn't remove the service — it is still saved. Try again.",
+          ),
+        ).toBeOnTheScreen();
+        expect(screen.getByText("Remove service")).toBeOnTheScreen();
+      });
+      expect(screen.getByDisplayValue("deepseek-chat")).toBeOnTheScreen();
     });
 
     it("shows the privacy trade in the caution tone when the remote engine is selected", async () => {

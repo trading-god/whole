@@ -16,7 +16,6 @@ import {
   CHIP_RADIUS,
   ICON_BUTTON_SIZES,
   RADIUS,
-  ACCOUNT_ROW_HEIGHT,
 } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
 import {
@@ -25,6 +24,28 @@ import {
   LETTER_SPACING,
   LINE_HEIGHT,
 } from "@/theme/typography";
+
+function relativeLuminance(hex: string): number {
+  const rgb = [1, 3, 5].map(
+    (offset) => Number.parseInt(hex.slice(offset, offset + 2), 16) / 255,
+  );
+  const linear = rgb.map((channel) =>
+    channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4,
+  );
+  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+}
+
+function contrastRatio(foreground: string, background: string): number {
+  const light = Math.max(
+    relativeLuminance(foreground),
+    relativeLuminance(background),
+  );
+  const dark = Math.min(
+    relativeLuminance(foreground),
+    relativeLuminance(background),
+  );
+  return (light + 0.05) / (dark + 0.05);
+}
 
 // Token tables are data, so these assert the PROPERTIES that make them a system
 // rather than a pile of numbers — the ones a careless edit would break without
@@ -90,13 +111,8 @@ describe("sizes", () => {
     expect(BUTTON_HORIZONTAL_PADDING).toBe(SPACING.lg);
   });
 
-  it("keeps the card, chip and row constants distinct and positive", () => {
-    for (const value of [
-      CARD_RADIUS,
-      CHIP_RADIUS,
-      CHIP_HEIGHT,
-      ACCOUNT_ROW_HEIGHT,
-    ]) {
+  it("keeps the card and chip constants distinct and positive", () => {
+    for (const value of [CARD_RADIUS, CHIP_RADIUS, CHIP_HEIGHT]) {
       expect(value).toBeGreaterThan(0);
     }
   });
@@ -127,6 +143,15 @@ describe("COLORS", () => {
     for (const value of Object.values(COLORS)) {
       expect(value).toMatch(/^(#[0-9A-Fa-f]{6}|rgba\(.+\))$/);
     }
+  });
+
+  it("keeps secondary text readable on every light surface", () => {
+    expect(contrastRatio(COLORS.muted, COLORS.card)).toBeGreaterThanOrEqual(
+      4.5,
+    );
+    expect(
+      contrastRatio(COLORS.muted, COLORS.background),
+    ).toBeGreaterThanOrEqual(4.5);
   });
 });
 

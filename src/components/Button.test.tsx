@@ -91,6 +91,25 @@ describe("Button", () => {
 
       expect(onPress).not.toHaveBeenCalled();
     });
+
+    it("always announces busy even if a caller passes a stale value", async () => {
+      await render(
+        <Button
+          accessibilityState={{ busy: false, selected: true }}
+          loading
+          testID="save"
+        >
+          Save
+        </Button>,
+      );
+
+      expect(screen.getByTestId("save").props.accessibilityState).toMatchObject(
+        {
+          busy: true,
+          selected: true,
+        },
+      );
+    });
   });
 
   it("does not call onPress while disabled", async () => {

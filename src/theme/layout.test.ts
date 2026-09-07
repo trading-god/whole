@@ -1,40 +1,27 @@
-import { describe, expect, it, jest } from "@jest/globals";
+import { describe, expect, it } from "@jest/globals";
+import { Dimensions } from "react-native";
 import { renderHook } from "@testing-library/react-native";
 
 import { MIN_INTERACTIVE_SIZE, useResponsiveLayout } from "@/theme/layout";
 
-// The `mock` prefix is load-bearing: `jest.mock` factories are hoisted above
-// every other statement, so referencing an out-of-scope variable is refused
-// outright unless its name starts with `mock`. (Vitest expresses the same idea
-// as `vi.hoisted`.)
-//
-// Mocked at its own module rather than spied on the `react-native` namespace:
-// the namespace object's exports are getters, so a spy on it never reaches the
-// binding `useResponsiveLayout` already holds, and every case silently reads
-// the default test viewport instead.
-const mockUseWindowDimensions = jest.fn();
-
-jest.mock("react-native/Libraries/Utilities/useWindowDimensions", () => ({
-  __esModule: true,
-  default: () => mockUseWindowDimensions(),
-}));
-
-// Layout responds to available space and the user's font scale rather than to a
-// locale, so switching languages never introduces a second set of rules.
-//
-// `renderHook` is async in @testing-library/react-native v14, exactly like
-// `render` — the promise is how React 19 gets to flush concurrently.
+// The hook reads the viewport through `Dimensions` (subscribed via
+// `useSyncExternalStore` over the derived boolean), so the tests stage each
+// viewport with `Dimensions.set` — the supported way to fake the window in a
+// Jest environment, kept here rather than mocking the internal
+// `useWindowDimensions` path the hook no longer uses.
 const withViewport = async (width: number, fontScale: number) => {
-  mockUseWindowDimensions.mockReturnValue({
-    width,
-    height: 800,
-    scale: 2,
-    fontScale,
+  Dimensions.set({
+    window: { width, height: 800, scale: 2, fontScale },
   });
   const { result } = await renderHook(() => useResponsiveLayout());
   return result.current;
 };
 
+// Layout responds to available space and the user's font scale rather than to
+// a locale, so switching languages never introduces a second set of rules.
+//
+// `renderHook` is async in @testing-library/react-native v14, exactly like
+// `render` — the promise is how React 19 gets to flush concurrently.
 describe("useResponsiveLayout", () => {
   it("is not compact on a roomy viewport at the default font scale", async () => {
     expect((await withViewport(390, 1)).isCompact).toBe(false);

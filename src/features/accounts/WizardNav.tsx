@@ -1,6 +1,7 @@
-import { ActivityIndicator, StyleSheet, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 
 import { IconButton } from "@/components/IconButton";
+import { Spinner } from "@/components/Spinner";
 import { StepIndicator } from "@/features/accounts/StepIndicator";
 import { COLORS } from "@/theme/colors";
 import { ICON_BUTTON_SIZES } from "@/theme/sizes";
@@ -58,7 +59,9 @@ export function WizardNav({
       <StepIndicator count={count} current={current} />
       <View style={styles.navSide}>
         {nextBusy ? (
-          <ActivityIndicator color={COLORS.brand} size="small" />
+          // Labelled with the chevron it replaces, so the busy state still
+          // says WHAT is running — the spinner alone does not.
+          <Spinner accessibilityLabel={nextLabel} color={COLORS.brand} />
         ) : nextHidden ? null : (
           <IconButton
             accessibilityLabel={nextLabel}

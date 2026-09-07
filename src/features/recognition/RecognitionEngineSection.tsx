@@ -1,8 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { Button } from "@/components/Button";
+import { ButtonGroup } from "@/components/ButtonGroup";
 import { FormField } from "@/components/FormField";
 import { formatBytes } from "@/features/on-device-model/format-bytes";
 import {
@@ -31,6 +39,7 @@ import {
 import {
   EngineOptionCard,
   RadioMark,
+  RADIO_ROW_INDENT,
 } from "@/features/recognition/EngineOptionCard";
 import {
   loadRecognitionEngine,
@@ -50,10 +59,12 @@ import { createRemoteRunModel } from "@/features/recognition/remote-runner";
 import { useStoredPreference } from "@/storage/use-stored-preference";
 import { COLORS } from "@/theme/colors";
 import { PRESSED_OPACITY_SURFACE } from "@/theme/interaction";
+import { MIN_INTERACTIVE_SIZE } from "@/theme/layout";
+import { screenStyles } from "@/theme/screen-styles";
 import { TONES } from "@/theme/tones";
 import { RADIUS } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
-import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT } from "@/theme/typography";
+import { FONT_SIZE, FONT_WEIGHT } from "@/theme/typography";
 
 // The recognition engine section: which model answers the annotation turn.
 //
@@ -72,6 +83,12 @@ import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT } from "@/theme/typography";
 // The probe phases both engines' Test flows share: idle → testing → a verdict.
 type TestPhase = "idle" | "testing" | "passed" | "failed";
 
+// Module-scope so the loader keeps one identity across renders —
+// `useStoredPreference`'s hydrate effect is keyed on `[load]`, and an inline
+// arrow (a new identity every render) would re-run the storage read on every
+// render of the section.
+const loadEnginePreference = () => loadRecognitionEngine("on-device");
+
 export function RecognitionEngineSection() {
   const { t } = useTranslation();
 
@@ -81,13 +98,18 @@ export function RecognitionEngineSection() {
   // value resolves must not be reverted by it), and this is the fourth and
   // fifth consumer it exists for.
   const [engine, chooseEngine] = useStoredPreference(
-    () => loadRecognitionEngine("on-device"),
+    loadEnginePreference,
     "on-device",
     saveRecognitionEngine,
   );
 
   return (
-    <View style={styles.section} testID="recognition-engine-section">
+    <View
+      accessibilityLabel={t("settings.engine.title")}
+      accessibilityRole="radiogroup"
+      style={styles.section}
+      testID="recognition-engine-section"
+    >
       <EngineOptionCard
         selected={engine === "on-device"}
         title={t("settings.engine.onDevice")}
@@ -97,7 +119,6 @@ export function RecognitionEngineSection() {
       >
         <OnDeviceEngineConfig />
       </EngineOptionCard>
-      <View style={styles.engineGap} />
       <EngineOptionCard
         selected={engine === "remote"}
         title={t("settings.engine.remote")}
@@ -114,6 +135,7 @@ export function RecognitionEngineSection() {
 // ── The on-device engine's configuration ─────────────────────────────────
 
 function OnDeviceEngineConfig() {
+  const { t } = useTranslation();
   // The selected model, from the same store the recognition gate reads.
   const [modelId, setModelId] = useStoredPreference(
     loadOnDeviceModelId,
@@ -131,7 +153,11 @@ function OnDeviceEngineConfig() {
   };
 
   return (
-    <View style={styles.configStack}>
+    <View
+      accessibilityLabel={t("settings.engine.modelChoice")}
+      accessibilityRole="radiogroup"
+      style={styles.configStack}
+    >
       {ON_DEVICE_MODELS.map((model) => (
         <ModelRow
           key={model.id}
@@ -160,6 +186,10 @@ function ModelRow({
   onSelect: () => void;
 }) {
   const { t } = useTranslation();
+  const modelCosts = t("settings.engine.modelCosts", {
+    size: formatBytes(model.sizeBytes),
+    ram: formatBytes(model.ramBytes),
+  });
 
   const [presence, setPresence] = useState(() => modelPresence(model.id));
   const refreshPresence = useCallback(() => {
@@ -212,81 +242,74 @@ function ModelRow({
     refreshPresence();
   }, [model.id, refreshPresence]);
 
-  // A download of the unselected model still matters — the row keeps its
-  // own lifecycle regardless of selection.
+  // One row head, three bodies. The radio head is identical across the
+  // download lifecycle (absent → downloading → present), so it renders once
+  // here and only the body below it switches — an accessibility or layout
+  // change to the head then can't drift between states.
+  let body: ReactNode;
   if (downloadPhase === "downloading") {
-    return (
-      <View style={styles.modelRow} testID={`model-row-${model.id}`}>
-        <PressableRow
-          selected={selected}
-          onSelect={onSelect}
-          name={model.name}
+    body = (
+      <View style={styles.progressStack}>
+        <DownloadProgressBar fraction={downloadFraction} />
+        <DownloadByteReadout
+          sizeBytes={Math.round(downloadFraction * model.sizeBytes)}
+          totalBytes={model.sizeBytes}
         />
-        <View style={styles.configStack}>
-          <DownloadProgressBar fraction={downloadFraction} />
-          <DownloadByteReadout
-            sizeBytes={Math.round(downloadFraction * model.sizeBytes)}
-            totalBytes={model.sizeBytes}
-          />
-          <Text style={styles.hint}>{t("settings.engine.downloading")}</Text>
-        </View>
+        <Text style={styles.hint}>{t("settings.engine.downloading")}</Text>
       </View>
     );
-  }
-
-  if (presence.status === "present") {
-    return (
-      <View style={styles.modelRow} testID={`model-row-${model.id}`}>
-        <PressableRow
-          selected={selected}
-          onSelect={onSelect}
-          name={model.name}
-        />
-        <View style={styles.costLine}>
-          <Text style={styles.statusLine}>
-            {t("settings.engine.modelCosts", {
-              size: formatBytes(model.sizeBytes),
-              ram: formatBytes(model.ramBytes),
-            })}
-          </Text>
-        </View>
+  } else if (presence.status === "present") {
+    body = (
+      <>
+        <Text style={styles.costLine}>{modelCosts}</Text>
         {selected ? (
-          <View style={styles.modelActions}>
+          <ButtonGroup style={styles.modelActions}>
             <ModelTestButton />
-            <Button
-              size="xs"
-              variant="ghost"
-              fullWidth={false}
-              onPress={deleteWeights}
-            >
+            <Button size="sm" variant="dangerGhost" onPress={deleteWeights}>
               {t("settings.engine.deleteModel")}
             </Button>
-          </View>
+          </ButtonGroup>
         ) : null}
-      </View>
+      </>
+    );
+  } else {
+    // Absent or partial: the download offer, with what it costs stated up
+    // front. A failed pass re-offers the download, which starts over from the
+    // beginning — the downloader replaces whatever partial file is there.
+    body = (
+      <>
+        <Text style={styles.costLine}>{modelCosts}</Text>
+        {downloadPhase === "failed" ? (
+          <Text style={styles.downloadError}>
+            {t("settings.engine.downloadFailed")}
+          </Text>
+        ) : null}
+        <Button
+          accessibilityHint={t("settings.engine.downloadHint", {
+            model: model.name,
+            size: formatBytes(model.sizeBytes),
+          })}
+          size="sm"
+          variant="primary"
+          onPress={startDownload}
+        >
+          {t("settings.engine.download")}
+        </Button>
+      </>
     );
   }
 
-  // Absent or partial: the download offer, with what it costs stated up
-  // front. A failed pass re-offers the download, which starts over from the
-  // beginning — the downloader replaces whatever partial file is there.
+  // A download of the unselected model still matters — the row keeps its own
+  // lifecycle regardless of selection.
   return (
     <View style={styles.modelRow} testID={`model-row-${model.id}`}>
-      <PressableRow selected={selected} onSelect={onSelect} name={model.name} />
-      <Text style={styles.costLine}>
-        {t("settings.engine.modelCosts", {
-          size: formatBytes(model.sizeBytes),
-          ram: formatBytes(model.ramBytes),
-        })}
-      </Text>
-      {downloadPhase === "failed" ? (
-        <Text style={styles.downloadError}>
-          {t("settings.engine.downloadFailed")}
-        </Text>
-      ) : null}
-      <Button size="sm" variant="primary" onPress={startDownload}>
-        {t("settings.engine.download")}
-      </Button>
+      <PressableRow
+        selected={selected}
+        onSelect={onSelect}
+        name={model.name}
+        hint={modelCosts}
+      />
+      {body}
     </View>
   );
 }
@@ -298,14 +321,17 @@ function PressableRow({
   selected,
   onSelect,
   name,
+  hint,
 }: {
   selected: boolean;
   onSelect: () => void;
   name: string;
+  hint: string;
 }) {
   return (
     <Pressable
       accessibilityLabel={name}
+      accessibilityHint={hint}
       accessibilityRole="radio"
       accessibilityState={{ selected }}
       onPress={onSelect}
@@ -314,7 +340,7 @@ function PressableRow({
         pressed && styles.pressed,
       ]}
     >
-      <RadioMark selected={selected} compact />
+      <RadioMark selected={selected} />
       <Text style={styles.modelName}>{name}</Text>
     </Pressable>
   );
@@ -353,7 +379,6 @@ function ModelTestButton() {
         size="sm"
         variant="outline"
         fullWidth={false}
-        disabled={testPhase === "testing"}
         loading={testPhase === "testing"}
         onPress={test}
       >
@@ -394,6 +419,12 @@ function RemoteEngineConfig() {
   const [apiKey, setApiKey] = useState("");
   const [hasSavedConfig, setHasSavedConfig] = useState(false);
   const [testPhase, setTestPhase] = useState<TestPhase>("idle");
+  // One enum, in the same shape as `downloadPhase` and `TestPhase`, instead
+  // of a phase + a failed flag whose "clearing AND failed" combination is
+  // meaningless.
+  const [clearPhase, setClearPhase] = useState<"idle" | "clearing" | "failed">(
+    "idle",
+  );
   const isMountedRef = useRef(true);
   useEffect(() => {
     isMountedRef.current = true;
@@ -435,8 +466,11 @@ function RemoteEngineConfig() {
     [baseUrl, model],
   );
   const draftValid = remoteConfigSchema.safeParse(draft).success;
+  const isTesting = testPhase === "testing";
+  const isClearing = clearPhase === "clearing";
 
   const clear = useCallback(() => {
+    setClearPhase("clearing");
     void clearRemoteModelConfig()
       .then(() => {
         if (isMountedRef.current) {
@@ -445,12 +479,17 @@ function RemoteEngineConfig() {
           setApiKey("");
           setHasSavedConfig(false);
           setTestPhase("idle");
+          setClearPhase("idle");
         }
       })
       .catch(() => {
         // A removal that failed leaves the form as it was — the config is
         // still stored, and showing it as cleared would hide a live
-        // credential behind a "removed" control.
+        // credential behind a "removed" control. The hint says both halves:
+        // the removal failed AND the service is still saved.
+        if (isMountedRef.current) {
+          setClearPhase("failed");
+        }
       });
   }, []);
 
@@ -458,6 +497,10 @@ function RemoteEngineConfig() {
     // The test runs what the runner would run, against what is SAVED — save
     // first, then test, is the only honest order.
     setTestPhase("testing");
+    // A fresh save supersedes any earlier failed removal: a stale "couldn't
+    // remove" note beside a passing save would tell the user a problem they
+    // abandoned is still the current one.
+    setClearPhase("idle");
     void saveRemoteModelConfig(draft, apiKey === "" ? null : apiKey)
       .then(() => {
         if (isMountedRef.current) {
@@ -508,23 +551,25 @@ function RemoteEngineConfig() {
       />
       <FormField
         label={t("settings.engine.apiKey")}
-        hint={hasSavedConfig ? t("settings.engine.apiKeyHint") : undefined}
+        hint={t("settings.engine.apiKeyHint")}
         placeholder="sk-…"
         value={apiKey}
         onChangeText={setApiKey}
         autoCapitalize="none"
+        autoComplete="off"
+        textContentType="password"
+        secureTextEntry
       />
       <View style={styles.testRow}>
         <Button
           size="sm"
           variant={draftValid ? "primary" : "secondary"}
           fullWidth={false}
-          disabled={!draftValid}
-          onPress={draftValid ? test : undefined}
+          disabled={!draftValid || isClearing}
+          loading={isTesting}
+          onPress={test}
         >
-          {testPhase === "testing"
-            ? t("settings.engine.testing")
-            : t("settings.engine.save")}
+          {t("settings.engine.save")}
         </Button>
         {testPhase === "passed" ? (
           <Text
@@ -544,9 +589,26 @@ function RemoteEngineConfig() {
         ) : null}
       </View>
       {hasSavedConfig ? (
-        <Button size="sm" variant="ghost" fullWidth={false} onPress={clear}>
-          {t("settings.engine.clear")}
-        </Button>
+        <View style={styles.clearStack}>
+          <Button
+            size="sm"
+            variant="dangerGhost"
+            fullWidth={false}
+            disabled={isTesting}
+            loading={isClearing}
+            onPress={clear}
+          >
+            {t("settings.engine.clear")}
+          </Button>
+          {clearPhase === "failed" ? (
+            <Text
+              accessibilityLiveRegion="polite"
+              style={styles.clearFailedHint}
+            >
+              {t("settings.engine.clearFailed")}
+            </Text>
+          ) : null}
+        </View>
       ) : null}
       <View
         style={[
@@ -567,10 +629,7 @@ function RemoteEngineConfig() {
 
 const styles = StyleSheet.create({
   section: {
-    gap: 0,
-  },
-  engineGap: {
-    height: SPACING.md,
+    gap: SPACING.md,
   },
   configStack: {
     gap: SPACING.md,
@@ -578,10 +637,15 @@ const styles = StyleSheet.create({
   modelRow: {
     gap: SPACING.sm,
   },
+  progressStack: {
+    gap: SPACING.sm,
+    paddingLeft: RADIO_ROW_INDENT,
+  },
   modelSelectRow: {
     alignItems: "center",
     flexDirection: "row",
     gap: SPACING.md,
+    minHeight: MIN_INTERACTIVE_SIZE,
   },
   pressed: {
     opacity: PRESSED_OPACITY_SURFACE,
@@ -592,31 +656,17 @@ const styles = StyleSheet.create({
     fontWeight: FONT_WEIGHT.semibold,
   },
   costLine: {
-    color: COLORS.muted,
-    fontSize: FONT_SIZE.micro,
-    lineHeight: LINE_HEIGHT.tight,
-    paddingLeft: SPACING.md + 16 + SPACING.md,
-  },
-  statusLine: {
-    color: COLORS.muted,
-    fontSize: FONT_SIZE.micro,
-    lineHeight: LINE_HEIGHT.tight,
+    ...screenStyles.metaLine,
+    paddingLeft: RADIO_ROW_INDENT,
   },
   hint: {
-    color: COLORS.subtle,
-    fontSize: FONT_SIZE.micro,
-    lineHeight: LINE_HEIGHT.tight,
+    ...screenStyles.metaLine,
   },
   downloadError: {
-    color: COLORS.danger,
-    fontSize: FONT_SIZE.micro,
-    lineHeight: LINE_HEIGHT.tight,
+    ...screenStyles.metaLineDanger,
   },
   modelActions: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: SPACING.md,
-    paddingLeft: SPACING.md + 16 + SPACING.md,
+    paddingLeft: RADIO_ROW_INDENT,
   },
   testRow: {
     alignItems: "center",
@@ -626,10 +676,8 @@ const styles = StyleSheet.create({
     gap: SPACING.md,
   },
   verdict: {
-    color: COLORS.muted,
+    ...screenStyles.metaLine,
     flex: 1,
-    fontSize: FONT_SIZE.bodySm,
-    lineHeight: LINE_HEIGHT.body,
   },
   verdictPassed: {
     color: COLORS.brand,
@@ -647,7 +695,16 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.sm,
   },
   notice: {
-    fontSize: FONT_SIZE.bodySm,
-    lineHeight: LINE_HEIGHT.body,
+    // Same type as `metaLine`; the colour arrives inline from the caution
+    // tone (see the style prop), so the ink matches the card it sits in.
+    ...screenStyles.metaLine,
+  },
+  clearStack: {
+    alignItems: "flex-start",
+  },
+  // Anchored to the Remove action it explains, in the shared error-hint voice.
+  clearFailedHint: {
+    ...screenStyles.metaLineDanger,
+    marginTop: SPACING.xs,
   },
 });

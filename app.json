@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "whole",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "light",
     "ios": {
       "icon": "./assets/images/icon.png",
       "bundleIdentifier": "com.whole.app",
@@ -80,6 +80,7 @@
       "expo-asset",
       "expo-image",
       "expo-secure-store",
+      "expo-system-ui",
       [
         "llama.rn",
         {

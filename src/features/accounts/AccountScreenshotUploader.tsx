@@ -2,18 +2,13 @@ import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ActivityIndicator,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { Button } from "@/components/Button";
 import { Icon } from "@/components/Icon";
 import { IconButton } from "@/components/IconButton";
 import { PrivacyNote } from "@/components/PrivacyNote";
+import { Spinner } from "@/components/Spinner";
 import { ScreenshotMediaViewer } from "@/features/accounts/ScreenshotMediaViewer";
 import {
   type RecognitionIssue,
@@ -320,7 +315,7 @@ export function AccountScreenshotUploader({
           <View style={styles.overlayLayer} pointerEvents="box-none">
             <View style={styles.readyBadge} pointerEvents="none">
               {isRecognizing ? (
-                <ActivityIndicator color={COLORS.brand} size="small" />
+                <Spinner color={COLORS.brand} size={14} />
               ) : (
                 <Icon name="check" size={14} color={COLORS.brand} />
               )}

@@ -103,6 +103,7 @@ export const zhHansMessages = {
     group: "机构",
     noGroup: "无机构",
     createGroup: "新建机构",
+    createGroupError: "无法创建机构，请重试。",
     groupName: "机构名称",
     newGroupPlaceholder: "输入机构名称",
     // 多账户向导里机构只填一次，放在分页表单上方，这句说明它管的是整批账户。
@@ -114,7 +115,6 @@ export const zhHansMessages = {
     introDescription: "选择账户截图，然后补充并确认账户信息。",
     accountInformation: "账户信息",
     formHint: "请根据账户截图补充或修改",
-    saving: "正在保存…",
     saveAccount: "保存账户",
     saveErrorTitle: "保存失败",
     saveErrorMessage: "无法保存账户，请稍后重试。",
@@ -129,6 +129,7 @@ export const zhHansMessages = {
     language: "语言",
     languageFollowsSystem: "跟随系统设置",
     changeInSystemSettings: "在系统设置中更改",
+    changeInSystemSettingsHint: "打开 Whole 的系统设置",
     about: "关于",
     version: "版本 {{version}}",
     onDevice: {
@@ -145,8 +146,12 @@ export const zhHansMessages = {
       onDeviceHint: "可离线使用，数据不离开手机",
       remote: "云端模型服务",
       remoteHint: "效果更强，需要联网——截图上的文字会发送到你配置的服务",
+      modelChoice: "本机模型选择",
       download: "下载",
+      downloadHint: "下载 {{model}}，将占用 {{size}} 存储空间",
       downloading: "正在下载…",
+      downloadProgress: "模型下载进度",
+      downloadProgressValue: "已下载 {{percentage}}%",
       // 重试会从头开始（下载器会替换未完成的文件），文案不能承诺保留进度。
       downloadFailed: "下载未完成。请检查网络后重试。",
       // 单个模型行的成本行——存储和内存两笔账都在，因为 E2B/E4B 的选择
@@ -161,10 +166,10 @@ export const zhHansMessages = {
       apiKey: "API 密钥",
       apiKeyHint: "仅保存在这台手机上，保存后不再显示",
       save: "保存服务",
-      testing: "正在测试…",
       testPassed: "服务可用",
       testFailure: "服务没有响应。请检查地址、模型名称和 API 密钥。",
       clear: "移除服务",
+      clearFailed: "无法移除服务，配置仍已保存，请重试。",
       remotePrivacy:
         "使用云端服务时，Whole 从截图中读出的文字会发送到你配置的服务——截图本身不会发送。使用本机模型时，数据不会离开手机。",
     },
@@ -208,7 +213,6 @@ export const zhHansMessages = {
     cleanupManualPhotoLibrary:
       "账户截图已经用完。不再需要时，可以到系统相册删除它。",
     keepScreenshot: "保留账户截图",
-    deletingScreenshot: "正在删除…",
     deleteScreenshot: "删除账户截图",
     acknowledge: "我知道了",
     deletionErrorTitle: "无法删除账户截图",
@@ -226,8 +230,8 @@ export const zhHansMessages = {
     formHint: "修改需要更新的信息",
     lastFourDigitsLocked: "账号后四位在账户创建后无法修改",
     lastFourDigitsOptional: "选填——若账户有卡号，可补充后四位",
-    saving: "正在保存…",
     saveAccount: "保存修改",
+    loading: "正在加载账户",
     conflictTitle: "账户已存在",
     conflictMessage:
       "另一个名为“{{name}}”的账户有相同的账号后四位。请使用其他名称。",

@@ -6,6 +6,7 @@ import { Button } from "@/components/Button";
 import { defaultNamespace, pickAppLocale, resources } from "@/i18n/resources";
 import { COLORS } from "@/theme/colors";
 import { cardSurface } from "@/theme/screen-styles";
+import { RADIUS } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
 import { FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT } from "@/theme/typography";
 
@@ -32,7 +33,10 @@ export function AppErrorBoundary({ error, retry }: ErrorBoundaryProps) {
       .errorBoundary;
 
   return (
-    <View style={styles.screen}>
+    <ScrollView
+      contentContainerStyle={styles.screen}
+      showsVerticalScrollIndicator={false}
+    >
       <View style={styles.card}>
         <Text style={styles.title}>{copy.title}</Text>
         <Text style={styles.description}>{copy.description}</Text>
@@ -50,6 +54,7 @@ export function AppErrorBoundary({ error, retry }: ErrorBoundaryProps) {
         <ScrollView
           style={styles.detail}
           contentContainerStyle={styles.detailContent}
+          nestedScrollEnabled
         >
           <Text selectable style={styles.detailText}>
             {error.message}
@@ -60,7 +65,7 @@ export function AppErrorBoundary({ error, retry }: ErrorBoundaryProps) {
           {copy.retry}
         </Button>
       </View>
-    </View>
+    </ScrollView>
   );
 }
 
@@ -82,7 +87,7 @@ const styles = StyleSheet.create({
   },
   detail: {
     backgroundColor: COLORS.surfaceMuted,
-    borderRadius: 12,
+    borderRadius: RADIUS.sm,
     marginTop: SPACING.sm,
     maxHeight: 160,
   },
@@ -110,7 +115,7 @@ const styles = StyleSheet.create({
   screen: {
     alignItems: "center",
     backgroundColor: COLORS.background,
-    flex: 1,
+    flexGrow: 1,
     justifyContent: "center",
     paddingHorizontal: SPACING.xl,
     paddingVertical: SPACING.xxxl,

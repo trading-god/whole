@@ -100,7 +100,10 @@ export function AssetDistributionCard({
           ? distribution.filter((item) => item.held)
           : distribution
         ).map((item) => (
-          <View key={item.kind} style={styles.legendItem}>
+          <View
+            key={item.kind}
+            style={[styles.legendItem, isCompact && styles.legendItemCompact]}
+          >
             <View
               style={[
                 styles.legendDot,
@@ -164,13 +167,17 @@ const styles = StyleSheet.create({
   },
   legendCompact: {
     flexWrap: "wrap",
-    justifyContent: "flex-start",
+    rowGap: SPACING.md,
   },
   legendItem: {
     alignItems: "center",
     flexDirection: "row",
     flexShrink: 1,
     minWidth: 0,
+  },
+  legendItemCompact: {
+    flexBasis: "46%",
+    flexGrow: 1,
   },
   legendDot: {
     borderRadius: LEGEND_DOT_SIZE / 2,

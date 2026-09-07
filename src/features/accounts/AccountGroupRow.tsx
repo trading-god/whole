@@ -4,6 +4,16 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { Icon } from "@/components/Icon";
 import {
+  ACCOUNT_LIST_BALANCE_COMPACT,
+  ACCOUNT_LIST_BALANCE_MIN_FONT_SCALE,
+  ACCOUNT_LIST_LEADING_SIZE,
+  ACCOUNT_LIST_ROW_COMPACT,
+  ACCOUNT_LIST_SEPARATOR_INSET,
+  ACCOUNT_LIST_TRAILING_COMPACT,
+  ACCOUNT_LIST_TRAILING_MAX_WIDTH,
+  ACCOUNT_ROW_HEIGHT,
+} from "@/features/accounts/account-list-constants";
+import {
   type AssetAccount,
   type AssetAccountGroup,
   sumBalancesByKindInCurrency,
@@ -14,7 +24,6 @@ import { type Currency } from "@/features/assets/currencies";
 import { useAppLocale } from "@/i18n";
 import { COLORS } from "@/theme/colors";
 import { PRESSED_OPACITY_SURFACE } from "@/theme/interaction";
-import { ACCOUNT_ROW_HEIGHT } from "@/theme/sizes";
 import { SPACING } from "@/theme/spacing";
 import {
   FONT_SIZE,
@@ -22,10 +31,6 @@ import {
   FONT_WEIGHT,
   LETTER_SPACING,
 } from "@/theme/typography";
-
-// The chevron sits in a box the size of AccountRow's avatar, so the group
-// name, the child names under it and every separator start on one line.
-const CHEVRON_SLOT_SIZE = 44;
 
 type AccountGroupRowProps = {
   group: AssetAccountGroup;
@@ -41,6 +46,11 @@ type AccountGroupRowProps = {
   isBalanceHidden: boolean;
   isExpanded: boolean;
   onToggle: () => void;
+  // When true, the row renders the compact layout: the total wraps onto its
+  // own line below the name. Read once by the list owner (AccountsCard) and
+  // passed down, so the rows don't each subscribe to window dimensions — a
+  // keyboard show/hide on Android would otherwise re-render every mounted row.
+  isCompact: boolean;
   isFirst: boolean;
 };
 
@@ -60,6 +70,7 @@ export const AccountGroupRow = memo(function AccountGroupRow({
   isBalanceHidden,
   isExpanded,
   onToggle,
+  isCompact,
   isFirst,
 }: AccountGroupRowProps) {
   const { t } = useTranslation();
@@ -74,6 +85,16 @@ export const AccountGroupRow = memo(function AccountGroupRow({
   // Mirrors AccountRow: a group whose debts outweigh its balances is owed
   // money on net, and the figure says so in the caution ink.
   const isLiability = convertedTotal !== null && convertedTotal < 0;
+  const accountCountText = t("home.accountCountInGroup", {
+    count: accounts.length,
+  });
+  const totalText =
+    convertedTotal !== null
+      ? maskAssetAmount(
+          formatCurrency(convertedTotal, displayCurrency),
+          isBalanceHidden,
+        )
+      : "—";
 
   return (
     <View>
@@ -81,13 +102,15 @@ export const AccountGroupRow = memo(function AccountGroupRow({
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={group.name}
+        accessibilityValue={{ text: `${accountCountText}, ${totalText}` }}
+        accessibilityState={{ expanded: isExpanded }}
         accessibilityHint={
           isExpanded ? t("home.collapseGroup") : t("home.expandGroup")
         }
         onPress={onToggle}
         style={({ pressed }) => (pressed ? styles.pressed : undefined)}
       >
-        <View style={styles.header}>
+        <View style={[styles.header, isCompact && styles.headerCompact]}>
           <View style={styles.chevronSlot}>
             <Icon
               name={isExpanded ? "chevron-down" : "chevron-right"}
@@ -99,22 +122,22 @@ export const AccountGroupRow = memo(function AccountGroupRow({
             <Text numberOfLines={1} style={styles.name}>
               {group.name}
             </Text>
-            <Text style={styles.count}>
-              {t("home.accountCountInGroup", { count: accounts.length })}
-            </Text>
+            <Text style={styles.count}>{accountCountText}</Text>
           </View>
           <Text
             numberOfLines={1}
+            // Same rule as AccountRow's balance: shrink before clipping (see
+            // ACCOUNT_LIST_BALANCE_MIN_FONT_SCALE) — a tail-ellipsised total
+            // cuts the least-significant digits and reads as a wrong figure.
             adjustsFontSizeToFit
-            minimumFontScale={0.5}
-            style={[styles.total, isLiability && styles.totalLiability]}
+            minimumFontScale={ACCOUNT_LIST_BALANCE_MIN_FONT_SCALE}
+            style={[
+              styles.total,
+              isCompact && styles.totalCompact,
+              isLiability && styles.totalLiability,
+            ]}
           >
-            {convertedTotal !== null
-              ? maskAssetAmount(
-                  formatCurrency(convertedTotal, displayCurrency),
-                  isBalanceHidden,
-                )
-              : "—"}
+            {totalText}
           </Text>
         </View>
       </Pressable>
@@ -128,7 +151,7 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     // Starts where the group name does — the same inset as AccountRow's
     // separator, so grouped and ungrouped rows share one rhythm.
-    marginLeft: SPACING.lg + CHEVRON_SLOT_SIZE + SPACING.md,
+    marginLeft: ACCOUNT_LIST_SEPARATOR_INSET,
   },
   header: {
     alignItems: "center",
@@ -136,12 +159,15 @@ const styles = StyleSheet.create({
     minHeight: ACCOUNT_ROW_HEIGHT,
     paddingHorizontal: SPACING.lg,
   },
+  headerCompact: {
+    ...ACCOUNT_LIST_ROW_COMPACT,
+  },
   chevronSlot: {
     alignItems: "center",
     flexShrink: 0,
-    height: CHEVRON_SLOT_SIZE,
+    height: ACCOUNT_LIST_LEADING_SIZE,
     justifyContent: "center",
-    width: CHEVRON_SLOT_SIZE,
+    width: ACCOUNT_LIST_LEADING_SIZE,
   },
   identity: {
     flex: 1,
@@ -167,7 +193,15 @@ const styles = StyleSheet.create({
     fontVariant: FONT_VARIANT.tabular,
     fontWeight: FONT_WEIGHT.bold,
     marginLeft: SPACING.sm,
-    maxWidth: 150,
+    maxWidth: ACCOUNT_LIST_TRAILING_MAX_WIDTH,
+  },
+  // The total is a Text directly in the row (no wrapper View), so alignment
+  // comes from `textAlign` where AccountRow's uses `alignItems` on its value
+  // column.
+  totalCompact: {
+    ...ACCOUNT_LIST_TRAILING_COMPACT,
+    ...ACCOUNT_LIST_BALANCE_COMPACT,
+    textAlign: "right",
   },
   totalLiability: {
     color: COLORS.caution,

@@ -2,6 +2,7 @@ import { Children, type ReactNode } from "react";
 import { type StyleProp, StyleSheet, View, type ViewStyle } from "react-native";
 
 import { useResponsiveLayout } from "@/theme/layout";
+import { SPACING } from "@/theme/spacing";
 
 type ButtonGroupProps = {
   children: ReactNode;
@@ -28,7 +29,7 @@ const styles = StyleSheet.create({
   group: {
     alignItems: "stretch",
     flexDirection: "row",
-    gap: 10,
+    gap: SPACING.md,
   },
   groupCompact: {
     flexDirection: "column",
