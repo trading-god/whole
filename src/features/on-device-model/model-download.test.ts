@@ -5,30 +5,99 @@ import {
   ON_DEVICE_MODELS,
   onDeviceModel,
 } from "@/features/on-device-model/on-device-catalog";
-import {
-  deleteModel,
-  downloadModel,
-  modelDirectory,
-  modelFile,
-  modelPresence,
-} from "@/features/on-device-model/model-download";
-import { deferred } from "@/test-support/deferred";
 
-// expo-file-system is the single seam, faked inside the jest.mock factory
-// (class bindings outside it are not initialized when the factory runs).
-// The fake's state lives in these mock-prefixed bindings so tests can stage
-// per-file state from outside. The fake File keys on the LAST constructor
-// segment, and the fake Directory on the second-to-last (…/<modelId>), which
-// is exactly the real layout: document/whole_models/<modelId>/<fileName>.
+// The module under test is required FRESH in beforeEach (jest.resetModules +
+// require, per AGENTS.md): its download store is deliberately module-scope —
+// that is what makes a download survive the settings screen — so state from
+// one test would leak into the next through the static import.
+let modelDirectory: typeof import("@/features/on-device-model/model-download").modelDirectory;
+let modelFile: typeof import("@/features/on-device-model/model-download").modelFile;
+let modelPresence: typeof import("@/features/on-device-model/model-download").modelPresence;
+let modelDownloadState: typeof import("@/features/on-device-model/model-download").modelDownloadState;
+let observeModelDownload: typeof import("@/features/on-device-model/model-download").observeModelDownload;
+let startModelDownload: typeof import("@/features/on-device-model/model-download").startModelDownload;
+let reattachModelDownloads: typeof import("@/features/on-device-model/model-download").reattachModelDownloads;
+let deleteModel: typeof import("@/features/on-device-model/model-download").deleteModel;
+
+// Two seams, each faked inside its jest.mock factory (class bindings outside
+// a factory are not initialized when the factory runs):
+//
+// - `expo-file-system` for the disk: presence, `.part` cleanup, the rename.
+//   The fake's state lives in mock-prefixed bindings so tests can stage
+//   per-file state from outside. The fake File keys on the LAST constructor
+//   segment, and the fake Directory on the second-to-last (…/<modelId>),
+//   which is exactly the real layout: document/whole_models/<modelId>/<fileName>.
+// - `@kesha-antonov/react-native-background-downloader` for the transfer:
+//   a fake DownloadTask whose handlers tests fire by hand, so the store's
+//   reaction to progress/done/error is what's under test — the native side
+//   is the library's to guarantee.
 const mockFiles = new Map<
   string,
   { exists: boolean; size: number; deleted: boolean }
 >();
 const mockDirectories = new Set<string>();
-const mockDownloads =
-  jest.fn<(url: string, destination: string) => Promise<unknown>>();
-let mockDownloadShouldFail = false;
-let mockDownloadedSize: number | null = null;
+
+type FakeHandlers = {
+  progress?: (info: { bytesDownloaded: number }) => void;
+  done?: () => void;
+  error?: (info: { error: string; errorCode: number }) => void;
+};
+
+// The task the last createDownloadTask call returned, so a test can fire its
+// handlers; null until one exists. The class itself lives INSIDE the jest.mock
+// factory (jest hoists factory calls above class declarations — an out-of-scope
+// class is a TDZ error even with the mock- prefix allowance); this helper is
+// how tests construct the same fake for `getExistingDownloadTasks`.
+let mockLastTask: ReturnType<typeof mockMakeTask> | null = null;
+let mockMakeTask: (id: string) => {
+  id: string;
+  handlers: FakeHandlers;
+  started: boolean;
+  stopped: boolean;
+};
+const mockExistingTasks: ReturnType<typeof mockMakeTask>[] = [];
+const mockCompleteHandler = jest.fn<(jobId: string) => Promise<void>>();
+
+jest.mock("@kesha-antonov/react-native-background-downloader", () => {
+  class MockDownloadTask {
+    readonly id: string;
+    readonly handlers: FakeHandlers = {};
+    started = false;
+    stopped = false;
+    constructor(id: string) {
+      this.id = id;
+    }
+    progress(handler: FakeHandlers["progress"]): this {
+      this.handlers.progress = handler;
+      return this;
+    }
+    done(handler: FakeHandlers["done"]): this {
+      this.handlers.done = handler;
+      return this;
+    }
+    error(handler: FakeHandlers["error"]): this {
+      this.handlers.error = handler;
+      return this;
+    }
+    start(): void {
+      this.started = true;
+    }
+    stop(): Promise<void> {
+      this.stopped = true;
+      return Promise.resolve();
+    }
+  }
+  mockMakeTask = (id: string) => new MockDownloadTask(id);
+  return {
+    createDownloadTask: ({ id }: { id: string }) => {
+      const task = new MockDownloadTask(id);
+      mockLastTask = task;
+      return task;
+    },
+    getExistingDownloadTasks: async () => mockExistingTasks.slice(),
+    completeHandler: (jobId: string) => mockCompleteHandler(jobId),
+  };
+});
 
 jest.mock("expo-file-system", () => {
   class MockFile {
@@ -43,12 +112,6 @@ jest.mock("expo-file-system", () => {
       const last = segments[segments.length - 1];
       this.name = typeof last === "string" ? last : "";
     }
-    static fromDownload(name: string, size: number): MockFile {
-      mockFiles.set(name, { exists: true, size, deleted: false });
-      return new MockFile(name);
-    }
-    static downloadFileAsync = (url: string, destination: MockFile) =>
-      mockDownloads(url, destination.name);
     get exists(): boolean {
       return mockFiles.get(this.name)?.exists ?? false;
     }
@@ -109,32 +172,43 @@ const stage = (name: string, size: number) => {
   mockFiles.set(name, { exists: true, size, deleted: false });
 };
 
+// Delivers one model's download to a completed state through the fake task:
+// fires progress ticks, lands the `.part`, and invokes the done handler —
+// what the native layer would do for a successful transfer.
+// Delivers one model's download to a completed state through the fake task:
+// fires progress ticks, lands the `.part`, and awaits the done handler —
+// which is async in the store (the rename awaits the bridge) — so the
+// assertions after it see the settled state.
+const deliver = async (
+  task: ReturnType<typeof mockMakeTask>,
+  id: "gemma-4-e2b" | "gemma-4-e4b",
+) => {
+  const model = onDeviceModel(id);
+  task.handlers.progress?.({
+    bytesDownloaded: Math.floor(model.sizeBytes / 2),
+  });
+  stage(`${model.fileName}.part`, model.sizeBytes);
+  await task.handlers.done?.();
+};
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockFiles.clear();
   mockDirectories.clear();
-  mockDownloadShouldFail = false;
-  mockDownloadedSize = null;
-  // The download lands a `.part` the caller moves into place; a test that
-  // wants a truncated or failing download overrides these. Size is per
-  // MODEL, taken from the catalog by the `.part` name.
-  mockDownloads.mockImplementation(
-    async (_url: string, destination: string) => {
-      if (mockDownloadShouldFail) {
-        throw new Error("network");
-      }
-      const fileName = destination.replace(/\.part$/, "");
-      const model = ON_DEVICE_MODELS.find(
-        (candidate) => candidate.fileName === fileName,
-      );
-      const size = mockDownloadedSize ?? model?.sizeBytes ?? 0;
-      // The REAL return shape: a File, so the caller's `move`/`size` calls work.
-      const { File } = jest.requireMock("expo-file-system") as {
-        File: { fromDownload: (name: string, size: number) => unknown };
-      };
-      return File.fromDownload(destination, size);
-    },
-  );
+  mockLastTask = null;
+  mockExistingTasks.length = 0;
+  jest.resetModules();
+  const fresh = jest.requireActual(
+    "@/features/on-device-model/model-download",
+  ) as typeof import("@/features/on-device-model/model-download");
+  modelDirectory = fresh.modelDirectory;
+  modelFile = fresh.modelFile;
+  modelPresence = fresh.modelPresence;
+  modelDownloadState = fresh.modelDownloadState;
+  observeModelDownload = fresh.observeModelDownload;
+  startModelDownload = fresh.startModelDownload;
+  reattachModelDownloads = fresh.reattachModelDownloads;
+  deleteModel = fresh.deleteModel;
 });
 
 describe("the model layout", () => {
@@ -187,54 +261,70 @@ describe("modelPresence", () => {
   });
 });
 
-describe("downloadModel", () => {
-  it("downloads the model's file and reports progress to exactly 1", async () => {
+describe("startModelDownload", () => {
+  it("starts one task and reports progress into the store", () => {
     const model = onDeviceModel("gemma-4-e2b");
-    const progress: number[] = [];
+    const snapshots: string[] = [];
+    observeModelDownload("gemma-4-e2b", (snapshot) =>
+      snapshots.push(snapshot.phase),
+    );
 
-    await downloadModel("gemma-4-e2b", (fraction) => progress.push(fraction));
+    startModelDownload("gemma-4-e2b");
 
-    expect(mockFiles.get(model.fileName)?.exists).toBe(true);
-    // The final tick is exactly 1, and no tick ever claims more.
-    expect(progress[progress.length - 1]).toBe(1);
-    for (const fraction of progress) {
-      expect(fraction).toBeLessThanOrEqual(1);
-    }
-    expect(modelPresence("gemma-4-e2b").status).toBe("present");
-  });
-
-  it("downloads from the catalog's URL", async () => {
-    await downloadModel("gemma-4-e4b", () => {
-      // progress ignored
+    expect(mockLastTask?.started).toBe(true);
+    expect(modelDownloadState("gemma-4-e2b")).toEqual({
+      phase: "downloading",
+      fraction: 0,
     });
 
-    expect(mockDownloads).toHaveBeenCalledWith(
-      onDeviceModel("gemma-4-e4b").url,
-      expect.any(String),
-    );
+    mockLastTask?.handlers.progress?.({
+      bytesDownloaded: Math.floor(model.sizeBytes * 0.75),
+    });
+    expect(modelDownloadState("gemma-4-e2b").fraction).toBeCloseTo(0.75);
+    expect(snapshots).toContain("downloading");
   });
 
-  it("throws when the download fails", async () => {
-    mockDownloadShouldFail = true;
+  it("never reports more than the whole file", () => {
+    const model = onDeviceModel("gemma-4-e2b");
+    startModelDownload("gemma-4-e2b");
 
-    await expect(
-      downloadModel("gemma-4-e2b", () => {
-        // progress ignored
-      }),
-    ).rejects.toThrow("network");
+    mockLastTask?.handlers.progress?.({ bytesDownloaded: model.sizeBytes + 5 });
+
+    expect(modelDownloadState("gemma-4-e2b").fraction).toBe(1);
   });
 
-  it("deletes a wrong-sized download rather than installing it", async () => {
-    mockDownloadedSize = 999;
+  it("moves the completed .part into place and settles to idle", async () => {
+    const model = onDeviceModel("gemma-4-e2b");
+    startModelDownload("gemma-4-e2b");
 
-    await expect(
-      downloadModel("gemma-4-e2b", () => {
-        // progress ignored
-      }),
-    ).rejects.toThrow(/expected/);
+    await deliver(mockLastTask!, "gemma-4-e2b");
 
-    // The `.part` is gone and nothing was moved into place.
+    expect(mockFiles.get(model.fileName)?.exists).toBe(true);
+    expect(modelPresence("gemma-4-e2b").status).toBe("present");
+    expect(modelDownloadState("gemma-4-e2b")).toEqual({
+      phase: "idle",
+      fraction: 1,
+    });
+  });
+
+  it("signals the OS the job is over once the file lands", async () => {
+    startModelDownload("gemma-4-e2b");
+    await deliver(mockLastTask!, "gemma-4-e2b");
+
+    expect(mockCompleteHandler).toHaveBeenCalledWith("gemma-4-e2b");
+  });
+
+  it("fails without installing a wrong-sized download", () => {
+    const model = onDeviceModel("gemma-4-e2b");
+    startModelDownload("gemma-4-e2b");
+
+    mockLastTask?.handlers.progress?.({ bytesDownloaded: 100 });
+    stage(`${model.fileName}.part`, 999);
+    mockLastTask?.handlers.done?.();
+
+    expect(mockFiles.get(`${model.fileName}.part`)?.deleted).toBe(true);
     expect(modelPresence("gemma-4-e2b").status).toBe("absent");
+    expect(modelDownloadState("gemma-4-e2b").phase).toBe("failed");
   });
 
   it("removes a stale .part and a wrong-sized file before downloading", async () => {
@@ -242,67 +332,128 @@ describe("downloadModel", () => {
     stage(model.fileName, 5); // wrong-sized leftover
     stage(`${model.fileName}.part`, 7); // stale partial
 
-    await downloadModel("gemma-4-e2b", () => {
-      // progress ignored
-    });
+    startModelDownload("gemma-4-e2b");
+    await deliver(mockLastTask!, "gemma-4-e2b");
 
-    // `downloadFileAsync` ran (it would reject over an existing file) and
-    // the model is complete.
-    expect(mockDownloads).toHaveBeenCalled();
+    expect(mockLastTask?.started).toBe(true);
     expect(modelPresence("gemma-4-e2b").status).toBe("present");
   });
 
-  it("joins an in-flight download instead of restarting it", async () => {
+  it("does not start a second task while one is in flight", () => {
+    startModelDownload("gemma-4-e2b");
+    const first = mockLastTask;
+    startModelDownload("gemma-4-e2b");
+
+    // A second task would race the first's `.part` — the start is a no-op.
+    expect(mockLastTask).toBe(first);
+    expect(first?.started).toBe(true);
+  });
+
+  it("starts fresh once the previous download settled", async () => {
+    startModelDownload("gemma-4-e2b");
+    await deliver(mockLastTask!, "gemma-4-e2b");
+
+    startModelDownload("gemma-4-e2b");
+    expect(mockLastTask).not.toBeNull();
+    expect(mockLastTask?.started).toBe(true);
+  });
+
+  it("reports a failed transfer as failed, keeping the .part for a resume", () => {
     const model = onDeviceModel("gemma-4-e2b");
-    const { File } = jest.requireMock("expo-file-system") as {
-      File: { fromDownload: (name: string, size: number) => unknown };
-    };
-    const gate = deferred<unknown>();
-    mockDownloads.mockReturnValue(gate.promise);
+    startModelDownload("gemma-4-e2b");
+    stage(`${model.fileName}.part`, 7);
 
-    const firstProgress: number[] = [];
-    const secondProgress: number[] = [];
-    const first = downloadModel("gemma-4-e2b", (fraction) =>
-      firstProgress.push(fraction),
-    );
-    const second = downloadModel("gemma-4-e2b", (fraction) =>
-      secondProgress.push(fraction),
-    );
+    mockLastTask?.handlers.error?.({ error: "network", errorCode: 0 });
 
-    // A second `downloadFileAsync` for the same model would delete the
-    // `.part` the first is still writing into — the join must not start one.
-    expect(mockDownloads).toHaveBeenCalledTimes(1);
+    // The partial file SURVIVES the failure: iOS resume data and Android's
+    // paused-state recovery both build on the bytes already on disk.
+    expect(mockFiles.get(`${model.fileName}.part`)?.deleted).toBeFalsy();
+    expect(modelDownloadState("gemma-4-e2b").phase).toBe("failed");
+    expect(mockCompleteHandler).toHaveBeenCalledWith("gemma-4-e2b");
+  });
 
-    gate.resolve(File.fromDownload(`${model.fileName}.part`, model.sizeBytes));
-    await Promise.all([first, second]);
-
-    // Both callers ride the one download, progress included.
-    expect(firstProgress).toEqual([1]);
-    expect(secondProgress).toEqual([1]);
-    expect(modelPresence("gemma-4-e2b").status).toBe("present");
-
-    // The guard is per-download, not forever: once settled, the next start
-    // runs fresh.
-    mockDownloads.mockImplementation(
-      async (_url: string, destination: string) =>
-        File.fromDownload(destination, model.sizeBytes),
-    );
-    await downloadModel("gemma-4-e2b", () => {
-      // progress ignored
+  it("keeps subscriptions informed and lets them go", () => {
+    const seen: number[] = [];
+    const unsubscribe = observeModelDownload("gemma-4-e2b", (snapshot) => {
+      if (snapshot.phase === "downloading") {
+        seen.push(snapshot.fraction);
+      }
     });
-    expect(mockDownloads).toHaveBeenCalledTimes(2);
+    // The immediate current-state delivery: the store is idle before any
+    // download, so the listener's first call carries phase "idle" and no
+    // fraction is recorded yet.
+    expect(seen).toEqual([]);
+
+    startModelDownload("gemma-4-e2b");
+    const model = onDeviceModel("gemma-4-e2b");
+    mockLastTask?.handlers.progress?.({ bytesDownloaded: model.sizeBytes / 4 });
+    unsubscribe();
+
+    mockLastTask?.handlers.progress?.({ bytesDownloaded: model.sizeBytes / 2 });
+    expect(seen).toEqual([0, 0.25]);
+  });
+});
+
+describe("reattachModelDownloads", () => {
+  it("adopts a task the OS kept running across a relaunch", async () => {
+    const model = onDeviceModel("gemma-4-e2b");
+    // A leftover from a previous process: the native session was still
+    // transferring, half the file is already in the `.part`.
+    stage(`${model.fileName}.part`, Math.floor(model.sizeBytes / 2));
+    mockExistingTasks.push(mockMakeTask!("gemma-4-e2b"));
+
+    await reattachModelDownloads();
+
+    expect(modelDownloadState("gemma-4-e2b").phase).toBe("downloading");
+    // The reattached task was NOT restarted — it is the same task, with new
+    // handlers wired, and the download can continue from where it is.
+    expect(mockExistingTasks[0]?.started).toBe(false);
+
+    mockExistingTasks[0]?.handlers.progress?.({
+      bytesDownloaded: model.sizeBytes,
+    });
+    stage(`${model.fileName}.part`, model.sizeBytes);
+    mockExistingTasks[0]?.handlers.done?.();
+
+    expect(modelPresence("gemma-4-e2b").status).toBe("present");
+  });
+
+  it("ignores ids the catalog no longer knows", async () => {
+    mockExistingTasks.push(mockMakeTask!("gemma-3-nano"));
+
+    await reattachModelDownloads();
+
+    expect(modelDownloadState("gemma-4-e2b").phase).toBe("idle");
+    expect(mockExistingTasks[0]?.handlers.done).toBeUndefined();
+  });
+
+  it("does not double-adopt a model that is already active", async () => {
+    startModelDownload("gemma-4-e2b");
+    const live = mockLastTask;
+    mockExistingTasks.push(mockMakeTask!("gemma-4-e2b"));
+
+    await reattachModelDownloads();
+
+    // The live task keeps its handlers; the stale reattach record does not
+    // rewire them.
+    expect(live?.handlers.done).toBeDefined();
+    expect(mockExistingTasks[0]?.handlers.done).toBeUndefined();
   });
 });
 
 describe("deleteModel", () => {
-  it("removes the model's directory", () => {
+  it("stops an in-flight download and removes the model's directory", () => {
     const model = onDeviceModel("gemma-4-e2b");
+    startModelDownload("gemma-4-e2b");
+    const task = mockLastTask!;
     mockDirectories.add(model.id);
     stage(model.fileName, model.sizeBytes);
 
     deleteModel("gemma-4-e2b");
 
+    expect(task.stopped).toBe(true);
     expect(mockDirectories.has(model.id)).toBe(false);
+    expect(modelDownloadState("gemma-4-e2b").phase).toBe("idle");
   });
 
   it("is a no-op when the model is absent", () => {

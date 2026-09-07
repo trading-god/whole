@@ -21,8 +21,10 @@ import {
 } from "@/features/on-device-model/on-device-catalog";
 import {
   deleteModel,
-  downloadModel,
+  modelDownloadState,
   modelPresence,
+  observeModelDownload,
+  startModelDownload,
 } from "@/features/on-device-model/model-download";
 import {
   selectOnDeviceModel,
@@ -196,46 +198,25 @@ function ModelRow({
     setPresence(modelPresence(model.id));
   }, [model.id]);
 
-  const [downloadPhase, setDownloadPhase] = useState<
-    "idle" | "downloading" | "failed"
-  >("idle");
-  const [downloadFraction, setDownloadFraction] = useState(0);
-
-  const isMountedRef = useRef(true);
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
-
-  const startDownload = useCallback(() => {
-    setDownloadPhase("downloading");
-    // From zero: a retry replaces the partial file rather than resuming it,
-    // so seeding the bar from the leftover bytes would show progress the
-    // restart is about to throw away.
-    setDownloadFraction(0);
-    void downloadModel(model.id, (fraction) => {
-      if (isMountedRef.current) {
-        setDownloadFraction(fraction);
-      }
-    })
-      .then(() => {
-        if (isMountedRef.current) {
-          setDownloadPhase("idle");
+  // The download status lives OUTSIDE the row (model-download): the transfer
+  // must survive this component unmounting — the user leaving the settings
+  // screen, the engine card collapsing, or the app backgrounding — and a row
+  // re-mounting mid-download must find it still running, progress included.
+  // Unmounting cancels only the SUBSCRIPTION, never the download.
+  const [download, setDownload] = useState(() => modelDownloadState(model.id));
+  useEffect(
+    () =>
+      observeModelDownload(model.id, (snapshot) => {
+        setDownload(snapshot);
+        // A settled download changed the disk: re-read presence so the row
+        // swaps its progress bar for the Test/Delete actions (or the retry
+        // offer) the moment the transfer lands.
+        if (snapshot.phase !== "downloading") {
           refreshPresence();
         }
-      })
-      .catch(() => {
-        // The technical reason stays out of the UI — localized copy only
-        // (AGENTS.md), and the recovery does not depend on which byte range
-        // failed: retry the download.
-        if (isMountedRef.current) {
-          setDownloadPhase("failed");
-          refreshPresence();
-        }
-      });
-  }, [model.id, refreshPresence]);
+      }),
+    [model.id, refreshPresence],
+  );
 
   const deleteWeights = useCallback(() => {
     deleteModel(model.id);
@@ -247,12 +228,13 @@ function ModelRow({
   // here and only the body below it switches — an accessibility or layout
   // change to the head then can't drift between states.
   let body: ReactNode;
-  if (downloadPhase === "downloading") {
+  if (download.phase === "downloading") {
     body = (
       <View style={styles.progressStack}>
-        <DownloadProgressBar fraction={downloadFraction} />
+        <DownloadProgressBar fraction={download.fraction} />
         <DownloadByteReadout
-          sizeBytes={Math.round(downloadFraction * model.sizeBytes)}
+          fraction={download.fraction}
+          sizeBytes={Math.round(download.fraction * model.sizeBytes)}
           totalBytes={model.sizeBytes}
         />
         <Text style={styles.hint}>{t("settings.engine.downloading")}</Text>
@@ -265,7 +247,12 @@ function ModelRow({
         {selected ? (
           <ButtonGroup style={styles.modelActions}>
             <ModelTestButton />
-            <Button size="sm" variant="dangerGhost" onPress={deleteWeights}>
+            <Button
+              size="sm"
+              variant="dangerGhost"
+              fullWidth={false}
+              onPress={deleteWeights}
+            >
               {t("settings.engine.deleteModel")}
             </Button>
           </ButtonGroup>
@@ -279,7 +266,7 @@ function ModelRow({
     body = (
       <>
         <Text style={styles.costLine}>{modelCosts}</Text>
-        {downloadPhase === "failed" ? (
+        {download.phase === "failed" ? (
           <Text style={styles.downloadError}>
             {t("settings.engine.downloadFailed")}
           </Text>
@@ -291,7 +278,7 @@ function ModelRow({
           })}
           size="sm"
           variant="primary"
-          onPress={startDownload}
+          onPress={() => startModelDownload(model.id)}
         >
           {t("settings.engine.download")}
         </Button>
@@ -377,7 +364,7 @@ function ModelTestButton() {
     <View style={styles.testRow}>
       <Button
         size="sm"
-        variant="outline"
+        variant="ghost"
         fullWidth={false}
         loading={testPhase === "testing"}
         onPress={test}

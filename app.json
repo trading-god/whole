@@ -81,6 +81,7 @@
       "expo-image",
       "expo-secure-store",
       "expo-system-ui",
+      "@kesha-antonov/react-native-background-downloader",
       [
         "llama.rn",
         {

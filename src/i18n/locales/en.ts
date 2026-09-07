@@ -180,6 +180,7 @@ export const enMessages = {
       downloading: "Downloading…",
       downloadProgress: "Model download progress",
       downloadProgressValue: "{{percentage}}% downloaded",
+      downloadPercentValue: "{{percentage}}%",
       // A retry starts over from the beginning (the downloader replaces the
       // partial file), so the copy must not promise kept progress.
       downloadFailed:

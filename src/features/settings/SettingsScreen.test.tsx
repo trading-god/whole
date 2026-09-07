@@ -13,11 +13,25 @@ const E4B = onDeviceModel("gemma-4-e4b");
 const mockVerify = jest.fn<() => Promise<void>>();
 const mockSelectOnDeviceModel = jest.fn<(id?: unknown) => Promise<void>>();
 const mockModelPresence = jest.fn<(id?: unknown) => { status: string }>();
-const mockDownloadModel =
-  jest.fn<
-    (id: unknown, onProgress: (fraction: number) => void) => Promise<void>
-  >();
+const mockStartModelDownload = jest.fn<(id: unknown) => void>();
 const mockDeleteModel = jest.fn<(id: unknown) => void>();
+// The module-level download store, faked at the same seam the component
+// consumes: observeModelDownload reports the current snapshot immediately
+// and on every publish, per model id — which is what re-mounting rows ride.
+const mockSnapshots = new Map<string, { phase: string; fraction: number }>();
+const mockDownloadListeners = new Map<
+  string,
+  Set<(snapshot: { phase: string; fraction: number }) => void>
+>();
+const emitDownloadSnapshot = (
+  id: string,
+  snapshot: { phase: string; fraction: number },
+) => {
+  mockSnapshots.set(id, snapshot);
+  for (const listener of mockDownloadListeners.get(id) ?? []) {
+    listener(snapshot);
+  }
+};
 const mockLoadEngine = jest.fn<() => Promise<"on-device" | "remote">>();
 const mockSaveEngine =
   jest.fn<(engine: "on-device" | "remote") => Promise<void>>();
@@ -39,9 +53,27 @@ jest.mock("@/features/on-device-model/model-context", () => ({
 // mocked for the service Test button.
 jest.mock("@/features/on-device-model/model-download", () => ({
   modelPresence: (id: unknown) => mockModelPresence(id),
-  downloadModel: (id: unknown, onProgress: (fraction: number) => void) =>
-    mockDownloadModel(id, onProgress),
+  modelDownloadState: (id: unknown) =>
+    mockSnapshots.get(id as string) ?? { phase: "idle", fraction: 0 },
+  observeModelDownload: (
+    id: unknown,
+    listener: (snapshot: { phase: string; fraction: number }) => void,
+  ) => {
+    const key = id as string;
+    const set = mockDownloadListeners.get(key) ?? new Set();
+    set.add(listener);
+    mockDownloadListeners.set(key, set);
+    listener(mockSnapshots.get(key) ?? { phase: "idle", fraction: 0 });
+    return () => {
+      set.delete(listener);
+      if (set.size === 0) {
+        mockDownloadListeners.delete(key);
+      }
+    };
+  },
+  startModelDownload: (id: unknown) => mockStartModelDownload(id),
   deleteModel: (id: unknown) => mockDeleteModel(id),
+  reattachModelDownloads: () => Promise.resolve(),
 }));
 
 const mockLoadOnDeviceModelId =
@@ -120,7 +152,13 @@ beforeEach(() => {
   mockModelPresence.mockReturnValue({ status: "present" });
   mockLoadOnDeviceModelId.mockResolvedValue("gemma-4-e2b");
   mockSaveOnDeviceModelId.mockResolvedValue(undefined);
-  mockDownloadModel.mockResolvedValue(undefined);
+  mockStartModelDownload.mockImplementation((id) => {
+    // The default download behavior: the start lands the transfer in the
+    // downloading snapshot; tests that need more drive it by hand.
+    emitDownloadSnapshot(id as string, { phase: "downloading", fraction: 0 });
+  });
+  mockSnapshots.clear();
+  mockDownloadListeners.clear();
   mockLoadEngine.mockResolvedValue("on-device");
   mockSaveEngine.mockResolvedValue(undefined);
   mockLoadRemoteConfig.mockResolvedValue(null);
@@ -225,14 +263,8 @@ describe("SettingsScreen", () => {
       expect(screen.getAllByText("Download")).toHaveLength(1);
     });
 
-    it("shows byte and accessible percentage progress while downloading", async () => {
+    it("shows byte, percentage, and accessible progress while downloading", async () => {
       mockModelPresence.mockReturnValue({ status: "absent" });
-      const pendingDownload = deferred<void>();
-      let reportProgress: ((fraction: number) => void) | undefined;
-      mockDownloadModel.mockImplementation(async (_id, onProgress) => {
-        reportProgress = onProgress;
-        return pendingDownload.promise;
-      });
 
       await renderWithProviders(<SettingsScreen />);
       await fireEvent.press(screen.getAllByText("Download")[0]);
@@ -241,9 +273,13 @@ describe("SettingsScreen", () => {
       expect(
         screen.getByText(`0 B of ${formatBytes(E2B.sizeBytes)}`),
       ).toBeOnTheScreen();
+      expect(screen.getByText("0%")).toBeOnTheScreen();
 
       await act(() => {
-        reportProgress?.(0.42);
+        emitDownloadSnapshot("gemma-4-e2b", {
+          phase: "downloading",
+          fraction: 0.42,
+        });
       });
 
       await waitFor(() => {
@@ -260,19 +296,21 @@ describe("SettingsScreen", () => {
             `${formatBytes(Math.round(E2B.sizeBytes * 0.42))} of ${formatBytes(E2B.sizeBytes)}`,
           ),
         ).toBeOnTheScreen();
-      });
-
-      await act(() => {
-        pendingDownload.resolve();
+        expect(screen.getByText("42%")).toBeOnTheScreen();
       });
     });
 
     it("runs a download to completion and lands on the downloaded state", async () => {
-      // Initial render: absent. After the download resolves, the presence
+      // Initial render: absent. After the download settles, the presence
       // re-read reports present.
       mockModelPresence.mockReturnValue({ status: "absent" });
-      mockDownloadModel.mockImplementation(async () => {
+      mockStartModelDownload.mockImplementation((id) => {
+        emitDownloadSnapshot(id as string, {
+          phase: "downloading",
+          fraction: 0,
+        });
         mockModelPresence.mockReturnValue({ status: "present" });
+        emitDownloadSnapshot(id as string, { phase: "idle", fraction: 0 });
       });
 
       await renderWithProviders(<SettingsScreen />);
@@ -282,14 +320,20 @@ describe("SettingsScreen", () => {
       // The downloaded state: the row swaps its download button for the
       // Test button, which only a present model offers.
       await waitFor(() => {
-        expect(mockDownloadModel).toHaveBeenCalledTimes(1);
+        expect(mockStartModelDownload).toHaveBeenCalledTimes(1);
         expect(screen.getByText("Test")).toBeTruthy();
       });
     });
 
     it("reports a failed download with the retry copy", async () => {
       mockModelPresence.mockReturnValue({ status: "absent" });
-      mockDownloadModel.mockRejectedValue(new Error("network"));
+      mockStartModelDownload.mockImplementation((id) => {
+        emitDownloadSnapshot(id as string, {
+          phase: "downloading",
+          fraction: 0,
+        });
+        emitDownloadSnapshot(id as string, { phase: "failed", fraction: 0 });
+      });
 
       await renderWithProviders(<SettingsScreen />);
 

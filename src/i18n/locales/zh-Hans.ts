@@ -152,6 +152,7 @@ export const zhHansMessages = {
       downloading: "正在下载…",
       downloadProgress: "模型下载进度",
       downloadProgressValue: "已下载 {{percentage}}%",
+      downloadPercentValue: "{{percentage}}%",
       // 重试会从头开始（下载器会替换未完成的文件），文案不能承诺保留进度。
       downloadFailed: "下载未完成。请检查网络后重试。",
       // 单个模型行的成本行——存储和内存两笔账都在，因为 E2B/E4B 的选择

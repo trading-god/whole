@@ -58,22 +58,32 @@ export function DownloadProgressBar({ fraction }: DownloadProgressBarProps) {
   );
 }
 
-/** The byte readout beside the bar: "{{size}} of {{total}}" via the partial copy. */
+/** The readout row under the bar: bytes at the left, percentage at the right. */
 export function DownloadByteReadout({
+  fraction,
   sizeBytes,
   totalBytes,
 }: {
+  /** 0..1 across the whole file. */
+  fraction: number;
   sizeBytes: number;
   totalBytes: number;
 }) {
   const { t } = useTranslation();
   return (
-    <Text style={styles.readout}>
-      {t("settings.engine.partialDownload", {
-        size: formatBytes(sizeBytes),
-        total: formatBytes(totalBytes),
-      })}
-    </Text>
+    <View style={styles.readoutRow}>
+      <Text style={styles.readout}>
+        {t("settings.engine.partialDownload", {
+          size: formatBytes(sizeBytes),
+          total: formatBytes(totalBytes),
+        })}
+      </Text>
+      <Text style={styles.readout}>
+        {t("settings.engine.downloadPercentValue", {
+          percentage: Math.round(Math.max(0, Math.min(1, fraction)) * 100),
+        })}
+      </Text>
+    </View>
   );
 }
 
@@ -92,5 +102,11 @@ const styles = StyleSheet.create({
   },
   readout: {
     ...screenStyles.metaLine,
+  },
+  // Bytes hug the bar's left edge, the percentage its right — one row under
+  // the bar, the two facts never competing for the same starting point.
+  readoutRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
   },
 });
