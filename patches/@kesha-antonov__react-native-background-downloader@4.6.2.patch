@@ -1,8 +1,25 @@
 diff --git a/plugin/build/index.js b/plugin/build/index.js
-index 2ec94452a71e970327c774eb5a8e2538202fcaf2..c1950ea1af2e8ba86e08112114e8376626ff9c42 100644
+index 2ec94452a71e970327c774eb5a8e2538202fcaf2..df66faa4d35c94997c0213c7fd21fc8432d76955 100644
 --- a/plugin/build/index.js
 +++ b/plugin/build/index.js
-@@ -175,9 +175,15 @@ function addSwiftSupport(appDelegateContents) {
+@@ -163,11 +163,15 @@ function addSwiftSupport(appDelegateContents) {
+     // Add the handleEventsForBackgroundURLSession method if not already present
+     if (!appDelegateContents.includes('handleEventsForBackgroundURLSession')) {
+         const methodToAdd = `
+-  func application(
++  override func application(
+     _ application: UIApplication,
+     handleEventsForBackgroundURLSession identifier: String,
+     completionHandler: @escaping () -> Void
+   ) {
++    // SDK >= 52 ExpoAppDelegate owns this method and forwards it to its
++    // ExpoAppDelegateSubscribers (e.g. expo-file-system's background session
++    // handler); keep that chain alive before taking our identifier.
++    super.application(application, handleEventsForBackgroundURLSession: identifier, completionHandler: completionHandler)
+     RNBackgroundDownloader.setCompletionHandlerWithIdentifier(identifier, completionHandler: completionHandler)
+   }
+ `;
+@@ -175,9 +179,15 @@ function addSwiftSupport(appDelegateContents) {
          const classEndRegex = /^}$/gm;
          const matches = [...appDelegateContents.matchAll(classEndRegex)];
          if (matches.length > 0) {
