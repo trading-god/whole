@@ -2,9 +2,13 @@
 pnpm-lock.yaml
 pnpm-workspace.yaml
 
-# The bundled on-device model weights: a 3 GB binary that is neither text nor
-# hand-edited, and larger than Prettier will read.
-assets/models/
+# Vendored agent skills: upstream copies recorded in `skills-lock.json`, not
+# hand-edited source. Formatting them would rewrite bytes this repo does not
+# own, turning every re-vendor into a conflict against Prettier's reflow. The
+# entry is load-bearing, not tidiness: Prettier does descend into dot
+# directories, and 38 of the 55 vendored files fail `format:check` as upstream
+# ships them.
+.claude/skills/
 
 # OCR eval samples — captured OCR output (blocks.json), gold expectations
 # (expected.json), and derived debugging artifacts (trace.json) are recorded

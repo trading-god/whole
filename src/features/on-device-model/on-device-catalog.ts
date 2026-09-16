@@ -20,8 +20,9 @@
 // mmap'd weights plus KV cache and compute buffers at the recognition
 // context window. A device short of it does not fail loudly — the OS
 // jetsams the app mid-load — so the number a user weighing the choice
-// needs is stated up front. Measured on the eval devices (see
-// whole-test AVD notes): E2B loads in ~2.7 GB, E4B in ~4.3 GB.
+// needs is stated up front. Measured on the eval devices (the `whole-test`
+// AVD is sized for this — see `docs/verifying-recognition-on-device.md`):
+// E2B loads in ~2.7 GB, E4B in ~4.3 GB.
 import { z } from "zod";
 
 export type OnDeviceModelId = "gemma-4-e2b" | "gemma-4-e4b";
