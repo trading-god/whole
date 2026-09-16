@@ -16,7 +16,7 @@ import {
   normalizeCurrencyToken,
   type Currency,
 } from "../contract/currency";
-import { isMaskedCard, stripDateFragments } from "./amount";
+import { MASK_CHARS, isMaskedCard, stripDateFragments } from "./amount";
 import { leadingCurrencyName } from "./currency-mention";
 import type { InstitutionConfig } from "../institutions/config";
 import {
@@ -387,6 +387,24 @@ function accountDigits(tokenText: string): string | undefined {
   return digits.length >= MIN_ACCOUNT_DIGITS ? digits : undefined;
 }
 
+// A masked card's own digits: a mask run, then the tail. Compiled once from the
+// shared mask alphabet.
+//
+// The mask run must NOT follow a digit, and that guard is what makes the period
+// in `MASK_CHARS` safe here. `MASKED_CARD_RE` can rely on its `{2,}` instead —
+// "3,204.57" carries one period, not two — but this pattern needs `+`, because
+// Vision reads "(...4821)" as "（.2140）" often enough that a single dot has to
+// count. With `+` and no guard, every decimal fraction of four or more digits
+// became a card tail: "167.6488752" → "8752", "1.7554" → "7554", "0.00021312"
+// → "1312" — all of them real tokens in the recorded corpus, all of them
+// crypto quantities and FX rates rather than account numbers. A WRONG last four
+// is worse than none: it is the field account dedupe is keyed on, so the same
+// wallet re-recognized after its quantity moved would have landed as a second
+// account instead of updating the first.
+const MASKED_CARD_TAIL_RE = new RegExp(
+  `(?:^|[^0-9])[${MASK_CHARS}…]+\\s*(\\d{4,})`,
+);
+
 // A real account name contains at least one letter — in any script, so CJK
 // product names ("一卡通") qualify. Digits alone never name an account: the
 // trailing "4242" of a masked card row is `unknown` and short enough to escape
@@ -641,7 +659,11 @@ function lastFourFromLine(
   // next to an ordinary account number often enough that returning early here
   // cost the row its last four entirely — and, on a number-last institution,
   // let the next account's balance leak into this region.
-  const masked = rowText.match(/[·•*]+\s*(\d{4,})/);
+  // The same mask alphabet `isMaskedCard` tests, so a row the classifier calls
+  // a masked card is one this can read the tail off. Written out separately the
+  // two drifted: the classifier learned "(...4821)" and this did not, so the
+  // row was a card row whose last four came back undefined.
+  const masked = MASKED_CARD_TAIL_RE.exec(rowText);
   if (masked) {
     return masked[1].slice(-4);
   }
@@ -1935,4 +1957,217 @@ function finish(
     sourceText: group.sourceText,
     lineNumbers: group.sourceLineNumbers,
   };
+}
+
+// ── Assembly from supplied boundaries ──────────────────────────────────────
+
+/**
+ * One account's lines, as something OTHER than the state machine above decided
+ * them.
+ *
+ * Line numbers are 1-based against the same `ClassifiedLine[]` `groupIntoAccounts`
+ * walks, which is what the prompt prints. `number: 0` declines — the account
+ * shows no account number — and an empty `balance` declines the figure.
+ */
+export type AccountLineAssignment = {
+  /** The line that TITLES the account. May also carry its number and figure. */
+  name: number;
+  /** The line carrying the account number, or 0 when the name line carries it. */
+  number: number;
+  /** The lines whose figures are this account's balance. */
+  balance: number[];
+};
+
+/**
+ * Assembles accounts from boundaries somebody else decided.
+ *
+ * The second entry point into this module, and the division is the whole point
+ * of it. `groupIntoAccounts` above INFERS where an account begins and ends —
+ * that inference is institution-shaped, it is what `accountNumberEndsAccount`
+ * and `accountNumberStartsAccount` are, and on a layout no config was written
+ * against it is what fails. This function keeps every rule that READS a row —
+ * `accountNameFromTokens`, `lastFourFromLine`, `balanceAmountsOf`,
+ * `parseMultiCurrencyRow`, `finish`'s currency resolution — and takes the
+ * boundaries as an argument instead.
+ *
+ * That split is not a guess about which half is weak. It is what the corpus
+ * says: on the synthetic screens the engine reads every FIGURE correctly and
+ * then banks them all against one region, so what a model has to supply is
+ * assignment, not values. It also bounds what a wrong answer can do — every
+ * name, digit and figure here still comes out of an OCR token this engine
+ * parsed, so a model cannot state a balance, misspell an account or invent a
+ * currency. The worst it can do is put a real figure under the wrong real name,
+ * which is what the editable draft is for.
+ *
+ * Assignments that do not hold up are dropped rather than honoured:
+ *
+ * - a line number outside the screen names nothing;
+ * - a name line that yields no account name is not a title — a pure field label
+ *   ("Available balance") leaves `nameTokensOf` with nothing, and honouring it
+ *   would open a region called nothing;
+ * - a balance line carrying no readable figure is the model pointing at the
+ *   wrong row, and taking it would give the account a balance of zero rows;
+ * - a balance line already claimed by an earlier account is refused, because
+ *   two accounts sharing a figure is how a screen's money gets counted twice —
+ *   the one failure mode this whole path exists to end.
+ */
+export function assembleAssignedAccounts(
+  lines: ClassifiedLine[],
+  assignments: readonly AccountLineAssignment[],
+  institutionConfig: InstitutionConfig,
+  inferredCurrency?: Currency,
+): (OcrAccountGroup | null)[] {
+  const keywordRegex = buildAccountKeywordRegex(
+    institutionConfig.accountKeywords,
+  );
+  const iconTags = institutionConfig.iconTags ?? [];
+  const at = (lineNumber: number): ClassifiedLine | undefined =>
+    lineNumber >= 1 && lineNumber <= lines.length
+      ? lines[lineNumber - 1]
+      : undefined;
+
+  // Aligned 1:1 with `assignments`, `null` where one did not hold up. The
+  // caller has per-account answers of its own to re-attach — the kind, in the
+  // turn this was written for — and zipping them by position only works if a
+  // dropped assignment still occupies its slot.
+  const claimed = new Set<number>();
+  const groups: (OcrAccountGroup | null)[] = [];
+
+  for (const assignment of assignments) {
+    const nameLine = at(assignment.name);
+    if (nameLine === undefined) {
+      groups.push(null);
+      continue;
+    }
+    const named = accountNameFromTokens(
+      nameLine.tokens,
+      keywordRegex,
+      iconTags,
+    );
+    if (named === undefined) {
+      groups.push(null);
+      continue;
+    }
+    const group = createGroup(named.name, named.source);
+    attachSource(group, nameLine, assignment.name - 1);
+
+    // The name row when no separate number row was named: an account number
+    // shares the title row as often as it gets one of its own, and the reader
+    // is the same either way.
+    const numberLine = at(assignment.number) ?? nameLine;
+    group.lastFour = lastFourFromLine(
+      numberLine,
+      institutionConfig.accountNumberLastFour,
+    );
+    if (numberLine !== nameLine) {
+      attachSource(group, numberLine, assignment.number - 1);
+    }
+
+    for (const lineNumber of assignment.balance) {
+      const line = at(lineNumber);
+      if (line === undefined || claimed.has(lineNumber)) {
+        continue;
+      }
+      const read = readAssignedBalance(at(lineNumber - 1), line);
+      if (read.balances.length === 0 && !read.skippedUnstorable) {
+        continue;
+      }
+      claimed.add(lineNumber);
+      group.pending.push(...read.balances);
+      group.sawUnstorableBalance ||= read.skippedUnstorable;
+      if (line !== nameLine) {
+        attachSource(group, line, lineNumber - 1);
+      }
+    }
+
+    groups.push(
+      finish(group, institutionConfig.defaultCurrency, inferredCurrency),
+    );
+  }
+
+  return groups;
+}
+
+/**
+ * Reads one assigned line's figures.
+ *
+ * The column-aligned table is asked about first and from the row ABOVE, because
+ * that is the only place the answer lives: a "HKD USD CNY" header over bare
+ * figures denominates them by x-position and nothing on the value row itself
+ * says which column is which. Read without it, a four-column row becomes four
+ * currency-less figures summed into one made-up total — the same invented
+ * number this path exists to stop, arrived at from the other direction.
+ */
+function readAssignedBalance(
+  above: ClassifiedLine | undefined,
+  line: ClassifiedLine,
+): { balances: PendingBalance[]; skippedUnstorable: boolean } {
+  const lowerLine = line.text.toLowerCase();
+  const isDebt = statesDebt(lowerLine);
+  // A row the vocabulary already knows is not a balance is refused however it
+  // is assigned — the same backstop every branch of `groupIntoAccounts` applies
+  // before it banks a figure. Without it the model could name a broker's buying
+  // power and a maintenance margin alongside the net liquidation, and `finish`
+  // would ADD all three into one figure the screenshot never printed: exactly
+  // the fabrication this whole path exists to end, arrived at through the
+  // model instead of through the state machine. `nonBalanceMarkers` carries
+  // those shelf terms precisely so both halves can refuse them.
+  //
+  // A debt row is the exception the other branches make too: "您花了 …" states
+  // an amount owed, which IS the card's balance even though the row reads as a
+  // spending line.
+  if (!isDebt && isNonBalanceRow(lowerLine)) {
+    return { balances: [], skippedUnstorable: false };
+  }
+  const table =
+    above !== undefined && isCurrencyHeaderRow(above)
+      ? parseMultiCurrencyRow(above, line)
+      : null;
+  if (table !== null) {
+    // The debt rule, kept identical to `balanceAmountsOf`'s: on a row that says
+    // its figure is owed, only the labelled column counts and it counts
+    // negative. Everything else there is the card's context.
+    const balances = table.balances
+      .filter(
+        (balance) => !isDebt || balance.valueIndex === table.debtValueIndex,
+      )
+      .map(({ currency, amount }) => ({
+        currency,
+        amount: isDebt ? -Math.abs(amount) : amount,
+      }));
+    return { balances, skippedUnstorable: table.skippedUnstorable };
+  }
+  return balanceAmountsOf(line.tokens, lineCurrencyOf(line.tokens), isDebt);
+}
+
+/**
+ * Whether this line carries digits that could identify an account.
+ *
+ * Defined as "what `lastFourFromLine` would find", rather than as its own
+ * pattern, because its one caller is the structure prompt's `#` marker — and a
+ * marker that promised digits the reader then could not extract would be
+ * pointing the model at an answer that cannot be honoured.
+ */
+export function lineCarriesAccountDigits(line: ClassifiedLine): boolean {
+  return lastFourFromLine(line, undefined) !== undefined;
+}
+
+/**
+ * Whether this line carries a figure that could become a balance.
+ *
+ * The `$` marker's counterpart to `lineCarriesAccountDigits`, and defined the
+ * same way — as what the READER would find — for the same reason. Asking the
+ * token roles directly was close but not equal: `balanceAmountsOf` drops a
+ * figure whose text is explicitly `+`-signed ("稳健理财 5,203.47 +0.88" pairs a
+ * holding with yesterday's return), so a row whose only figure was a gain was
+ * marked `$`, assigned as a balance, and then read as nothing at all — leaving
+ * the account named and moneyless while its real balance row went unclaimed.
+ */
+export function lineCarriesBalanceAmount(line: ClassifiedLine): boolean {
+  return line.tokens.some(
+    (token) =>
+      token.role === "amount" &&
+      token.amount !== undefined &&
+      !token.text.trim().startsWith("+"),
+  );
 }

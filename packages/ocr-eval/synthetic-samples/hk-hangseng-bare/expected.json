@@ -1,0 +1,24 @@
+[
+  {
+    "accountName": "綜合戶口",
+    "kind": "cash",
+    "accountLastFourDigits": "8841",
+    "balances": [
+      {
+        "currency": "HKD",
+        "balance": 168240.77
+      }
+    ]
+  },
+  {
+    "accountName": "外幣儲蓄",
+    "kind": "cash",
+    "accountLastFourDigits": "8842",
+    "balances": [
+      {
+        "currency": "USD",
+        "balance": 12400.5
+      }
+    ]
+  }
+]

@@ -30,6 +30,26 @@ const wellFormed = (answer: Annotation): Annotation => ({
   ...answer,
 });
 
+// The STRUCTURE turn's answer shape. A screen whose institution nothing knows
+// takes that turn instead of the annotation one, so its cases answer with line
+// numbers rather than region numbers — and `wellFormed` completes the same two
+// required fields either way.
+type Assigned = {
+  name: number;
+  number?: number;
+  balance?: number[];
+  kind?: string;
+};
+
+const assigning = (...accounts: Assigned[]): Annotation => ({
+  accounts: accounts.map((account) => ({
+    number: 0,
+    balance: [],
+    kind: "unknown",
+    ...account,
+  })),
+});
+
 const answering = (...answers: (string | Annotation)[]) => {
   const runModel = vi.fn<(attempt: RecognitionAttempt) => Promise<string>>();
   const encode = (answer: string | Annotation) =>
@@ -86,7 +106,7 @@ describe("recognizeWithModel", () => {
     );
     const outcome = await recognizeWithModel(
       UNCLAIMED,
-      answering({ accounts: [{ group: 1, kind: "investment" }] }),
+      answering(assigning({ name: 1, balance: [2], kind: "investment" })),
     );
 
     expect(outcome.ok).toBe(true);
@@ -106,7 +126,7 @@ describe("recognizeWithModel", () => {
     );
     const outcome = await recognizeWithModel(
       UNCLAIMED,
-      answering({ accounts: [{ group: 1, kind: "unknown" }] }),
+      answering(assigning({ name: 1, balance: [2], kind: "unknown" })),
     );
 
     expect(outcome.ok).toBe(true);
@@ -313,7 +333,11 @@ describe("recognizeWithModel", () => {
     // Past the bound the grammar makes a region number undecodable, so a kind
     // meant for region 70 could only come back as one in range — landing on a
     // different account. Those regions are left out of the prompt entirely.
+    // Led by a brand token, because the region bound belongs to the ANNOTATION
+    // turn — an unknown institution takes the structure turn instead, which
+    // addresses lines rather than regions.
     const many = screen(
+      row("OCBC"),
       ...Array.from({ length: 70 }, (_unused, index) => [
         row(`Account ${index + 1}`),
         row("可用余额", "1.00", "SGD"),
@@ -380,7 +404,10 @@ describe("recognizeWithModel and the inferred home currency", () => {
   it("drops the bare figure when the model declines a currency", async () => {
     const outcome = await recognizeWithModel(
       BARE,
-      answering({ homeCurrency: "none", accounts: [] }),
+      answering({
+        homeCurrency: "none",
+        ...assigning({ name: 1, balance: [2], kind: "cash" }),
+      }),
     );
 
     expect(outcome.ok).toBe(true);
@@ -396,7 +423,10 @@ describe("recognizeWithModel and the inferred home currency", () => {
   it("denominates it in the currency the model inferred", async () => {
     const outcome = await recognizeWithModel(
       BARE,
-      answering({ homeCurrency: "CNY", accounts: [] }),
+      answering({
+        homeCurrency: "CNY",
+        ...assigning({ name: 1, balance: [2], kind: "cash" }),
+      }),
     );
 
     expect(outcome.ok).toBe(true);
@@ -408,14 +438,17 @@ describe("recognizeWithModel and the inferred home currency", () => {
     ]);
   });
 
-  it("re-reads the screen rather than patching the result", async () => {
-    // The proof that it is a second PASS: the account keeps everything the
-    // first pass read (name, region identity), not just a currency stapled on.
+  it("assembles with the inferred currency in hand", async () => {
+    // On the structure turn the currency is not stapled onto a finished
+    // result — it is passed to the assembly, which denominates the figure as
+    // it reads it. The account still keeps everything the ENGINE read (its
+    // name, off the tokens), so the currency is the only thing the model
+    // contributed to the balance.
     const outcome = await recognizeWithModel(
       BARE,
       answering({
         homeCurrency: "HKD",
-        accounts: [{ group: 1, kind: "cash" }],
+        ...assigning({ name: 1, balance: [2], kind: "cash" }),
       }),
     );
 
@@ -462,7 +495,10 @@ describe("recognizeWithModel and the inferred home currency", () => {
 
     const outcome = await recognizeWithModel(
       statedBelow,
-      answering({ homeCurrency: "HKD", accounts: [] }),
+      answering({
+        homeCurrency: "HKD",
+        ...assigning({ name: 1, balance: [2, 3], kind: "cash" }),
+      }),
     );
 
     expect(outcome.ok).toBe(true);
@@ -493,14 +529,47 @@ describe("recognizeWithModel and the inferred home currency", () => {
     ]);
   });
 
+  it("re-groups a configured institution that declares no currency", async () => {
+    // `redenominate`'s own case, and the only shape left that reaches it: an
+    // institution the configs DO know (so the annotation turn runs) but which
+    // declares no `defaultCurrency`, because a crypto exchange holds many. The
+    // engine drops the bare figure on the first pass and the screen has to be
+    // grouped again with the inferred currency in hand — a currency cannot be
+    // patched onto a balance that was never read.
+    const exchange = screen(
+      row("OKX"),
+      row("Funding", "Account"),
+      row("可用余额", "1,204.50"),
+    );
+
+    const outcome = await recognizeWithModel(
+      exchange,
+      answering({
+        homeCurrency: "USD",
+        accounts: [{ group: 1, kind: "crypto" }],
+      }),
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) {
+      throw new Error("unreachable");
+    }
+    expect(outcome.recognition.accounts[0]?.balances).toEqual([
+      { currency: "USD", balance: 1204.5 },
+    ]);
+  });
+
   it("retries an answer that omits the currency entirely", async () => {
     // The field is required precisely because an optional one was skipped: on
     // the real runtime the grammar cannot close the object without it, and
     // this is what catches a runtime that decodes without a grammar.
-    const runModel = answering(JSON.stringify({ accounts: [] }), {
-      homeCurrency: "CNY",
-      accounts: [],
-    });
+    const runModel = answering(
+      JSON.stringify(assigning({ name: 1, balance: [2], kind: "cash" })),
+      {
+        homeCurrency: "CNY",
+        ...assigning({ name: 1, balance: [2], kind: "cash" }),
+      },
+    );
     const outcome = await recognizeWithModel(BARE, runModel);
 
     expect(outcome.ok).toBe(true);
@@ -519,8 +588,14 @@ describe("recognizeWithModel and the inferred home currency", () => {
     // catches it when a runner answers without one, and the loop retries with
     // the violation named rather than storing a currency the form cannot hold.
     const runModel = answering(
-      { homeCurrency: "JPY", accounts: [] },
-      { homeCurrency: "CNY", accounts: [] },
+      {
+        homeCurrency: "JPY",
+        ...assigning({ name: 1, balance: [2], kind: "cash" }),
+      },
+      {
+        homeCurrency: "CNY",
+        ...assigning({ name: 1, balance: [2], kind: "cash" }),
+      },
     );
     const outcome = await recognizeWithModel(BARE, runModel);
 
@@ -532,5 +607,306 @@ describe("recognizeWithModel and the inferred home currency", () => {
     expect(outcome.recognition.accounts[0]?.balances).toEqual([
       { currency: "CNY", balance: 76007.05 },
     ]);
+  });
+});
+
+// The STRUCTURE turn: what runs when the engine does not know the institution,
+// and therefore cannot be trusted to have found the accounts. Every case here
+// is a screen the rules read wrong on their own — `engineOnly` in each comment
+// is what `parseOcrBlocks` makes of the same blocks.
+describe("recognizeWithModel on an institution nothing knows", () => {
+  // The layout the whole turn exists for: a section heading, then one row per
+  // account carrying its name, its number and its figure together. The rules
+  // open a region on the HEADING and bank every figure below it, so the screen
+  // comes back as one account called "CHECKING" holding 3,204.57 + 18,750.00 —
+  // money the screen never printed.
+  const ONE_ROW_PER_ACCOUNT = screen(
+    row("CHECKING"),
+    row("Total", "Checking", "(...4821)", "$3,204.57"),
+    row("Available", "balance"),
+    row("SAVINGS"),
+    row("Premier", "Savings", "(...9033)", "$18,750.00"),
+  );
+
+  it("splits one account per assigned row", async () => {
+    const outcome = await recognizeWithModel(
+      ONE_ROW_PER_ACCOUNT,
+      answering(
+        assigning(
+          { name: 2, balance: [2], kind: "cash" },
+          { name: 5, balance: [5], kind: "cash" },
+        ),
+      ),
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) {
+      throw new Error("unreachable");
+    }
+    // "Checking", not "Total Checking": the token classifier marks a leading
+    // "Total" as a summary marker and `nameTokensOf` drops it, even here where
+    // the model has already said this row titles an account. That is kept
+    // deliberately — relaxing it would let a misassigned "Total balance
+    // $46,281.19" become an account holding the screen's grand total, and
+    // `line-classify.ts` settled that trade already: inventing money is worse
+    // than losing a title. The title is editable; the figure would not be
+    // noticed.
+    expect(outcome.recognition.accounts).toEqual([
+      expect.objectContaining({
+        accountName: "Checking",
+        balances: [{ currency: "USD", balance: 3204.57 }],
+      }),
+      expect.objectContaining({
+        accountName: "Premier Savings",
+        balances: [{ currency: "USD", balance: 18750 }],
+      }),
+    ]);
+  });
+
+  it("refuses a figure a previous account already claimed", async () => {
+    // Two accounts pointed at one row is how a screen's money gets counted
+    // twice, which is the exact failure the rules produce here — so honouring
+    // it would reintroduce the bug from the other side.
+    const outcome = await recognizeWithModel(
+      ONE_ROW_PER_ACCOUNT,
+      answering(
+        assigning(
+          { name: 2, balance: [2], kind: "cash" },
+          { name: 5, balance: [2, 5], kind: "cash" },
+        ),
+      ),
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) {
+      throw new Error("unreachable");
+    }
+    expect(outcome.recognition.accounts[1]?.balances).toEqual([
+      { currency: "USD", balance: 18750 },
+    ]);
+  });
+
+  it("drops an assignment whose name line names no account", async () => {
+    // "Available balance" is a field label. Opening a region for it would put
+    // a nameless account on the form for the user to notice and delete.
+    const outcome = await recognizeWithModel(
+      ONE_ROW_PER_ACCOUNT,
+      answering(
+        assigning(
+          { name: 3, balance: [2], kind: "cash" },
+          { name: 5, balance: [5], kind: "cash" },
+        ),
+      ),
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) {
+      throw new Error("unreachable");
+    }
+    expect(outcome.recognition.accounts).toHaveLength(1);
+    expect(outcome.recognition.accounts[0]?.accountName).toBe(
+      "Premier Savings",
+    );
+  });
+
+  it("ignores a balance line the engine read no figure on", async () => {
+    const outcome = await recognizeWithModel(
+      ONE_ROW_PER_ACCOUNT,
+      answering(assigning({ name: 2, balance: [3], kind: "cash" })),
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) {
+      throw new Error("unreachable");
+    }
+    expect(outcome.recognition.accounts[0]?.balances).toBeUndefined();
+  });
+
+  it("ignores a line number that is not on the screen", async () => {
+    const outcome = await recognizeWithModel(
+      ONE_ROW_PER_ACCOUNT,
+      answering(
+        assigning(
+          { name: 99, balance: [99], kind: "cash" },
+          { name: 2, balance: [2], kind: "cash" },
+        ),
+      ),
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) {
+      throw new Error("unreachable");
+    }
+    expect(outcome.recognition.accounts).toHaveLength(1);
+    expect(outcome.recognition.accounts[0]?.accountName).toBe("Checking");
+  });
+
+  it("reads the last four off the line the model named", async () => {
+    const numberOnItsOwnRow = screen(
+      row("My", "Savings", "Account"),
+      row("•••• 6210"),
+      row("SGD", "27,411.09"),
+    );
+
+    const outcome = await recognizeWithModel(
+      numberOnItsOwnRow,
+      answering(assigning({ name: 1, number: 2, balance: [3], kind: "cash" })),
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) {
+      throw new Error("unreachable");
+    }
+    expect(outcome.recognition.accounts[0]).toMatchObject({
+      accountName: "My Savings Account",
+      accountLastFourDigits: "6210",
+      balances: [{ currency: "SGD", balance: 27411.09 }],
+    });
+  });
+
+  it("refuses a line the vocabulary already knows is not a balance", async () => {
+    // The assignment path's backstop, and the one failure mode this whole turn
+    // exists to end. `finish` SUMS a group's pending balances, so three assigned
+    // rows in one currency become one figure the screenshot never printed —
+    // 238,914.62 + 412,330.18 + 61,204.95 = 712,449.75, arrived at through the
+    // model instead of through the state machine. `nonBalanceMarkers` carries
+    // the broker shelf precisely so both halves can refuse it.
+    const broker = screen(
+      row("Margin", "Account"),
+      row("Net", "liquidation", "USD", "238,914.62"),
+      row("Buying", "power", "USD", "412,330.18"),
+      row("Maintenance", "margin", "USD", "61,204.95"),
+    );
+
+    const outcome = await recognizeWithModel(
+      broker,
+      answering(assigning({ name: 1, balance: [2, 3, 4], kind: "investment" })),
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) {
+      throw new Error("unreachable");
+    }
+    expect(outcome.recognition.accounts[0]?.balances).toEqual([
+      { currency: "USD", balance: 238914.62 },
+    ]);
+  });
+
+  it("does not read a last four off a decimal quantity", async () => {
+    // A crypto row's fraction is not a masked card number. The mask alphabet
+    // carries a period so "(...4821)" reads, and the tail pattern takes a
+    // single one because Vision collapses the ellipsis — so the guard is that
+    // the mask may not FOLLOW a digit. Without it "0.02345678" came back as
+    // last four "5678", and a wrong last four is worse than none: it is the
+    // field account dedupe is keyed on.
+    const wallet = screen(row("Bitcoin", "0.02345678"), row("USD", "1,204.55"));
+
+    const outcome = await recognizeWithModel(
+      wallet,
+      answering(assigning({ name: 1, balance: [2], kind: "crypto" })),
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) {
+      throw new Error("unreachable");
+    }
+    expect(
+      outcome.recognition.accounts[0]?.accountLastFourDigits,
+    ).toBeUndefined();
+  });
+
+  it("leaves out a figure the model did not call a balance", async () => {
+    // The broker shape: a net figure and a shelf of well-formed money that is
+    // not a balance. The rules sum all of it; naming only the balance line is
+    // what keeps buying power out of the user's net worth.
+    const broker = screen(
+      row("Margin", "Account"),
+      row("Net", "liquidation", "USD", "238,914.62"),
+      row("Buying", "power", "USD", "412,330.18"),
+      row("Maintenance", "margin", "USD", "61,204.95"),
+    );
+
+    const outcome = await recognizeWithModel(
+      broker,
+      answering(assigning({ name: 1, balance: [2], kind: "investment" })),
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) {
+      throw new Error("unreachable");
+    }
+    expect(outcome.recognition.accounts[0]).toMatchObject({
+      kind: "investment",
+      balances: [{ currency: "USD", balance: 238914.62 }],
+    });
+  });
+
+  it("marks the lines it read a figure on, and numbers every line", async () => {
+    const runModel = answering(assigning({ name: 2, balance: [2] }));
+
+    await recognizeWithModel(ONE_ROW_PER_ACCOUNT, runModel);
+
+    const { user, system } = runModel.mock.calls[0]![0];
+    expect(user).toContain("1|   CHECKING");
+    expect(user).toMatch(/2\|\$# Total Checking/);
+    expect(system).toMatch(/line numbers/i);
+  });
+
+  it("carries the institution the model named", async () => {
+    const outcome = await recognizeWithModel(
+      ONE_ROW_PER_ACCOUNT,
+      answering({
+        institution: { displayName: "Chase" },
+        homeCurrency: "USD",
+        ...assigning({ name: 2, balance: [2] }),
+      }),
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) {
+      throw new Error("unreachable");
+    }
+    expect(outcome.recognition.institution?.displayName).toBe("Chase");
+  });
+
+  it("does not ask the model about a screen with no figures on it", async () => {
+    const runModel = vi.fn<(attempt: RecognitionAttempt) => Promise<string>>();
+
+    const outcome = await recognizeWithModel(
+      screen(row("Settings"), row("Notifications")),
+      runModel,
+    );
+
+    expect(runModel).not.toHaveBeenCalled();
+    expect(outcome).toEqual({
+      ok: true,
+      recognition: { accounts: [] },
+      attempts: 0,
+    });
+  });
+
+  it("gives up rather than falling back to the rules' read", async () => {
+    // The rules read this screen as one account holding the sum of both, and
+    // that figure appears nowhere on it. A missing balance beats a wrong one —
+    // the same rule `convertCurrency` follows when it returns null instead of 0.
+    const outcome = await recognizeWithModel(
+      ONE_ROW_PER_ACCOUNT,
+      answering("not json", "not json", "not json"),
+    );
+
+    expect(outcome.ok).toBe(false);
+  });
+
+  it("returns nothing when the model assigns nothing", async () => {
+    const outcome = await recognizeWithModel(
+      ONE_ROW_PER_ACCOUNT,
+      answering(assigning()),
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) {
+      throw new Error("unreachable");
+    }
+    expect(outcome.recognition.accounts).toEqual([]);
   });
 });

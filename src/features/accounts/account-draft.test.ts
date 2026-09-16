@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { AssetAccount } from "@/features/assets/asset-repository";
 import {
   type AccountDraft,
+  type RecognizedScreenshot,
   accountToDraft,
   applyRecognizedToDrafts,
   draftHasContent,
@@ -27,8 +28,19 @@ function draft(overrides: Partial<AccountDraft> = {}): AccountDraft {
     lastFour: "",
     balances: [createBalanceRow("SGD")],
     kind: "cash",
+    institutionName: "",
     ...overrides,
   };
+}
+
+// One screenshot's recognition. The institution defaults to blank because most
+// cases here are about what becomes a BALANCE; the ones that care about the
+// institution pass it.
+function shot(
+  accounts: RecognizedAccount[],
+  institutionName = "",
+): RecognizedScreenshot {
+  return { accounts, institutionName };
 }
 
 function filledDraft(): AccountDraft {
@@ -357,13 +369,40 @@ describe("applyRecognizedToDrafts", () => {
     const drafts = applyRecognizedToDrafts(
       [draft()],
       [
-        { accountName: "A", balances: [{ currency: "SGD", balance: 1 }] },
-        { accountName: "B", balances: [{ currency: "SGD", balance: 2 }] },
+        shot([
+          { accountName: "A", balances: [{ currency: "SGD", balance: 1 }] },
+          { accountName: "B", balances: [{ currency: "SGD", balance: 2 }] },
+        ]),
       ],
       "SGD",
     );
 
     expect(drafts.map((entry) => entry.name)).toEqual(["A", "B"]);
+  });
+
+  // The batch case this was extended for: two screenshots, two institutions.
+  // A single field above the wizard could only have been right for one of them,
+  // so the institution travels on each draft instead.
+  it("carries each screenshot's institution onto its own accounts", () => {
+    const drafts = applyRecognizedToDrafts(
+      [draft()],
+      [
+        shot(
+          [{ accountName: "A", balances: [{ currency: "SGD", balance: 1 }] }],
+          "DBS",
+        ),
+        shot(
+          [{ accountName: "B", balances: [{ currency: "USD", balance: 2 }] }],
+          "Chase",
+        ),
+      ],
+      "SGD",
+    );
+
+    expect(drafts.map((entry) => [entry.name, entry.institutionName])).toEqual([
+      ["A", "DBS"],
+      ["B", "Chase"],
+    ]);
   });
 
   it("reseeds through the zero filter when the single draft is still blank", () => {
@@ -373,13 +412,15 @@ describe("applyRecognizedToDrafts", () => {
     const drafts = applyRecognizedToDrafts(
       [draft()],
       [
-        {
-          accountName: "Multiplier",
-          balances: [
-            { currency: "SGD", balance: 100554.59 },
-            { currency: "HKD", balance: 0 },
-          ],
-        },
+        shot([
+          {
+            accountName: "Multiplier",
+            balances: [
+              { currency: "SGD", balance: 100554.59 },
+              { currency: "HKD", balance: 0 },
+            ],
+          },
+        ]),
       ],
       "SGD",
     );
@@ -394,10 +435,12 @@ describe("applyRecognizedToDrafts", () => {
     const drafts = applyRecognizedToDrafts(
       [filledDraft(), filledDraft()],
       [
-        {
-          accountName: "Multiplier",
-          balances: [{ currency: "SGD", balance: 1 }],
-        },
+        shot([
+          {
+            accountName: "Multiplier",
+            balances: [{ currency: "SGD", balance: 1 }],
+          },
+        ]),
       ],
       "SGD",
     );
@@ -409,12 +452,22 @@ describe("applyRecognizedToDrafts", () => {
   it("merges into a draft the user has filled in", () => {
     const drafts = applyRecognizedToDrafts(
       [filledDraft()],
-      [{ accountLastFourDigits: "4321" }],
+      [shot([{ accountLastFourDigits: "4321" }], "OCBC")],
       "SGD",
     );
 
     expect(drafts[0].name).toBe("Savings");
     expect(drafts[0].lastFour).toBe("4321");
+    // The institution IS overwritten by the merge, unlike the account's own
+    // fields: it is what this recognition just learned about the screenshot,
+    // not something the user typed into the account.
+    expect(drafts[0].institutionName).toBe("OCBC");
+  });
+
+  it("leaves the drafts alone when a screenshot recognized nothing", () => {
+    const drafts = [filledDraft()];
+
+    expect(applyRecognizedToDrafts(drafts, [shot([])], "SGD")).toBe(drafts);
   });
 });
 

@@ -5,15 +5,20 @@ import { SourceImageCleanupModal } from "@/features/accounts/SourceImageCleanupM
 import { deferred } from "@/test-support/deferred";
 import { renderWithProviders } from "@/test-support/render";
 
-const mockDeleteSourceImage =
-  jest.fn<
-    (assetId: string) => Promise<{ ok: boolean; reason?: "permission" }>
-  >();
+const mockDeleteSourceImages = jest.fn<
+  (assetIds: readonly string[]) => Promise<{
+    ok: boolean;
+    reason?: "permission";
+  }>
+>();
 
 jest.mock("@/features/assets/source-image-cleanup", () => ({
   sourceImageDeletionIsSupported: true,
-  deleteSourceImage: (assetId: string) => mockDeleteSourceImage(assetId),
+  deleteSourceImages: (assetIds: readonly string[]) =>
+    mockDeleteSourceImages(assetIds),
 }));
+
+const ONE_IMAGE = [{ assetId: "photo-1", uri: "file:///photo.png" }];
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -24,7 +29,8 @@ describe("SourceImageCleanupModal", () => {
     const { toJSON } = await renderWithProviders(
       <SourceImageCleanupModal
         visible
-        sourceImage={{ assetId: "photo-1", uri: "file:///photo.png" }}
+        sourceImages={ONE_IMAGE}
+        savedCount={1}
         onFinished={jest.fn()}
       />,
     );
@@ -36,12 +42,13 @@ describe("SourceImageCleanupModal", () => {
 
   it("shows guarded loading while deleting the system photo", async () => {
     const pending = deferred<{ ok: boolean }>();
-    mockDeleteSourceImage.mockReturnValue(pending.promise);
+    mockDeleteSourceImages.mockReturnValue(pending.promise);
     const onFinished = jest.fn();
     await renderWithProviders(
       <SourceImageCleanupModal
         visible
-        sourceImage={{ assetId: "photo-1", uri: "file:///photo.png" }}
+        sourceImages={ONE_IMAGE}
+        savedCount={1}
         onFinished={onFinished}
       />,
     );
@@ -49,7 +56,7 @@ describe("SourceImageCleanupModal", () => {
     const deleteLabel = screen.getByText("Delete screenshot");
     await fireEvent.press(deleteLabel);
 
-    expect(mockDeleteSourceImage).toHaveBeenCalledWith("photo-1");
+    expect(mockDeleteSourceImages).toHaveBeenCalledWith(["photo-1"]);
     expect(screen.getByTestId("button-spinner")).toBeOnTheScreen();
     expect(deleteLabel.parent?.props.accessibilityState).toEqual({
       busy: true,
@@ -59,12 +66,41 @@ describe("SourceImageCleanupModal", () => {
       screen.getByText("Keep screenshot").parent?.props.accessibilityState,
     ).toEqual({ disabled: true });
     await fireEvent.press(deleteLabel.parent!);
-    expect(mockDeleteSourceImage).toHaveBeenCalledTimes(1);
+    expect(mockDeleteSourceImages).toHaveBeenCalledTimes(1);
 
     await act(() => {
       pending.resolve({ ok: true });
     });
 
+    expect(onFinished).toHaveBeenCalledTimes(1);
+  });
+
+  // The batch case: one prompt, one delete, one system confirmation. Asking per
+  // screenshot would put the user through five dialogs for a five-screenshot
+  // sitting and leave a cancel partway through impossible to reason about.
+  it("deletes a whole batch in one call", async () => {
+    mockDeleteSourceImages.mockResolvedValue({ ok: true });
+    const onFinished = jest.fn();
+    await renderWithProviders(
+      <SourceImageCleanupModal
+        visible
+        sourceImages={[
+          { assetId: "photo-1", uri: "file:///a.png" },
+          // No assetId: the Android PhotoPicker returns none, and this app
+          // cannot delete what it cannot address. It must not be counted in
+          // what the dialog offers to delete.
+          { assetId: null, uri: "file:///b.png" },
+          { assetId: "photo-3", uri: "file:///c.png" },
+        ]}
+        savedCount={4}
+        onFinished={onFinished}
+      />,
+    );
+
+    expect(screen.getByText("4 accounts saved")).toBeOnTheScreen();
+    await fireEvent.press(screen.getByText("Delete all 2"));
+
+    expect(mockDeleteSourceImages).toHaveBeenCalledWith(["photo-1", "photo-3"]);
     expect(onFinished).toHaveBeenCalledTimes(1);
   });
 });

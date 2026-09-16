@@ -203,17 +203,48 @@ export const zhHansMessages = {
   },
   accountScreenshot: {
     uploadScreenshot: "上传账户截图",
+    // 新增账户页的复数入口：一张截图就是一家机构，而人通常有好几家，所以批量
+    // 才是常态，不是进阶用法。
+    uploadScreenshots: "上传账户截图",
     // 编辑账户页的紧凑入口：截图在这里是更新余额的手段，不是页面主体。
     updateFromScreenshot: "用新截图更新",
-    replaceScreenshot: "更换截图",
+    // `_one` 和 `_other` 写成同一句，和本文件其他复数键一致：中文只有一种
+    // 复数形式（`Intl.PluralRules("zh-Hans")` 只给 `other`），所以 i18next
+    // 无论 count 是几都取 `_other`，`_one` 永远不会被用到。写不同的两句，
+    // 只会让单张截图时显示为批量文案。
+    replaceScreenshot_one: "重新选择截图",
+    replaceScreenshot_other: "重新选择截图",
     // 识别期间显示在表单区域。本机模型加载慢，用户要知道等多久、为什么等。
     recognizingHint: "正在读取截图，本机模型通常需要几十秒，表单会自动填入。",
-    replaceScreenshotHint: "选择其他账户截图",
-    screenshotReady: "账户截图已就绪",
+    // 批量的等待时间是单张的倍数：截图逐张识别（手机上同时跑两张就是被系统
+    // 因内存杀掉），所以对着五张说“几十秒”会少说四分钟。
+    recognizingHintBatch_one:
+      "正在逐张读取 {{count}} 张截图，本机每张约需几十秒。识别完一张就填入一张。",
+    recognizingHintBatch_other:
+      "正在逐张读取 {{count}} 张截图，本机每张约需几十秒。识别完一张就填入一张。",
+    replaceScreenshotHint_one: "重新选择账户截图",
+    replaceScreenshotHint_other: "重新选择账户截图",
+    screenshotReady_one: "{{count}} 张账户截图已就绪",
+    screenshotReady_other: "{{count}} 张账户截图已就绪",
     screenshotGuidance: "选择一张清晰显示账户名称、账号后四位和余额的截图",
+    screenshotsGuidance:
+      "一次选齐所有账户截图——每家机构一张。每张单独识别，所有账户汇总到同一个表单里核对。",
     chooseScreenshot: "选择账户截图",
-    screenshotPrivacy: "账户截图仅用于确认账户信息，不会显示在资产总览中",
+    chooseScreenshots: "选择账户截图",
+    screenshotPrivacy_one: "账户截图仅用于确认账户信息，不会显示在资产总览中",
+    screenshotPrivacy_other: "账户截图仅用于确认账户信息，不会显示在资产总览中",
     recognizing: "正在识别…",
+    // 正在读第几张。这个计数是让三分钟的等待从“卡住了”变成“在跑”的关键。
+    recognizingProgress: "正在识别第 {{current}}/{{total}} 张…",
+    // 每张缩略图的读屏文案：角标是图标，图标本身没有名字。
+    slotRecognized: "第 {{position}} 张截图：已识别",
+    slotFailed: "第 {{position}} 张截图：无法识别",
+    // 一批里只有部分失败时的提示。哪几张失败，缩略图角标已经标出来了，所以
+    // 这里给的是数量——把六条原因堆在卡片下面，反而会淹没成功的那四张。
+    batchPartialFailure_one:
+      "有 {{count}} 张截图无法识别。其余已填入下方，请核对，并手动补上缺失的账户。",
+    batchPartialFailure_other:
+      "有 {{count}} 张截图无法识别。其余已填入下方，请核对，并手动补上缺失的账户。",
     recognized: "已识别，请核对",
     recognitionFailed: "无法识别截图，请手动填写账户信息。",
     recognitionEmpty:
@@ -228,18 +259,30 @@ export const zhHansMessages = {
     ocrUnsupported: "当前设备不支持截图识别，请手动填写账户信息。",
     noMatchingAccount:
       "这张截图中没有你正在编辑的账户，因此未填入任何信息。请选择该账户的截图。",
-    accountSaved: "账户已保存",
-    cleanupPrompt:
-      "这张账户截图已用于确认账户信息。是否从系统相册删除？系统会再次请求确认。",
-    cleanupManualPhotoLibrary:
-      "账户截图已经用完。不再需要时，可以到系统相册删除它。",
-    keepScreenshot: "保留账户截图",
-    deleteScreenshot: "删除账户截图",
+    accountSaved_one: "已保存 {{count}} 个账户",
+    accountSaved_other: "已保存 {{count}} 个账户",
+    cleanupPrompt_one:
+      "这 {{count}} 张账户截图已用于确认账户信息。是否从系统相册删除？系统会再次请求确认。",
+    cleanupPrompt_other:
+      "这 {{count}} 张账户截图已用于确认账户信息。是否从系统相册删除？系统会再次请求确认。",
+    cleanupManualPhotoLibrary_one:
+      "账户截图已经用完。不再需要时，可以到系统相册删除。",
+    cleanupManualPhotoLibrary_other:
+      "账户截图已经用完。不再需要时，可以到系统相册删除。",
+    keepScreenshot_one: "保留账户截图",
+    keepScreenshot_other: "保留账户截图",
+    deleteScreenshot_one: "删除账户截图（{{count}} 张）",
+    deleteScreenshot_other: "删除账户截图（{{count}} 张）",
     acknowledge: "我知道了",
-    deletionErrorTitle: "无法删除账户截图",
-    deletionErrorMessage: "账户已保存。请前往系统相册手动删除这张账户截图。",
-    deletionPermissionTitle: "Whole 无法删除账户截图",
-    deletionPermissionMessage:
+    deletionErrorTitle_one: "无法删除账户截图",
+    deletionErrorTitle_other: "无法删除账户截图",
+    deletionErrorMessage_one: "账户已保存。请前往系统相册手动删除账户截图。",
+    deletionErrorMessage_other: "账户已保存。请前往系统相册手动删除账户截图。",
+    deletionPermissionTitle_one: "Whole 无法删除账户截图",
+    deletionPermissionTitle_other: "Whole 无法删除账户截图",
+    deletionPermissionMessage_one:
+      "Whole 需要照片完全访问权限才能删除账户截图。请打开系统设置，点击 Whole，并开启“完全访问”。",
+    deletionPermissionMessage_other:
       "Whole 需要照片完全访问权限才能删除账户截图。请打开系统设置，点击 Whole，并开启“完全访问”。",
     openSystemSettings: "打开设置",
     pickerErrorMessage: "请稍后重试，或检查 Whole 的照片访问权限。",

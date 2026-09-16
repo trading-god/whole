@@ -1,0 +1,32 @@
+[
+  {
+    "accountName": "BTC",
+    "kind": "crypto",
+    "balances": [
+      {
+        "currency": "USD",
+        "balance": 32140.55
+      }
+    ]
+  },
+  {
+    "accountName": "ETH",
+    "kind": "crypto",
+    "balances": [
+      {
+        "currency": "USD",
+        "balance": 7104.2
+      }
+    ]
+  },
+  {
+    "accountName": "USDT",
+    "kind": "crypto",
+    "balances": [
+      {
+        "currency": "USD",
+        "balance": 2484.15
+      }
+    ]
+  }
+]

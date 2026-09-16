@@ -23,9 +23,21 @@
 // redenominate a figure the screen or a config already settled — that
 // precedence lives in `groupScreen`, not in the wording below.
 import { knownAssetCurrencies } from "../contract/currency";
+import { INSTITUTION_QUESTION } from "./annotation-fields";
 
 import type { OcrAccountGroup } from "./account-grouping";
 
+// Question 2 is `INSTITUTION_QUESTION`, shared with the structure turn.
+//
+// Question 3 is NOT `HOME_CURRENCY_QUESTION`, and the difference is the clause
+// "neither does a screen you could not place" — which `annotation-fields.ts`
+// records as a measured mistake: on the STRUCTURE turn it cost a mainland
+// bank's overview every figure on it. This turn is reached only when the
+// institution is CONFIGURED, so a screen it cannot place is a different
+// situation from one nothing knows, and the wording below is what the 17/17
+// real-corpus result was measured on. Re-deciding it means running
+// `pnpm eval:ocr:llama`, not editing it here — but if the shared wording ever
+// wins on this turn too, delete this paragraph and interpolate the constant.
 const SYSTEM_PROMPT = `You annotate the accounts on a bank, broker or crypto-exchange screenshot that OCR and a rules engine have already read.
 
 The screen's text is in the message that follows this one. Lines there are prefixed with the number of the account REGION the rules engine grouped them into; a line with no prefix belongs to no region (screen furniture, or the institution's own branding).
@@ -34,7 +46,7 @@ Answer three things:
 
 1. For each region, in order: what KIND of account it shows — "cash" (a deposit, checking or wallet account), "investment" (securities, funds, wealth products), or "crypto" (an exchange or on-chain account). Infer from product names and vocabulary, not from any single word. List EVERY region, and answer "unknown" for one you cannot tell rather than leaving it out or guessing.
 
-2. The INSTITUTION (a bank, a broker, or a crypto exchange) this screen belongs to. The brand name may not appear anywhere on the screen; infer it from product names, account-number format, vocabulary and marketing copy — those identify an institution as reliably as a logo. This answer is required: give the institution's name, or exactly "unknown" if you cannot place the screen. If two fit, name the likelier and list the other as an alternate.
+2. ${INSTITUTION_QUESTION}
 
 3. The screen's HOME CURRENCY — what this institution's app means when it prints a figure without naming a currency. A bank serving one country prints its home currency as a bare number. Answer ${knownAssetCurrencies.join(", ")} when the institution implies one, or "none" when it does not: a broker or a crypto exchange holds many currencies and has no home currency, and neither does a screen you could not place. This answer is required — say "none" rather than guess, because a figure with no currency is reported to the user as missing, while a figure in the WRONG currency is reported as money they do not have.
 

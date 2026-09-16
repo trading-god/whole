@@ -25,8 +25,8 @@
 // under identical conditions.
 import {
   INSTITUTION_ABLATIONS,
+  RECOGNITION_TURNS,
   recognizeWithModel,
-  type InstitutionAblation,
 } from "@whole/ocr";
 
 import {
@@ -42,32 +42,24 @@ import {
   loadGoldOrSkip,
   loadOcrBlocks,
   namedSampleExists,
+  parseEnumFlag,
   parseSampleFlag,
   resolveSampleTargets,
 } from "./paths";
-
-// `--ablate <mode>`, validated against what the engine implements rather than
-// against a list retyped here — an unknown mode is a typo, and silently
-// running unablated would report the config's score as the model's.
-function parseAblateFlag(args: string[]): InstitutionAblation | undefined {
-  const idx = args.indexOf("--ablate");
-  if (idx === -1) {
-    return undefined;
-  }
-  const value = args[idx + 1];
-  if (value !== undefined && INSTITUTION_ABLATIONS.includes(value as never)) {
-    return value as InstitutionAblation;
-  }
-  throw new Error(
-    `--ablate needs one of: ${INSTITUTION_ABLATIONS.join(", ")}.`,
-  );
-}
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const onlySlug = parseSampleFlag(args);
   const slugs = resolveSampleTargets(args);
-  const ablate = parseAblateFlag(args);
+  // `--ablate <mode>` is validated against what the engine implements rather
+  // than against a list retyped here — an unknown mode is a typo, and silently
+  // running unablated would report the config's score as the model's.
+  const ablate = parseEnumFlag(args, "--ablate", INSTITUTION_ABLATIONS);
+  // `--turn structure` forces the assignment turn onto every sample, including
+  // the ones whose institution IS configured. It is how the corpus answers
+  // whether "configured institution" is still a good proxy for "layout the
+  // rules were written against" — see `RecognitionOptions.turn`.
+  const turn = parseEnumFlag(args, "--turn", RECOGNITION_TURNS);
 
   let handle;
   try {
@@ -99,6 +91,7 @@ async function main(): Promise<void> {
 
       const outcome = await recognizeWithModel(loadOcrBlocks(slug), runModel, {
         ablate,
+        turn,
       });
 
       if (!outcome.ok) {

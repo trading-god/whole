@@ -11,7 +11,10 @@
     "vision": "tsx src/vision.ts",
     "recognize": "tsx src/recognize.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "synth": "OCR_CORPUS=synthetic tsx src/run-synth.ts",
+    "eval:synth": "OCR_CORPUS=synthetic tsx src/run-eval.ts",
+    "eval:llama:synth": "OCR_CORPUS=synthetic tsx src/run-llama-eval.ts"
   },
   "dependencies": {
     "@whole/ocr": "workspace:*",

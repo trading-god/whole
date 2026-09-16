@@ -39,6 +39,36 @@ export type AccountDraft = {
   lastFour: string;
   balances: BalanceRow[];
   kind: AssetKind;
+  /**
+   * The institution this account is filed under, by NAME.
+   *
+   * Per draft rather than per screen, because a batch of screenshots is a batch
+   * of institutions: one sitting can carry a bank, a broker and an exchange,
+   * and a single field above the wizard could only be right for one of them.
+   * The add screen still shows ONE field when every draft agrees — that is the
+   * common case and the shape the screen had before — but the drafts are what
+   * hold the answer, so a batch that disagrees has somewhere to put it.
+   *
+   * A NAME, not a group id: recognition answers with what the screen calls the
+   * institution, the user may correct it, and the id is resolved at save time
+   * by `findOrCreateGroupByName` — which is what reuses an existing group
+   * rather than spawning a duplicate. Empty means ungrouped.
+   */
+  institutionName: string;
+};
+
+/**
+ * One screenshot's worth of recognition, as the draft layer takes it.
+ *
+ * The institution arrives as a resolved display NAME rather than as an id or a
+ * model answer, because choosing between "the localized catalog name for the
+ * institution the engine detected" and "the free text the model answered" needs
+ * i18n, and this module is pure. The screen resolves it; this decides what
+ * becomes a draft.
+ */
+export type RecognizedScreenshot = {
+  accounts: RecognizedAccount[];
+  institutionName: string;
 };
 
 // Seeds a draft from a recognized account: the blank draft (empty name, one
@@ -48,6 +78,7 @@ export type AccountDraft = {
 export function recognizedToDraft(
   recognized: RecognizedAccount,
   defaultCurrency: Currency,
+  institutionName = "",
 ): AccountDraft {
   // The zero-row rule lives in the merge, which the blank seed goes through
   // like any other draft — a seed row carries no value, so it holds no
@@ -61,6 +92,7 @@ export function recognizedToDraft(
       lastFour: "",
       balances: [createBalanceRow(defaultCurrency)],
       kind: "cash",
+      institutionName,
     },
     recognized,
   );
@@ -70,12 +102,16 @@ export function recognizedToDraft(
 // other draft constructors so "what a draft looks like" has one owner — a
 // screen building its own would have to be revisited by hand whenever the
 // account ⇄ draft mapping changes.
-export function accountToDraft(account: AssetAccount): AccountDraft {
+export function accountToDraft(
+  account: AssetAccount,
+  institutionName = "",
+): AccountDraft {
   return {
     name: account.name,
     lastFour: account.accountLastFourDigits ?? "",
     balances: toBalanceRows(account.balances),
     kind: account.kind,
+    institutionName,
   };
 }
 
@@ -121,6 +157,7 @@ export function mergeRecognizedIntoDraft(
     : balances;
   const recognizedRows = toBalanceRows(keptBalances);
   return {
+    ...draft,
     name: recognized.accountName ?? draft.name,
     lastFour: recognized.accountLastFourDigits ?? draft.lastFour,
     // Gated on what SURVIVES the zero filter, not on what was recognized. An
@@ -135,21 +172,40 @@ export function mergeRecognizedIntoDraft(
   };
 }
 
-// Folds a recognition result into the add-account screen's drafts. Several
-// accounts seed one draft each; a lone account merges into the current single
-// draft — or starts from a blank one when leaving multi-account mode, since
-// the previous drafts are superseded by the re-upload. `accounts` must be
-// non-empty: the caller drops an empty recognition before reseeding, so a
-// failed re-recognition can never wipe drafts the user is editing.
+// Folds a batch of recognized screenshots into the add-account screen's drafts.
+// Several accounts seed one draft each, carrying the institution of the
+// SCREENSHOT they came from; a lone account merges into the current single
+// draft — or starts from a blank one when leaving multi-account mode, since the
+// previous drafts are superseded by the re-upload. The caller drops an empty
+// recognition before reseeding, so a failed re-recognition can never wipe
+// drafts the user is editing.
+//
+// Flattened across screenshots rather than nested, because a draft is an
+// ACCOUNT and the wizard pages one account at a time: two screenshots holding
+// two accounts each are four pages, and which screenshot a page came from
+// survives on the draft as its institution rather than as a grouping the wizard
+// would have to render.
 export function applyRecognizedToDrafts(
   drafts: AccountDraft[],
-  accounts: RecognizedAccount[],
+  screenshots: readonly RecognizedScreenshot[],
   defaultCurrency: Currency,
 ): AccountDraft[] {
-  if (accounts.length >= 2) {
-    return accounts.map((account) =>
-      recognizedToDraft(account, defaultCurrency),
+  const pairs = screenshots.flatMap((screenshot) =>
+    screenshot.accounts.map((account) => ({
+      account,
+      institutionName: screenshot.institutionName,
+    })),
+  );
+
+  if (pairs.length >= 2) {
+    return pairs.map(({ account, institutionName }) =>
+      recognizedToDraft(account, defaultCurrency, institutionName),
     );
+  }
+
+  const only = pairs[0];
+  if (only === undefined) {
+    return drafts;
   }
 
   // Through `recognizedToDraft`'s zero filter whenever there is nothing to
@@ -159,12 +215,22 @@ export function applyRecognizedToDrafts(
   //
   // Merging into a draft the user has actually filled in keeps the merge's rule
   // instead: there a zero is the screenshot correcting a balance, not noise to
-  // hide, and a settled card must be allowed to read 0.00.
+  // hide, and a settled card must be allowed to read 0.00. The institution
+  // still comes from the screenshot — it is what the recognition just learned,
+  // and the merge's "only overwrite what was recognized" rule is about the
+  // account's own fields.
   const existing = drafts.length === 1 ? drafts[0] : undefined;
   if (!existing || !draftHasContent(existing)) {
-    return [recognizedToDraft(accounts[0], defaultCurrency)];
+    return [
+      recognizedToDraft(only.account, defaultCurrency, only.institutionName),
+    ];
   }
-  return [mergeRecognizedIntoDraft(existing, accounts[0])];
+  return [
+    {
+      ...mergeRecognizedIntoDraft(existing, only.account),
+      institutionName: only.institutionName || existing.institutionName,
+    },
+  ];
 }
 
 // Whether a draft holds anything the user would lose if it were replaced. A

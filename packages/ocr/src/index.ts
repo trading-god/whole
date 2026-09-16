@@ -95,6 +95,8 @@ export { parseOcrBlocks, parseOcrBlocksTraced } from "./engine/parser";
 export {
   ANNOTATION_INFERENCE,
   annotationJsonSchema,
+  RECOGNITION_TURNS,
+  type RecognitionTurn,
   recognizeWithModel,
   type ResolvedRecognition,
   type RunModel,

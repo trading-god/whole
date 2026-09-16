@@ -1,6 +1,9 @@
 import { Asset, requestPermissionsAsync } from "expo-media-library";
 import { Platform } from "react-native";
 
+// Deleting the screenshots a form was filled in from — one, or the whole batch
+// the add screen recognized.
+//
 // expo-image-picker and expo-media-library disagree on what an asset id is:
 // on Android the picker returns a numeric media-store id (or `null` on the
 // Android 13+ PhotoPicker) while `new Asset(id)` requires a `content://` URI,
@@ -20,10 +23,10 @@ export type DeleteSourceImageResult = {
   reason?: "permission";
 };
 
-export async function deleteSourceImage(
-  assetId: string,
+export async function deleteSourceImages(
+  assetIds: readonly string[],
 ): Promise<DeleteSourceImageResult> {
-  if (Platform.OS !== "ios") {
+  if (Platform.OS !== "ios" || assetIds.length === 0) {
     return { ok: false };
   }
 
@@ -45,8 +48,16 @@ export async function deleteSourceImage(
     // `Asset(id)` expects `ph://<localIdentifier>`; expo-image-picker returns
     // the bare localIdentifier. Re-attach the scheme or the id is truncated
     // and the PHAsset can't be resolved for deletion.
-    const assetRef = assetId.startsWith("ph://") ? assetId : `ph://${assetId}`;
-    await new Asset(assetRef).delete();
+    const assets = assetIds.map(
+      (assetId) =>
+        new Asset(assetId.startsWith("ph://") ? assetId : `ph://${assetId}`),
+    );
+    // The STATIC delete, not one `asset.delete()` per id. Both end in
+    // `PHPhotoLibrary.performChanges`, but iOS raises its own "Delete N
+    // Photos?" confirmation per change block — so deleting a five-screenshot
+    // batch one at a time asks the user five times, and a cancel partway
+    // leaves the batch half-deleted with no way to say which half.
+    await Asset.delete(assets);
     return { ok: true };
   } catch {
     // A thrown delete covers the remaining failure modes: the asset id didn't

@@ -245,22 +245,57 @@ export const enMessages = {
   },
   accountScreenshot: {
     uploadScreenshot: "Upload account screenshot",
+    // The add screen's plural entry: there a screenshot is an institution, and
+    // a person has several, so the batch is the normal case rather than a
+    // power-user one.
+    uploadScreenshots: "Upload account screenshots",
     // The edit screen's compact entry: here a screenshot is a way to refresh
     // a balance, not the subject of the page.
     updateFromScreenshot: "Update from a new screenshot",
-    replaceScreenshot: "Replace screenshot",
+    replaceScreenshot_one: "Replace screenshot",
+    replaceScreenshot_other: "Replace screenshots",
     // Shown in the form area while recognition runs. The on-device model is
     // slow to load, so the user needs to know how long and why.
     recognizingHint:
       "Reading the screenshot. The on-device model usually takes under a minute, and the form fills in on its own.",
-    replaceScreenshotHint: "Choose a different account screenshot",
-    screenshotReady: "Account screenshot ready",
+    // The batch's own wait, which is the single-screenshot one multiplied: the
+    // screenshots are read one at a time (running two at once on a phone is how
+    // the app gets killed for memory), so saying "under a minute" over five of
+    // them would be wrong by four minutes.
+    recognizingHintBatch_one:
+      "Reading the screenshot. The on-device model usually takes under a minute, and the form fills in on its own.",
+    recognizingHintBatch_other:
+      "Reading {{count}} screenshots, one at a time — up to about a minute each on this phone. The forms fill in as they land.",
+    replaceScreenshotHint_one: "Choose a different account screenshot",
+    replaceScreenshotHint_other:
+      "Choose a different set of account screenshots",
+    screenshotReady_one: "Account screenshot ready",
+    screenshotReady_other: "{{count}} account screenshots ready",
     screenshotGuidance:
       "Choose a screenshot that clearly shows the account name, last four digits, and balance",
+    screenshotsGuidance:
+      "Pick every account screenshot at once — one per institution. Each is read on its own, and all the accounts land in one form to review.",
     chooseScreenshot: "Choose account screenshot",
-    screenshotPrivacy:
+    chooseScreenshots: "Choose account screenshots",
+    screenshotPrivacy_one:
       "Your account screenshot is used only to confirm account details and will not appear in your asset overview",
+    screenshotPrivacy_other:
+      "Your account screenshots are used only to confirm account details and will not appear in your asset overview",
     recognizing: "Recognizing…",
+    // Which screenshot of the batch is being read. The count is what turns a
+    // three-minute wait from "stuck" into "working".
+    recognizingProgress: "Recognizing {{current}} of {{total}}…",
+    // Per-thumbnail, for a screen reader: the badge over each screenshot in the
+    // strip is an icon, and an icon has no name.
+    slotRecognized: "Screenshot {{position}}: recognized",
+    slotFailed: "Screenshot {{position}}: couldn't be read",
+    // What the hint says when SOME of a batch failed. The strip already shows
+    // which ones by their badges, so the count is the useful part — six reasons
+    // under the card would bury the four screenshots that worked.
+    batchPartialFailure_one:
+      "1 screenshot couldn't be read. The others filled in below — check those, and add the missing account by hand.",
+    batchPartialFailure_other:
+      "{{count}} screenshots couldn't be read. The others filled in below — check those, and add the missing accounts by hand.",
     recognized: "Recognized — please review",
     recognitionFailed:
       "Couldn't read the screenshot. Please fill in the details manually.",
@@ -278,20 +313,33 @@ export const enMessages = {
       "This device can't recognize screenshots. Please fill in the details manually.",
     noMatchingAccount:
       "This screenshot doesn't show the account you're editing, so nothing was filled in. Choose a screenshot of this account.",
-    accountSaved: "Account saved",
-    cleanupPrompt:
+    accountSaved_one: "Account saved",
+    accountSaved_other: "{{count}} accounts saved",
+    cleanupPrompt_one:
       "This account screenshot was used to confirm the account details. Delete it from your photo library? The system will ask you to confirm.",
-    cleanupManualPhotoLibrary:
+    cleanupPrompt_other:
+      "These {{count}} account screenshots were used to confirm the account details. Delete them all from your photo library? The system will ask you to confirm once.",
+    cleanupManualPhotoLibrary_one:
       "The account screenshot has done its job. Delete it from your photo library whenever you no longer need it.",
-    keepScreenshot: "Keep screenshot",
-    deleteScreenshot: "Delete screenshot",
+    cleanupManualPhotoLibrary_other:
+      "The account screenshots have done their job. Delete them from your photo library whenever you no longer need them.",
+    keepScreenshot_one: "Keep screenshot",
+    keepScreenshot_other: "Keep screenshots",
+    deleteScreenshot_one: "Delete screenshot",
+    deleteScreenshot_other: "Delete all {{count}}",
     acknowledge: "Got it",
-    deletionErrorTitle: "Unable to delete account screenshot",
-    deletionErrorMessage:
+    deletionErrorTitle_one: "Unable to delete account screenshot",
+    deletionErrorTitle_other: "Unable to delete account screenshots",
+    deletionErrorMessage_one:
       "The account was saved. Delete the account screenshot manually from your photo library.",
-    deletionPermissionTitle: "Whole can't delete the screenshot",
-    deletionPermissionMessage:
+    deletionErrorMessage_other:
+      "The accounts were saved. Delete the account screenshots manually from your photo library.",
+    deletionPermissionTitle_one: "Whole can't delete the screenshot",
+    deletionPermissionTitle_other: "Whole can't delete the screenshots",
+    deletionPermissionMessage_one:
       "Whole needs full access to your photo library to delete the screenshot. Open Settings, tap Whole, and enable Full Access.",
+    deletionPermissionMessage_other:
+      "Whole needs full access to your photo library to delete the screenshots. Open Settings, tap Whole, and enable Full Access.",
     openSystemSettings: "Open settings",
     pickerErrorMessage:
       "Try again later or check Whole's permission to access your photos.",

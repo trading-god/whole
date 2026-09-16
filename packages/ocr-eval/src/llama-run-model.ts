@@ -64,12 +64,21 @@ export async function createLlamaRunModel(): Promise<LlamaRunModelHandle> {
   // reset.)
   const sequence = context.getSequence();
 
-  // Compiled once: `RecognitionAttempt.grammar` is invariant across attempts,
-  // so one instance covers the whole run.
-  let grammar: LlamaGrammar | undefined;
+  // Compiled once PER GRAMMAR, not once per run. A grammar is invariant across
+  // an attempt's retries, but a run is not one turn: recognition compiles a
+  // different schema depending on whether the screen's institution is known
+  // (annotation) or not (structure), so a single cached instance steered the
+  // annotation turns of a mixed corpus with the structure grammar — and every
+  // one of them came back "expected number, received undefined" for a field the
+  // grammar it was actually given does not have.
+  const grammars = new Map<string, LlamaGrammar>();
 
   const runModel: RunModel = async (attempt) => {
-    grammar ??= await llama.createGrammar({ grammar: attempt.grammar });
+    let grammar = grammars.get(attempt.grammar);
+    if (grammar === undefined) {
+      grammar = await llama.createGrammar({ grammar: attempt.grammar });
+      grammars.set(attempt.grammar, grammar);
+    }
 
     const session = new LlamaChatSession({
       contextSequence: sequence,

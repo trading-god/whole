@@ -42,18 +42,36 @@
 // thing a second attempt can act on.
 import { z } from "zod";
 
-import { assetKindSchema } from "../contract/asset-kind";
-import { knownAssetCurrencies, type Currency } from "../contract/currency";
+import type { Currency } from "../contract/currency";
 import type { InstitutionAblation } from "../institutions/ablation";
 import type { OcrTextBlock } from "../contract/block";
 import type { RecognizedAccount } from "../contract/recognized-account";
 
 import { buildAnnotationPrompt } from "./annotate-prompt";
+import {
+  NO_HOME_CURRENCY,
+  UNKNOWN_KIND,
+  annotationKindSchema,
+  homeCurrencySchema,
+  institutionAnswerSchema,
+  resolveInstitutionAnswer,
+  type RecognizedInstitution,
+} from "./annotation-fields";
+import {
+  assembleAssignedAccounts,
+  lineCarriesAccountDigits,
+  lineCarriesBalanceAmount,
+} from "./account-grouping";
+import {
+  buildStructurePrompt,
+  structureJsonSchema,
+  structureSchema,
+} from "./structure-prompt";
 import { jsonSchemaToGrammar } from "./grammar";
-import { detectAssetKind } from "./kind";
 import {
   groupScreen,
   groupToRecognized,
+  kindWasGuessed,
   readScreen,
   type PipelineResult,
   type ScreenStructure,
@@ -73,15 +91,34 @@ export type RecognitionAttempt = {
   system: string;
   user: string;
   /**
-   * The annotation schema compiled to a GBNF grammar, which makes a malformed
-   * answer unreturnable rather than merely retried. Invariant across attempts —
-   * the correction fed back changes what to say, not the shape of an answer —
-   * so it is compiled once, not per attempt. An EMPTY string requests an
-   * unconstrained completion instead: every runtime treats "" as "no
-   * grammar" — the remote runner keeps the JSON schema off the wire for it,
-   * which is how the settings Test's plain ping rides the same contract.
+   * The turn's schema compiled to a GBNF grammar, which makes a malformed
+   * answer unreturnable rather than merely retried. Invariant across a turn's
+   * attempts — the correction fed back changes what to say, not the shape of an
+   * answer — so it is compiled once per turn, not per attempt. An EMPTY string
+   * requests an unconstrained completion instead: every runtime treats "" as
+   * "no grammar", which is how the settings Test's plain ping rides the same
+   * contract.
+   *
+   * There is more than one, and a runtime must not assume otherwise: a screen
+   * whose institution is known takes the annotation turn and one whose
+   * institution is not takes the structure turn, so a runner that compiled the
+   * first grammar it saw and reused it steers the wrong turn with it. The eval
+   * harness did exactly that, and every annotation turn in a mixed run failed
+   * on a field the grammar it was actually given does not have.
    */
   grammar: string;
+  /**
+   * The same schema as JSON Schema, for a runtime that constrains by schema
+   * rather than by grammar — an OpenAI-compatible endpoint's
+   * `response_format.json_schema`.
+   *
+   * Carried on the attempt rather than imported by the runner for the reason
+   * above: the runner cannot know which turn this is, and one that reached for
+   * a fixed schema would constrain a structure answer to the annotation shape
+   * and reject every reply. `undefined` pairs with an empty `grammar` — an
+   * unconstrained completion, which is what the settings Test's ping wants.
+   */
+  schema?: unknown;
 };
 
 /** Runs one turn and returns the model's raw text. */
@@ -129,11 +166,6 @@ export const ANNOTATION_INFERENCE = {
   temperature: 0,
 } as const;
 
-type RecognizedInstitution = {
-  displayName: string;
-  alternates?: string[];
-};
-
 export type ResolvedRecognition = {
   accounts: RecognizedAccount[];
   /**
@@ -171,31 +203,6 @@ type RecognitionOutcome =
 // every field but the kind, and the kind only where the engine had to guess.
 export const MAX_REGION_NUMBER = 63;
 
-/** The answer for a venue with no home currency — a broker, an exchange. */
-const NO_HOME_CURRENCY = "none";
-
-/** The answer for a region whose kind the model could not tell. */
-const UNKNOWN_KIND = "unknown";
-
-/** Long enough for any institution's name, short enough to bound the grammar. */
-const MAX_INSTITUTION_NAME_LENGTH = 64;
-
-/** A handful of candidate readings is plausible; a longer list is a loop. */
-const MAX_INSTITUTION_ALTERNATES = 4;
-
-/** The answer for a screen the model could not place. */
-const UNPLACEABLE_INSTITUTION = "unknown";
-
-const homeCurrencySchema = z.enum([
-  ...knownAssetCurrencies,
-  NO_HOME_CURRENCY,
-] as const);
-
-const annotationKindSchema = z.enum([
-  ...assetKindSchema.options,
-  UNKNOWN_KIND,
-] as const);
-
 const annotationAccountSchema = z.object({
   /**
    * The 1-based region number the prompt printed.
@@ -217,37 +224,7 @@ const annotationAccountSchema = z.object({
 // field is required" in the package README for the sample that showed it. A new
 // field here should be required with a decline value, never optional.
 const annotationSchema = z.object({
-  /**
-   * Which institution this screen belongs to. `displayName: "unknown"` is how
-   * the model declines.
-   */
-  institution: z.object({
-    // `min(1)` with no `.trim()`: the grammar compiled from this schema
-    // (minLength: 1) accepts any single character, and a grammar-legal
-    // answer cannot be a retryable violation. A whitespace-only name means
-    // "could not name it" — `resolveRecognition` reads it as absent, the same
-    // as the sentinel.
-    //
-    // Bounded, for the same reason the region number is: an unbounded string
-    // compiles to an unbounded grammar rule, and a 2B quant that falls into a
-    // repetition loop then runs to the output ceiling mid-string. The answer
-    // is unparseable JSON, and all three attempts go the same way. No
-    // institution's name needs 64 characters, and no screen offers more than a
-    // couple of candidates.
-    displayName: z.string().min(1).max(MAX_INSTITUTION_NAME_LENGTH),
-    alternates: z
-      .array(z.string().min(1).max(MAX_INSTITUTION_NAME_LENGTH))
-      .max(MAX_INSTITUTION_ALTERNATES)
-      .optional(),
-  }),
-  /**
-   * What this institution's app means by a bare figure, or `none`.
-   *
-   * A closed enum, so the compiled grammar makes an unstorable currency
-   * undecodable rather than merely rejected — the same guarantee the region
-   * numbers get. The app could not store a "JPY" answer anyway, and a retry
-   * spent on one would be a retry spent on nothing.
-   */
+  institution: institutionAnswerSchema,
   homeCurrency: homeCurrencySchema,
   /**
    * One entry per region the prompt printed. An empty array is the answer for
@@ -277,25 +254,45 @@ export function annotationJsonSchema(): unknown {
   return z.toJSONSchema(annotationSchema, { io: "input" });
 }
 
-// The grammar is a pure function of the module-level schema, so it is compiled
-// once and shared by every recognition — the eval harness replays seventeen
+// The JSON Schema and the grammar a turn constrains its answer with. Both are
+// pure functions of a module-level zod schema, so each is derived once and
+// shared by every recognition that uses it — the eval harness replays seventeen
 // samples against one process, and the app recognizes one screenshot after
-// another.
-let annotationGrammarPromise: Promise<string> | null = null;
+// another. Keyed by turn, because there are now two schemas and a screen uses
+// one or the other depending on whether its institution is known.
+//
+// The pair is cached TOGETHER because it travels together: a `RecognitionAttempt`
+// carries both (the grammar for a local llama.cpp, the schema for an endpoint's
+// `response_format`), and caching only the grammar left `z.toJSONSchema` walking
+// the schema again on every screenshot — the same waste `remote-runner.ts`
+// stopped doing per request.
+const turnConstraints = new Map<
+  string,
+  Promise<{ grammar: string; schema: unknown }>
+>();
 
-function annotationGrammar(): Promise<string> {
-  annotationGrammarPromise ??= jsonSchemaToGrammar(
-    annotationJsonSchema(),
-  ).catch((error: unknown) => {
-    // Not cached as a failure, for the same reason the app's context and JSI
-    // singletons are not: a memoized rejection makes every later recognition
-    // fail with it for the life of the process, and the "try again" the copy
-    // offers could never work. Deterministic today — the schema is a module
-    // constant — but this is the one memoization that would keep a failure.
-    annotationGrammarPromise = null;
-    throw error;
-  });
-  return annotationGrammarPromise;
+function turnConstraint(
+  turn: string,
+  jsonSchema: () => unknown,
+): Promise<{ grammar: string; schema: unknown }> {
+  const cached = turnConstraints.get(turn);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const schema = jsonSchema();
+  const promise = jsonSchemaToGrammar(schema)
+    .then((grammar) => ({ grammar, schema }))
+    .catch((error: unknown) => {
+      // Not cached as a failure, for the same reason the app's context and JSI
+      // singletons are not: a memoized rejection makes every later recognition
+      // fail with it for the life of the process, and the "try again" the copy
+      // offers could never work. Deterministic today — the schemas are module
+      // constants — but this is the one memoization that would keep a failure.
+      turnConstraints.delete(turn);
+      throw error;
+    });
+  turnConstraints.set(turn, promise);
+  return promise;
 }
 
 // A grammar makes a code fence unreturnable, so on both shipping runtimes this
@@ -340,13 +337,14 @@ function resolveRecognition(
   // plus a scan to invert them: the annotations arrive with the number already
   // in hand.
   //
-  // `kindWasGuessed` cannot be read back off the account — `groupToRecognized`
-  // falls back to "cash", so a guessed kind is indistinguishable from a read
-  // one by the time it returns.
+  // The guessed-kind flag cannot be read back off the account —
+  // `groupToRecognized` falls back to "cash", so a guessed kind is
+  // indistinguishable from a read one by the time it returns. `kindWasGuessed`
+  // is the one definition both turns ask.
   const accounts: RecognizedAccount[] = [];
   const byRegion = new Map<
     number,
-    { account: RecognizedAccount; kindWasGuessed: boolean }
+    { account: RecognizedAccount; guessedKind: boolean }
   >();
   groups.forEach((group, index) => {
     const read = groupToRecognized(group, institutionConfig);
@@ -355,38 +353,20 @@ function resolveRecognition(
       accounts.push(account);
       byRegion.set(index + 1, {
         account,
-        kindWasGuessed:
-          detectAssetKind(group.name) === undefined &&
-          institutionConfig.defaultKind === undefined,
+        guessedKind: kindWasGuessed(group, institutionConfig),
       });
     }
   });
 
   for (const { group, kind } of annotation.accounts) {
     const region = byRegion.get(group);
-    if (kind !== UNKNOWN_KIND && region?.kindWasGuessed) {
+    if (kind !== UNKNOWN_KIND && region?.guessedKind) {
       region.account.kind = kind;
     }
   }
 
-  // Two ways to say "could not place it", both read as absent rather than
-  // retried — asking again would put the same question to the same model.
-  // `unknown` is the one the prompt asks for; a grammar-legal whitespace-only
-  // name is the one the schema cannot forbid (see the note there).
-  const institution = annotation.institution;
-  const declined = institution.displayName.trim().toLowerCase();
-  if (declined === "" || declined === UNPLACEABLE_INSTITUTION) {
-    return { accounts };
-  }
-  return {
-    accounts,
-    institution: {
-      displayName: institution.displayName,
-      alternates: institution.alternates?.filter(
-        (alternate) => alternate.trim() !== "",
-      ),
-    },
-  };
+  const institution = resolveInstitutionAnswer(annotation.institution);
+  return institution === undefined ? { accounts } : { accounts, institution };
 }
 
 /**
@@ -427,6 +407,18 @@ function redenominate(
 }
 
 /** Knobs for a replay, never for the app. */
+/**
+ * The turns recognition can run, as a value the harness can validate against.
+ *
+ * Exported as a list rather than only as a type for the same reason
+ * `INSTITUTION_ABLATIONS` is: `pnpm eval:ocr:llama -- --turn <name>` has to
+ * reject a typo, and a list retyped in the CLI would drift from the turns the
+ * engine actually implements.
+ */
+export const RECOGNITION_TURNS = ["structure", "annotation"] as const;
+
+export type RecognitionTurn = (typeof RECOGNITION_TURNS)[number];
+
 export type RecognitionOptions = {
   /**
    * Removes one tier of institution config from BOTH passes — the ablation
@@ -439,12 +431,217 @@ export type RecognitionOptions = {
    * the engine already had one. Ablated, it can.
    */
   ablate?: InstitutionAblation;
+  /**
+   * Forces one turn regardless of whether the institution is known.
+   *
+   * The seam for re-deciding the gate below, which is the one thing about this
+   * module that is a judgement rather than a measurement. "Configured
+   * institution" is a proxy for "layout the rules were written against", and it
+   * is an imperfect one — a config is authored against ONE screen, so the same
+   * bank's account-detail page is as unfamiliar as a bank nothing knows. This
+   * is how the corpus answers whether the proxy is worth keeping: run the real
+   * corpus through `structure` and see whether 17/17 survives.
+   */
+  turn?: RecognitionTurn;
 };
 
 /**
- * Recognizes the accounts on a screen: the engine reads the structure, the
- * model annotates the semantics, retrying with feedback when the model's
- * answer does not hold the contract.
+ * Runs one turn to a validated answer, retrying with the specific violation fed
+ * back.
+ *
+ * Shared by both turns, because the retry policy is a property of asking a
+ * small model for structured output, not of what is being asked. What the loop
+ * DOES do is tell the model exactly what was wrong with its last answer, which
+ * is the one thing a second attempt can act on; there is deliberately no
+ * multi-turn agent loop, because the whole screen is supplied at once and the
+ * model has nothing to go and look up.
+ */
+async function runTurn<T>(
+  runModel: RunModel,
+  prompt: { system: string; user: string },
+  constraint: { grammar: string; schema: unknown },
+  schema: z.ZodType<T>,
+): Promise<
+  | { ok: true; data: T; attempts: number }
+  | { ok: false; reason: string; attempts: number }
+> {
+  // Assigned before every `continue`, and read once the attempts run out. Held
+  // as a plain string rather than `string | null` so the exhausted-attempts
+  // return needs no fallback: a `?? "…"` there would be a branch no test could
+  // ever reach, which is exactly the kind of thing AGENTS.md forbids hiding
+  // behind an ignore comment.
+  let correction = "";
+
+  for (let attempt = 1; attempt <= MAX_RECOGNITION_ATTEMPTS; attempt += 1) {
+    const answer = await runModel({
+      system: prompt.system,
+      user: attempt === 1 ? prompt.user : `${prompt.user}\n\n${correction}`,
+      grammar: constraint.grammar,
+      schema: constraint.schema,
+    });
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(extractJson(answer));
+    } catch {
+      correction =
+        "Your previous answer was not valid JSON. Return only the JSON object, with no prose and no code fence.";
+      continue;
+    }
+
+    const validated = schema.safeParse(parsed);
+    if (!validated.success) {
+      // The specific violation, by field. A retry told only "that was wrong"
+      // has nothing to change.
+      const problems = validated.error.issues
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("; ");
+      correction = `Your previous answer did not match the required shape: ${problems}. Fix those fields and answer again.`;
+      continue;
+    }
+
+    return { ok: true, data: validated.data, attempts: attempt };
+  }
+
+  return { ok: false, reason: correction, attempts: MAX_RECOGNITION_ATTEMPTS };
+}
+
+/**
+ * Recognizes a screen whose institution nothing knows, by asking the model
+ * which lines belong to which account.
+ *
+ * The engine's grouping is not consulted at all here, and that is the point.
+ * Where no `InstitutionConfig` was written against the layout, the state
+ * machine does not merely miss accounts — it merges them, and `finish` sums the
+ * merged region into one balance the screen never printed. A four-account US
+ * overview comes back as one account holding the sum of all four. The synthetic
+ * corpus measures that at 0/12 samples and 15% on accountName, and every one of
+ * the failures has that shape.
+ *
+ * What the model supplies is assignment, never values: `assembleAssignedAccounts`
+ * reads each name, last four and figure off the same tokens the rules parse, so
+ * the worst a wrong answer can do is file a real figure under the wrong real
+ * name — where the rules' failure mode is a figure that exists nowhere.
+ *
+ * An empty answer is returned as empty. Falling back to the rules' read would
+ * put exactly the fabricated total back on the form, under a badge saying the
+ * screenshot was recognized — and this repo's rule for money is that a missing
+ * figure beats a wrong one (`convertCurrency` returns null rather than 0 for
+ * the same reason).
+ */
+async function recognizeByAssignment(
+  structure: ScreenStructure,
+  runModel: RunModel,
+): Promise<RecognitionOutcome> {
+  const lines = structure.classified.map((line) => ({
+    text: line.text,
+    // The engine's own reading, not a hint: a line it parsed no figure on
+    // cannot become a balance however it is assigned, because
+    // `assembleAssignedAccounts` drops the reference. Marking them tells the
+    // model which answers are available rather than which are right.
+    //
+    // Asked through the READER rather than off the token roles, for the same
+    // reason `#` is: the roles alone said yes to a row whose only figure was an
+    // explicitly `+`-signed gain, which `balanceAmountsOf` then drops — so the
+    // model was invited to assign a balance that came back empty.
+    hasAmount: lineCarriesBalanceAmount(line),
+    // The digits an account is identified by, as the engine reads them — the
+    // same question `lastFourFromLine` answers, asked of the line rather than
+    // of a chosen one, so a `#` never marks a line that could not yield a last
+    // four.
+    hasDigits: lineCarriesAccountDigits(line),
+  }));
+
+  // No figure anywhere is no account anywhere, and it is the honest verdict
+  // rather than merely the cheap one: on a memory-tight device, loading three
+  // gigabytes to arrive at `[]` can FAIL, and the user would be told to free up
+  // memory over a screenshot whose real verdict is "no accounts on this
+  // screen". An account with no figure is only worth a draft beside one that
+  // has one — the form's `isWorthDrafting` says the same thing from its end.
+  if (!lines.some((line) => line.hasAmount)) {
+    return { ok: true, recognition: { accounts: [] }, attempts: 0 };
+  }
+
+  const turn = await runTurn(
+    runModel,
+    buildStructurePrompt(lines),
+    await turnConstraint("structure", structureJsonSchema),
+    structureSchema,
+  );
+  if (!turn.ok) {
+    return { ok: false, reason: turn.reason, attempts: turn.attempts };
+  }
+
+  const { homeCurrency } = turn.data;
+  // The answer's accounts ARE the assignments — each carries the three line
+  // numbers `assembleAssignedAccounts` reads plus the kind, and the assembled
+  // list stays index-aligned with them (a dropped assignment leaves a `null`),
+  // so the kind is read back off the same entry rather than off a second list
+  // that has to be kept parallel to this one.
+  const assembled = assembleAssignedAccounts(
+    structure.classified,
+    turn.data.accounts,
+    structure.institutionConfig,
+    homeCurrency === NO_HOME_CURRENCY ? undefined : homeCurrency,
+  );
+
+  const accounts: RecognizedAccount[] = [];
+  assembled.forEach((group, index) => {
+    if (group === null) {
+      return;
+    }
+    const read = groupToRecognized(group, structure.institutionConfig);
+    if (read === null) {
+      return;
+    }
+    // The same precedence the annotation turn gives a kind, and for the same
+    // measured reason: a keyword hit on the account's own name outranks the
+    // model, which disagreed with correct reads wherever that signal existed.
+    // On an unknown institution there is no `defaultKind` to outrank it either,
+    // so the model's answer is what covers the product names no vocabulary
+    // anticipated — but the config is still asked, because `options.turn`
+    // forces this path onto CONFIGURED institutions and that is precisely what
+    // `pnpm eval:ocr:llama -- --turn structure` runs. Dropping the clause there
+    // let the model overwrite a declared `defaultKind` ("crypto" on OKX,
+    // "investment" on IBKR), so the gate would have measured a kind rule that
+    // never ships.
+    const answered = turn.data.accounts[index]?.kind;
+    const kind =
+      kindWasGuessed(group, structure.institutionConfig) &&
+      answered !== undefined &&
+      answered !== UNKNOWN_KIND
+        ? answered
+        : read.kind;
+    accounts.push({
+      ...read,
+      kind,
+      institutionId: structure.institutionId,
+    });
+  });
+
+  const institution = resolveInstitutionAnswer(turn.data.institution);
+  return {
+    ok: true,
+    recognition:
+      institution === undefined ? { accounts } : { accounts, institution },
+    attempts: turn.attempts,
+  };
+}
+
+/**
+ * Recognizes the accounts on a screen.
+ *
+ * Which turn runs depends on what the engine already knows about the
+ * institution, and the split is measured rather than stylistic:
+ *
+ * - a **configured** institution takes the ANNOTATION turn. The engine's
+ *   grouping passes 17/17 of the real corpus, a model doing that job scores far
+ *   below it, and letting one "help" with structure can only lose money. The
+ *   model is asked only what rules cannot know.
+ * - an **unknown** institution takes the STRUCTURE turn. There the engine's
+ *   grouping is not 100%, it is 0/12 over the synthetic corpus, and its
+ *   failures fabricate balances rather than miss them. See
+ *   `recognizeByAssignment`.
  *
  * A well-formed annotation that names no known region is NOT a retry: the
  * model answered, and `resolveRecognition` dropped what it could not place.
@@ -461,6 +658,14 @@ export async function recognizeWithModel(
   options: RecognitionOptions = {},
 ): Promise<RecognitionOutcome> {
   const structure = readScreen(blocks, options.ablate);
+
+  if (
+    options.turn === "structure" ||
+    (options.turn === undefined && structure.institutionId === "unknown")
+  ) {
+    return recognizeByAssignment(structure, runModel);
+  }
+
   const first = groupScreen(structure);
   const { classified, groups } = first;
 
@@ -497,63 +702,25 @@ export async function recognizeWithModel(
     }
   });
 
-  const { system, user } = buildAnnotationPrompt(
-    classified,
-    regionOfLine,
-    annotatable,
+  const turn = await runTurn(
+    runModel,
+    buildAnnotationPrompt(classified, regionOfLine, annotatable),
+    await turnConstraint("annotation", annotationJsonSchema),
+    annotationSchema,
   );
-  const grammar = await annotationGrammar();
-
-  // Assigned before every `continue`, and read once the attempts run out. Held
-  // as a plain string rather than `string | null` so the exhausted-attempts
-  // return needs no fallback: a `?? "…"` there would be a branch no test could
-  // ever reach, which is exactly the kind of thing AGENTS.md forbids hiding
-  // behind an ignore comment.
-  let correction = "";
-
-  for (let attempt = 1; attempt <= MAX_RECOGNITION_ATTEMPTS; attempt += 1) {
-    const answer = await runModel({
-      system,
-      user: attempt === 1 ? user : `${user}\n\n${correction}`,
-      grammar,
-    });
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(extractJson(answer));
-    } catch {
-      correction =
-        "Your previous answer was not valid JSON. Return only the JSON object, with no prose and no code fence.";
-      continue;
-    }
-
-    const validated = annotationSchema.safeParse(parsed);
-    if (!validated.success) {
-      // The specific violation, by field. A retry told only "that was wrong"
-      // has nothing to change.
-      const problems = validated.error.issues
-        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-        .join("; ");
-      correction = `Your previous answer did not match the required shape: ${problems}. Fix those fields and answer again.`;
-      continue;
-    }
-
-    const { homeCurrency } = validated.data;
-    const read = redenominate(
-      structure,
-      first,
-      homeCurrency === NO_HOME_CURRENCY ? undefined : homeCurrency,
-    );
-    return {
-      ok: true,
-      recognition: resolveRecognition(read, validated.data),
-      attempts: attempt,
-    };
+  if (!turn.ok) {
+    return { ok: false, reason: turn.reason, attempts: turn.attempts };
   }
 
+  const { homeCurrency } = turn.data;
+  const read = redenominate(
+    structure,
+    first,
+    homeCurrency === NO_HOME_CURRENCY ? undefined : homeCurrency,
+  );
   return {
-    ok: false,
-    reason: correction,
-    attempts: MAX_RECOGNITION_ATTEMPTS,
+    ok: true,
+    recognition: resolveRecognition(read, turn.data),
+    attempts: turn.attempts,
   };
 }

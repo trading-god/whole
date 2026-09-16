@@ -7,26 +7,26 @@
 // zod validation judge it (see `recognizeWithModel`; a malformed answer is
 // retried with a correction, not treated as a crash).
 //
-// Structured outputs rather than prompt-begging: the engine's annotation
-// schema (`annotationJsonSchema`) rides as `response_format`, so the endpoint
-// is constrained to the same shape the local GBNF grammar enforces — a
-// provider without the field simply ignores it and the retry loop still
-// catches what slips through. The attempt's `grammar` is what carries the
-// schema's counterpart over the wire: a non-empty grammar is a recognition
-// turn, so the schema rides along; an empty one (the settings Test's ping)
-// is a plain completion — constraining "ping" to the annotation shape would
-// make the provider generate a full JSON annotation and turn a one-second
-// reachability check into a full inference.
+// Structured outputs rather than prompt-begging: the turn's own schema
+// (`attempt.schema`) rides as `response_format`, so the endpoint is constrained
+// to the same shape the local GBNF grammar enforces — a provider without the
+// field simply ignores it and the retry loop still catches what slips through.
+//
+// The schema comes off the ATTEMPT rather than being imported here, and that is
+// load-bearing: recognition has two turns — annotation for an institution the
+// engine knows, structure for one it does not — and this runner cannot tell
+// which it is being asked to carry. Reaching for a fixed schema constrained
+// every structure answer to the annotation shape, so the provider returned a
+// reply the engine then rejected three times over. An absent schema pairs with
+// an empty grammar and means an unconstrained completion: that is the settings
+// Test's ping, and constraining "ping" to a recognition shape would turn a
+// one-second reachability check into a full inference.
 //
 // NOT a singleton: unlike the on-device context there is nothing to warm —
 // each call is a stateless HTTPS request. The config is loaded per turn, so a
 // settings change takes effect on the very next recognition without any
 // cache to invalidate.
-import {
-  ANNOTATION_INFERENCE,
-  annotationJsonSchema,
-  type RunModel,
-} from "@whole/ocr";
+import { ANNOTATION_INFERENCE, type RunModel } from "@whole/ocr";
 
 import { errorMessage } from "@/features/on-device-model/model-error";
 import { RemoteModelError } from "@/features/recognition/remote-model-error";
@@ -60,11 +60,6 @@ export async function createRemoteRunModel(): Promise<RunModel | null> {
   // Keychain hiccup surfaces on the first attempt rather than
   // unpredictably on the third.
   const { apiKey } = config;
-  // Built once per turn, not per attempt: the schema is a module constant in
-  // `@whole/ocr`, and a turn can retry up to three times — each attempt
-  // re-deriving the same JSON object graph from zod is pure waste.
-  const responseSchema = annotationJsonSchema();
-
   return async (attempt) => {
     // Abort rather than a fetch timeout: Hermes' `AbortSignal.timeout` is
     // unreliable, and a controller per attempt lets a later attempt start
@@ -104,14 +99,14 @@ export async function createRemoteRunModel(): Promise<RunModel | null> {
           // (`alternates`) and no such flag — zod derives it for the grammar,
           // not for OpenAI's strict subset — so a schema-validating provider
           // would answer every request with HTTP 400.
-          ...(attempt.grammar === ""
+          ...(attempt.schema === undefined
             ? {}
             : {
                 response_format: {
                   type: "json_schema",
                   json_schema: {
-                    name: "annotation",
-                    schema: responseSchema,
+                    name: "recognition",
+                    schema: attempt.schema,
                   },
                 },
               }),

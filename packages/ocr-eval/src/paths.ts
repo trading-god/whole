@@ -35,10 +35,38 @@ function currentFileDir(): string {
 // and any repo-root lookups stay anchored to the package root, not to `src/`.
 export const packageRoot = path.resolve(currentFileDir(), "..");
 
-// Absolute path to the samples directory, which lives in the package. Samples
-// travel with the runner regardless of where the package is installed or
-// invoked from.
-export const samplesDir = path.join(packageRoot, "samples");
+// Which corpus this process works against.
+//
+// `samples/` is the real one: 17 device captures of real accounts, recorded
+// through the app, authoritative about what iOS Vision actually produces.
+// `synthetic-samples/` is generated from the screen specs in `src/synthetic/`
+// — screens the engine has never seen, in layout families the real corpus
+// cannot reach because one person banks with 14 institutions.
+//
+// They are separate DIRECTORIES rather than one corpus with a flag, and each
+// keeps its own baseline, because they are not the same kind of evidence. A
+// real sample says "this is what the engine does to a screenshot somebody
+// actually took"; a synthetic one says "this is what it does to a layout
+// family". Mixing them would let a generated screen dilute — or quietly raise —
+// a number the README reports as a measurement over real captures.
+//
+// Selected by environment rather than by a flag so it is set once, by the
+// script that means it, and every CLI in the package inherits it without
+// re-parsing argv. An unset or unrecognized value is the real corpus, which is
+// what every existing invocation means.
+/** The corpus's name, for the baseline file and for error messages. */
+export const corpusName =
+  process.env.OCR_CORPUS === "synthetic" ? "synthetic" : "real";
+
+// Derived from the name rather than from a second read of the environment, so
+// the two cannot answer differently about which corpus is active.
+const corpusDirName =
+  corpusName === "synthetic" ? "synthetic-samples" : "samples";
+
+// Absolute path to the active corpus directory, which lives in the package.
+// Samples travel with the runner regardless of where the package is installed
+// or invoked from.
+export const samplesDir = path.join(packageRoot, corpusDirName);
 
 // Lists sample slugs (subdirectories of `samplesDir` containing `marker`),
 // sorted. Shared so sample discovery can't drift between the CLIs — the
@@ -64,9 +92,9 @@ export function invocationDir(): string {
   );
 }
 
-// Parses the `--sample <slug>` CLI flag from args, returning the slug or null
-// when absent. Shared by every CLI here so the flag contract can't drift
-// between them.
+// Parses a valued CLI flag (`--sample <slug>`, `--turn <name>`) from args,
+// returning the value or null when the flag is absent. Every valued flag in the
+// package goes through here so the contract can't drift between CLIs.
 //
 // A flag is never a value. Falling through to null expanded a run to EVERY
 // sample — `--sample --update-baseline`, or a `--sample` whose slug was
@@ -79,8 +107,12 @@ export function invocationDir(): string {
 // it too — so terminating the process here would kill a vitest worker instead
 // of failing an assertion. Each CLI's top-level catch turns it into the exit
 // code.
-export function parseSampleFlag(args: string[]): string | null {
-  const idx = args.indexOf("--sample");
+export function parseValueFlag(
+  args: string[],
+  flag: string,
+  hint: string,
+): string | null {
+  const idx = args.indexOf(flag);
   if (idx === -1) {
     return null;
   }
@@ -88,7 +120,33 @@ export function parseSampleFlag(args: string[]): string | null {
   if (value && !value.startsWith("--")) {
     return value;
   }
-  throw new Error("--sample needs a value (e.g. `--sample ocbc-overview`).");
+  throw new Error(`${flag} needs a value (${hint}).`);
+}
+
+/**
+ * A valued flag whose values are a closed set (`--ablate`, `--turn`).
+ *
+ * Validated against the list the engine exports rather than one retyped per
+ * CLI: an unknown mode is a typo, and falling through to the ordinary run would
+ * report a number the operator reads as the flag's.
+ */
+export function parseEnumFlag<T extends string>(
+  args: string[],
+  flag: string,
+  allowed: readonly T[],
+): T | undefined {
+  const value = parseValueFlag(args, flag, `e.g. \`${flag} ${allowed[0]}\``);
+  if (value === null) {
+    return undefined;
+  }
+  if ((allowed as readonly string[]).includes(value)) {
+    return value as T;
+  }
+  throw new Error(`${flag} needs one of: ${allowed.join(", ")}.`);
+}
+
+export function parseSampleFlag(args: string[]): string | null {
+  return parseValueFlag(args, "--sample", "e.g. `--sample ocbc-overview`");
 }
 
 // Resolves the sample slugs a CLI should process: the `--sample <slug>` target
@@ -100,7 +158,7 @@ export function resolveSampleTargets(args: string[]): string[] {
   const slugs = onlySlug ? [onlySlug] : listSampleSlugs();
   if (slugs.length === 0) {
     console.error(
-      "No samples found (create samples/<slug>/blocks.json first).",
+      `No samples found (create ${corpusDirName}/<slug>/blocks.json first).`,
     );
     process.exit(1);
   }
@@ -163,7 +221,9 @@ function withSampleNamed<T>(slug: string, file: string, load: () => T): T {
     return load();
   } catch (error) {
     const message = errorMessage(error);
-    throw new Error(`samples/${slug}/${file} is malformed — ${message}`);
+    throw new Error(
+      `${corpusDirName}/${slug}/${file} is malformed — ${message}`,
+    );
   }
 }
 

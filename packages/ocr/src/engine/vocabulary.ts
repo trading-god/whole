@@ -195,6 +195,23 @@ const nonBalanceMarkers = [
   "涨跌",
   "today's change",
   "24h change",
+  // A broker's metric shelf. Every one of these is a well-formed money figure
+  // printed directly under the account's value, and none is a holding: buying
+  // power is the value levered, margin is what must stay posted against it.
+  // Generic to the product, not to one broker — which is why they belong to
+  // the shared list rather than to `ibkr`'s config. Without them a portfolio
+  // screen reports the account's value PLUS its leverage as the user's money.
+  "buying power",
+  "purchasing power",
+  "maintenance margin",
+  "initial margin",
+  "margin requirement",
+  "excess liquidity",
+  "day p&l",
+  "unrealized p&l",
+  "unrealised p&l",
+  "维持保证金",
+  "剩余流动性",
 ];
 
 // The same idea, where a plain substring is too blunt.
@@ -344,6 +361,12 @@ export const contactMarkers = [
 const accountSectionEndHeadingsEn = [
   "transaction history",
   "transactions",
+  // Its own entry because the list is LEAD-anchored: "recent transactions" does
+  // not start with "transactions", and it is the commonest heading of the
+  // three. Without it an account-detail page's postings were attached to the
+  // account above them — the balance came back as the real one minus the
+  // transactions below it, a figure that appears nowhere on the screen.
+  "recent transactions",
   "recent activity",
   "cash flow",
 ];

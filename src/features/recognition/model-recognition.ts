@@ -3,7 +3,7 @@ import {
   type RecognizedAccount,
   type ResolvedRecognition,
   type RunModel,
-  parseOcrBlocks,
+  parseOcrBlocksTraced,
   recognizeWithModel,
 } from "@whole/ocr";
 
@@ -69,8 +69,19 @@ export type ModelRecognitionResult =
 // `recognizeWithModel` already made internally, which costs a few milliseconds
 // of CPU against three model attempts that just failed — cheap enough not to
 // widen the engine's outcome type to carry it out.
+//
+// Offered ONLY for an institution the engine's configs know. That is the same
+// line `recognizeWithModel` draws to choose its turn, and for the same measured
+// reason: where a config was written against the layout the rules pass 17/17,
+// and where none was they do not merely miss accounts — they merge them and
+// report the merged region's SUM as one balance, a figure the screenshot never
+// printed. Pre-filling that under a badge saying the screenshot was recognized
+// is worse than pre-filling nothing, because the user has no way to notice it.
+// So the model failing on an unknown institution leaves the form empty and the
+// screenshot beside it, which is the honest state.
 function engineOnly(blocks: OcrTextBlock[]): RecognizedAccount[] {
-  return parseOcrBlocks(blocks);
+  const { accounts, trace } = parseOcrBlocksTraced(blocks);
+  return trace.institutionId === "unknown" ? [] : accounts;
 }
 
 export async function recognizeAccountsWithModel(

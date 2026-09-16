@@ -52,15 +52,20 @@ describe("createRemoteRunModel", () => {
     expect(answer).toBe(COMPLETION_BODY.choices[0].message.content);
   });
 
-  it("posts to the configured base URL with the auth header and the schema on a recognition turn", async () => {
+  it("posts to the configured base URL with the auth header and the turn's own schema", async () => {
     const fetchSpy = mockCompletion();
 
     const runModel = (await createRemoteRunModel()) as RunModel;
-    // A non-empty grammar is what marks the turn as recognition (the engine
-    // always passes the compiled annotation grammar; only the settings Test
-    // passes ""). Its content is irrelevant to this runner — presence alone
-    // decides whether the schema rides along.
-    await runModel({ system: "s", user: "u", grammar: "root ::= ..." });
+    // The schema comes off the ATTEMPT. Recognition has two turns — annotation
+    // for an institution the engine knows, structure for one it does not — and
+    // this runner cannot tell which it is carrying, so reaching for a fixed
+    // schema here constrained every structure answer to the annotation shape.
+    await runModel({
+      system: "s",
+      user: "u",
+      grammar: "root ::= ...",
+      schema: { type: "object", properties: { accounts: { type: "array" } } },
+    });
 
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("https://api.deepseek.com/v1/chat/completions");
@@ -73,8 +78,11 @@ describe("createRemoteRunModel", () => {
     const responseFormat = body.response_format as {
       json_schema: { name: string; strict?: boolean; schema: unknown };
     };
-    expect(responseFormat.json_schema.name).toBe("annotation");
-    expect(responseFormat.json_schema.schema).toBeTruthy();
+    expect(responseFormat.json_schema.name).toBe("recognition");
+    expect(responseFormat.json_schema.schema).toEqual({
+      type: "object",
+      properties: { accounts: { type: "array" } },
+    });
     // Pinned: `strict: true` demands every property in `required` and
     // `additionalProperties: false`, which the shared annotation schema (an
     // optional `alternates`) does not satisfy — a schema-validating provider
@@ -83,7 +91,7 @@ describe("createRemoteRunModel", () => {
     fetchSpy.mockRestore();
   });
 
-  it("omits response_format on a turn without a grammar — the settings Test's ping", async () => {
+  it("omits response_format on a turn carrying no schema — the settings Test's ping", async () => {
     // The Test probe is a reachability check; constraining "ping" to the
     // annotation shape would have the provider generate a full JSON
     // annotation and turn a one-second round trip into a full inference.

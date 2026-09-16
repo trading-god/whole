@@ -69,10 +69,24 @@ describe("issueForRecognition", () => {
   // The failure messages all say "check what was filled in". When the engine
   // read nothing either, nothing was — and the honest verdict is the same one
   // a clean but empty read gets.
-  it.each(["load-failed", "invalid-output", "unknown"] as const)(
+  it.each(["invalid-output", "unknown"] as const)(
     "reports an empty screen when %s left no engine read either",
     (cause) => {
       expect(issueForRecognition(failed(cause, []))).toBe("recognitionEmpty");
     },
   );
+
+  // …but not for the two causes that name a SETUP problem. An empty account
+  // list no longer means "the screen held nothing": on an institution no config
+  // knows, `engineOnly` SUPPRESSES the rules' read rather than finding nothing,
+  // because the rules merge those screens into a sum the screenshot never
+  // printed. A 401 or an out-of-memory load is true whatever the screen held,
+  // and "try a screenshot that shows the account name and balance" sends the
+  // user round a loop no screenshot ends.
+  it.each([
+    ["remote-failed", "remoteFailed"],
+    ["load-failed", "modelLoadFailed"],
+  ] as const)("keeps %s's own advice with no engine read", (cause, issue) => {
+    expect(issueForRecognition(failed(cause, []))).toBe(issue);
+  });
 });

@@ -1,0 +1,21 @@
+[
+  {
+    "accountName": "Integrated Savings",
+    "kind": "cash",
+    "accountLastFourDigits": "3071",
+    "balances": [
+      {
+        "currency": "HKD",
+        "balance": 214880.65
+      },
+      {
+        "currency": "USD",
+        "balance": 9420.11
+      },
+      {
+        "currency": "CNY",
+        "balance": 0
+      }
+    ]
+  }
+]

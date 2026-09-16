@@ -1,0 +1,34 @@
+[
+  {
+    "accountName": "灵通快线",
+    "kind": "cash",
+    "accountLastFourDigits": "6612",
+    "balances": [
+      {
+        "currency": "CNY",
+        "balance": 82415.3
+      }
+    ]
+  },
+  {
+    "accountName": "定活通",
+    "kind": "cash",
+    "accountLastFourDigits": "4408",
+    "balances": [
+      {
+        "currency": "CNY",
+        "balance": 150000
+      }
+    ]
+  },
+  {
+    "accountName": "如意人生",
+    "kind": "investment",
+    "balances": [
+      {
+        "currency": "CNY",
+        "balance": 63280.77
+      }
+    ]
+  }
+]

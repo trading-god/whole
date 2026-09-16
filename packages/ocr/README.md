@@ -7,14 +7,26 @@ screenshot, it answers: what accounts are on this screen, what are they called,
 what are their balances per currency, what are the last four digits, and which
 institution is this?
 
-It is a **hybrid**: a deterministic rule pipeline reads the structure (accounts,
-balances, currencies, debt signs, mechanical last fours), and an injected model
-call annotates the semantics rules cannot know — the institution when no brand
-appears on screen, an account kind where no keyword applies, and the home
-currency a domestic app means by a bare number. The runtime that
-answers the call (weights, decoding) lives outside this package: llama.rn in
-the app, node-llama-cpp in the eval harness. That seam is what keeps the loop
-unit-testable and the two runtimes honest about decoding alike.
+It is a **hybrid**, and which half does what depends on whether the engine can
+place the institution:
+
+- **Institution configured** → the ANNOTATION turn. The deterministic pipeline
+  reads the structure (accounts, balances, currencies, debt signs, mechanical
+  last fours) and the model annotates only the semantics rules cannot know — the
+  institution when no brand appears on screen, an account kind where no keyword
+  applies, and the home currency a domestic app means by a bare number. 17/17 of
+  the real corpus.
+- **Institution unknown** → the STRUCTURE turn. There the rules do not merely
+  miss accounts, they MERGE them and report the merged region's sum as one
+  balance — a figure the screenshot never printed. So the model is asked which
+  LINE titles each account, which line carries its number, and which lines carry
+  its balance, and the engine reads every value off the lines it names. See
+  `engine/structure-prompt.ts`.
+
+The runtime that answers either call (weights, decoding) lives outside this
+package: llama.rn in the app, node-llama-cpp in the eval harness. That seam is
+what keeps the loop unit-testable and the two runtimes honest about decoding
+alike.
 
 Pure TypeScript with one dependency (`zod`) — no React Native, no Expo, no
 filesystem — so the same code runs in the app through Metro, in Node through the
@@ -58,8 +70,10 @@ src/
     account-grouping.ts  rows → tentative accounts
     vocabulary.ts        the word lists every institution inherits
     parser.ts            the structure pipeline (the rules' entry point)
-    recognize.ts         the hybrid loop: engine structure + model annotation
+    recognize.ts         the hybrid loop: which turn runs, and the retry
     annotate-prompt.ts   the annotation turn's instructions
+    structure-prompt.ts  the structure turn's instructions and schema
+    annotation-fields.ts what both turns ask: institution, currency, kind
     grammar.ts           zod schema → GBNF, for grammar-constrained decoding
     json-schema-to-grammar.{js,d.ts}  vendored llama.cpp converter
   institutions/   Per-institution overrides layered on the shared rules.
@@ -112,9 +126,35 @@ const outcome = await recognizeWithModel(blocks, runModel);
 
 `runModel` (`RunModel`) answers one attempt with raw text; everything about
 producing it — weights, context lifecycle, grammar-constrained decoding — is
-the caller's. The outcome is either the recognized accounts (the engine's
-structure plus the model's annotations, every annotation verified against the
-region the engine extracted) or the reason the model never held the contract.
+the caller's. The outcome is either the recognized accounts (every answer
+verified against what the engine extracted) or the reason the model never held
+the contract.
+
+**A runtime must not assume there is one grammar.** `attempt.grammar` and its
+`attempt.schema` twin differ per TURN, so a runner that compiles the first
+grammar it sees and reuses it steers the wrong turn with it — the eval harness
+did exactly that, and every annotation turn in a mixed run came back failing on
+a field the grammar it was actually given does not have. The remote runner takes
+its `response_format` off the attempt for the same reason.
+
+### Two turns, one line between them
+
+The line is `institutionId === "unknown"`, and it is measured on both sides
+rather than assumed. Over the real corpus the rules pass 17/17 and forcing the
+structure turn onto it takes that to 2/17; over the synthetic corpus of
+unconfigured institutions the rules pass 0/12 — while FABRICATING balances, not
+merely missing them — and the structure turn lifts accountName from 19% to 63%
+and balance:USD from 13% to 73%. `docs/ocr-redesign.md` has the argument and the
+tables; `pnpm eval:ocr:llama -- --turn structure` is how the question is asked
+again.
+
+The structure turn reports LINE NUMBERS and never values. That bounds what a
+wrong answer can do: every name, digit and figure is read off the tokens this
+engine parsed, so the worst case is a real figure under the wrong real name —
+where the rules' failure mode on these screens is a figure that exists nowhere.
+Assignments are verified before they are honoured (`assembleAssignedAccounts`):
+a line outside the screen, a name line yielding no name, a balance line carrying
+no figure, and a line a previous account already claimed are each dropped.
 
 ### Every annotation field is required
 

@@ -27,6 +27,7 @@ import {
   type FieldAggregates,
 } from "./aggregates";
 import {
+  baselineFileName,
   collectFailures,
   diffSample,
   loadBaseline,
@@ -235,7 +236,9 @@ function main() {
   // prevent, and `--update-baseline` is when it matters most.
   if (updateBaseline) {
     saveBaseline(nextBaseline);
-    console.log(`\nbaseline.json updated (${slugs.length} sample(s) rebuilt).`);
+    console.log(
+      `\n${baselineFileName} updated (${slugs.length} sample(s) rebuilt).`,
+    );
     return;
   }
 
