@@ -53,12 +53,17 @@ type AccountEditorFieldsProps = {
   // entry that reveals an inline name field; the parent creates the group and
   // returns its new id.
   onCreateInstitution?: (name: string) => Promise<string | undefined>;
-  // Optional institution name rendered as a free-text field at the top of the
-  // card (the add-account wizard), pre-filled with the detected institution's
-  // name so the user can correct a misrecognition. Mutually exclusive with the
-  // InstitutionPicker props above (the edit screen uses the picker).
-  institutionName?: string;
-  onInstitutionNameChange?: (name: string) => void;
+  // Renders the draft's own institution name as a free-text field at the top of
+  // the card (the add-account wizard), pre-filled with the detected
+  // institution's name so the user can correct a misrecognition. Mutually
+  // exclusive with the InstitutionPicker props above (the edit screen uses the
+  // picker).
+  //
+  // A flag rather than a value-and-callback pair: the name is already on
+  // `draft`, and a second copy threaded alongside it could only ever disagree
+  // with the draft by mistake. The write goes through the same index-keyed
+  // `onChange`/`patch` seam every other field uses.
+  showInstitutionName?: boolean;
 };
 
 // The account form fields shared by the add-account screen's single form, its
@@ -77,8 +82,7 @@ export const AccountEditorFields = memo(function AccountEditorFields({
   selectedInstitutionId,
   onInstitutionChange,
   onCreateInstitution,
-  institutionName,
-  onInstitutionNameChange,
+  showInstitutionName = false,
 }: AccountEditorFieldsProps) {
   const { t } = useTranslation();
   const accountKindOptions = useMemo(() => assetKindPickerOptions(t), [t]);
@@ -115,13 +119,13 @@ export const AccountEditorFields = memo(function AccountEditorFields({
         </>
       ) : null}
 
-      {institutionName !== undefined && onInstitutionNameChange ? (
+      {showInstitutionName ? (
         <>
           <FormField
             label={t("accountForm.group")}
-            onChangeText={onInstitutionNameChange}
+            onChangeText={(institutionName) => patch({ institutionName })}
             placeholder={t("accountForm.newGroupPlaceholder")}
-            value={institutionName}
+            value={draft.institutionName}
           />
           <View style={screenStyles.fieldDivider} />
         </>

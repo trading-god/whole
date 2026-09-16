@@ -1,0 +1,13 @@
+[
+  {
+    "accountName": "My Account",
+    "kind": "cash",
+    "accountLastFourDigits": "6210",
+    "balances": [
+      {
+        "currency": "SGD",
+        "balance": 27411.09
+      }
+    ]
+  }
+]

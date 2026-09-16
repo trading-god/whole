@@ -8,6 +8,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { AccountEditorFields } from "@/features/accounts/AccountEditorFields";
 import {
   AccountScreenshotUploader,
+  type ScreenshotOutcome,
   type SelectedSourceImage,
 } from "@/features/accounts/AccountScreenshotUploader";
 import { Button } from "@/components/Button";
@@ -35,7 +36,6 @@ import {
   updateAssetAccount,
   type UpdateAssetAccountResult,
 } from "@/features/assets/asset-repository";
-import { type RecognizedAccount } from "@/features/recognition/screenshot-recognition";
 import { useReturnToOverview } from "@/lib/useReturnToOverview";
 import { COLORS } from "@/theme/colors";
 import { screenStyles } from "@/theme/screen-styles";
@@ -59,6 +59,11 @@ export default function AccountDetailScreen() {
   const [draft, setDraft] = useState<AccountDraft>(() => ({
     name: "",
     lastFour: "",
+    // The institution lives in the group picker on this screen, not on the
+    // draft: an account being EDITED already belongs somewhere, and the picker
+    // chooses among the groups on file. The field is here because the add
+    // screen's drafts carry it, and it stays empty throughout.
+    institutionName: "",
     balances: [],
     kind: "cash",
   }));
@@ -70,10 +75,14 @@ export default function AccountDetailScreen() {
   // string-typed value can express "none" without a separate nullable.
   const [groups, setGroups] = useState<AssetAccountGroup[]>([]);
   const [selectedGroupId, setSelectedGroupId] = useState("");
-  const [selectedSourceImage, setSelectedSourceImage] =
-    useState<SelectedSourceImage | null>(null);
+  // A list of at most one: this screen refreshes ONE account, so the uploader
+  // runs in single-select mode (`multiple` unset) and a second screenshot would
+  // have no account to belong to. The list is the shape both screens share.
+  const [selectedSourceImages, setSelectedSourceImages] = useState<
+    SelectedSourceImage[]
+  >([]);
   const { finishSave, cleanupProps } = useSourceImageCleanup(
-    selectedSourceImage,
+    selectedSourceImages,
     returnToOverview,
   );
 
@@ -127,9 +136,13 @@ export default function AccountDetailScreen() {
   // the same account updates its name/balances/kind, while a different
   // account's screenshot still can't hijack this account's last four. Returns
   // whether anything was applied (the uploader's badge follows that).
-  const handleRecognized = (accounts: RecognizedAccount[]): boolean => {
+  const handleRecognized = (outcomes: ScreenshotOutcome[]): boolean => {
+    // Flattened across outcomes, which on this screen is always one screenshot
+    // — `selectRecognizedForAccount` then picks the row belonging to the
+    // account being edited, and refuses when several rows and no last four
+    // leave it ambiguous.
     const recognized = selectRecognizedForAccount(
-      accounts,
+      outcomes.flatMap((outcome) => outcome.accounts),
       account?.accountLastFourDigits,
     );
     if (!recognized) {
@@ -239,7 +252,7 @@ export default function AccountDetailScreen() {
       return;
     }
     if (result.ok) {
-      finishSave();
+      finishSave(1);
       return;
     }
     if (result.error.kind === "notFound") {
@@ -283,8 +296,8 @@ export default function AccountDetailScreen() {
 
             <AccountScreenshotUploader
               compact
-              sourceImage={selectedSourceImage}
-              onSourceImageChange={setSelectedSourceImage}
+              sourceImages={selectedSourceImages}
+              onSourceImagesChange={setSelectedSourceImages}
               onRecognized={handleRecognized}
               onRecognizingChange={setIsRecognizing}
             />

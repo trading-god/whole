@@ -14,6 +14,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { AccountEditorFields } from "@/features/accounts/AccountEditorFields";
 import {
   AccountScreenshotUploader,
+  type ScreenshotOutcome,
   type SelectedSourceImage,
 } from "@/features/accounts/AccountScreenshotUploader";
 import { Button } from "@/components/Button";
@@ -33,6 +34,7 @@ import { useSwipePagerHardwareBack } from "@/features/accounts/use-swipe-pager-h
 import { WizardNav } from "@/features/accounts/WizardNav";
 import {
   type AccountDraft,
+  type RecognizedScreenshot,
   applyRecognizedToDrafts,
   draftHasContent,
   draftToValidAccount,
@@ -49,7 +51,6 @@ import {
 } from "@/features/assets/asset-repository";
 import { type InstitutionId } from "@whole/ocr";
 import { defaultDisplayCurrencyForLanguageTag } from "@/features/assets/currencies";
-import { type RecognizedAccount } from "@/features/recognition/screenshot-recognition";
 import { useAppLocale } from "@/i18n";
 import { useReturnToOverview } from "@/lib/useReturnToOverview";
 import { COLORS } from "@/theme/colors";
@@ -69,26 +70,23 @@ function institutionNameKey(institutionId: InstitutionId) {
   return `institutionNames.${institutionId}` as const;
 }
 
-// When a screenshot's accounts all share an institution, the wizard suggests
-// grouping them under that institution's display name — regardless of how many
-// accounts were recognized. A single DBS Multiplier screenshot still creates a
-// "DBS" parent with one sub-account; the parent is the institution, not a count
-// threshold. "unknown" is still suggested (the user names the institution
-// manually in the form), so an unrecognized institution still groups its
-// accounts under a parent. Returns null only when no institution was detected or
-// the accounts span different institutions (ambiguous). Reuse by name happens at
-// save time — see `save`.
-function computeSuggestedGroup(
-  accounts: readonly RecognizedAccount[],
-): InstitutionId | null {
-  const institutionIds = accounts.map((account) => account.institutionId);
-  const first = institutionIds[0];
-  if (!first) {
-    return null;
-  }
-  return institutionIds.every((institutionId) => institutionId === first)
-    ? first
-    : null;
+// Whether every screenshot in a batch named the same institution.
+//
+// A batch of screenshots is a batch of institutions, so the institution lives
+// on each draft (see `AccountDraft.institutionName`). But the common case — one
+// screenshot, or several from one bank — is still one answer, and asking it
+// once above the wizard is how that case reads. Disagreement is what demotes it
+// to a per-page field, and it is decided from the SCREENSHOTS rather than from
+// the drafts the user is editing: the drafts change under the keyboard, and a
+// layout that changes with them tears the focused field out mid-word.
+//
+// An empty string counts as an answer. "The recognizer could not name this
+// institution" is a shared state too, and a batch of unplaceable screenshots
+// should still offer one field to name them all.
+function screenshotsAgreeOnInstitution(
+  screenshots: readonly RecognizedScreenshot[],
+): boolean {
+  return new Set(screenshots.map((shot) => shot.institutionName)).size <= 1;
 }
 
 export default function NewAccountScreen() {
@@ -96,8 +94,9 @@ export default function NewAccountScreen() {
   const queryClient = useQueryClient();
   const { languageTag } = useAppLocale();
   const defaultCurrency = defaultDisplayCurrencyForLanguageTag(languageTag);
-  const [selectedSourceImage, setSelectedSourceImage] =
-    useState<SelectedSourceImage | null>(null);
+  const [selectedSourceImages, setSelectedSourceImages] = useState<
+    SelectedSourceImage[]
+  >([]);
   const [isSaving, setIsSaving] = useState(false);
   // Recognition in flight: the section header says so in place of its hint.
   const [isRecognizing, setIsRecognizing] = useState(false);
@@ -158,18 +157,18 @@ export default function NewAccountScreen() {
   ]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [session, setSession] = useState(0);
-  // When non-null, the recognized accounts came from one institution's
-  // screenshot and should be saved into a single group named after that
-  // institution. Resolved to a real group id at save time (reusing an existing
-  // same-named group, else creating one). Cleared on a re-upload that doesn't
-  // share a known institution.
-  const [suggestedGroup, setSuggestedGroup] = useState<InstitutionId | null>(
-    null,
-  );
-  // User-entered institution name when the detected institution is "unknown" (no
-  // display name to use). Reset on each re-recognize; save skips grouping when
-  // this is empty and the institution is unknown.
-  const [suggestedGroupName, setSuggestedGroupName] = useState("");
+  // Whether the drafts on screen came from a screenshot.
+  //
+  // It decides which institution CONTROL is shown, not what is saved: a
+  // recognized account names its institution in a free-text field pre-filled
+  // from the screenshot (which the user corrects — recognition is not
+  // guaranteed), while a hand-entered one picks from the institutions already
+  // on file. Both end up as a group at save time; only the question differs.
+  const [isFromRecognition, setIsFromRecognition] = useState(false);
+  // Whether the batch agreed on one institution — see the latch in
+  // `handleRecognized`. It decides where the field LIVES; the drafts still hold
+  // what it says.
+  const [institutionIsShared, setInstitutionIsShared] = useState(true);
   const pagerRef = useRef<SwipePagerHandle>(null);
 
   const isMultiAccount = drafts.length >= 2;
@@ -219,34 +218,56 @@ export default function NewAccountScreen() {
   // That is worth doing, but not worth doing silently, so anything with content
   // in it is confirmed first. Answering after the prompt is why this returns a
   // promise: the badge should say "Recognized" only if the user let it through.
-  const handleRecognized = (
-    accounts: RecognizedAccount[],
-  ): Promise<boolean | "declined"> => {
-    if (accounts.length === 0) {
-      return Promise.resolve(false);
+  //
+  // What to call the institution one screenshot came from, in the order the
+  // answers are worth trusting: the engine's own detection, which is an enum the
+  // message catalogs name in the user's language; then the free text the MODEL
+  // answered, which is all there is for an institution no config knows — and
+  // which the app ignored until a batch made "which institution is this
+  // screenshot from" stop being one question with one answer. Blank when neither
+  // could place it, and the user names it themselves.
+  const institutionNameFor = (outcome: ScreenshotOutcome): string => {
+    const detected = outcome.institutionId;
+    if (detected !== undefined && detected !== "unknown") {
+      return t(institutionNameKey(detected));
     }
-    // Drop what isn't worth a draft at the form layer (recognition keeps them —
-    // see `isWorthDrafting`). If nothing survives, there's nothing to fill.
-    const fillableAccounts = accounts.filter(isWorthDrafting);
-    if (fillableAccounts.length === 0) {
+    return outcome.institutionName?.trim() ?? "";
+  };
+
+  const handleRecognized = (
+    outcomes: ScreenshotOutcome[],
+  ): Promise<boolean | "declined"> => {
+    // One entry per screenshot, each carrying the institution its accounts are
+    // filed under. Drop what isn't worth a draft at the form layer (recognition
+    // keeps them — see `isWorthDrafting`), then drop a screenshot left with
+    // nothing; if none survives, there is nothing to fill.
+    const screenshots: RecognizedScreenshot[] = outcomes
+      .map((outcome) => ({
+        accounts: outcome.accounts.filter(isWorthDrafting),
+        institutionName: institutionNameFor(outcome),
+      }))
+      .filter((screenshot) => screenshot.accounts.length > 0);
+    if (screenshots.length === 0) {
       return Promise.resolve(false);
     }
     // The fold reads `prev` inside the updater, not this render's `drafts`:
-    // recognition resolves seconds after it started, and the fields the user
-    // typed in the meantime live only in the latest state.
+    // recognition resolves seconds — for a batch, minutes — after it started,
+    // and the fields the user typed in the meantime live only in the latest
+    // state.
     const apply = () => {
-      const suggestion = computeSuggestedGroup(fillableAccounts);
-      setSuggestedGroup(suggestion);
-      // Pre-fill the institution field with the detected institution's name
-      // (which the user may correct — recognition isn't guaranteed accurate);
-      // "unknown" leaves it blank for the user to name by hand.
-      setSuggestedGroupName(
-        suggestion && suggestion !== "unknown"
-          ? t(institutionNameKey(suggestion))
-          : "",
-      );
+      setIsFromRecognition(true);
+      // LATCHED here, not derived per render. Whether the institution is asked
+      // once above the pager or once per page is a property of the BATCH, and
+      // the batch is fixed the moment recognition lands. Read off the drafts
+      // each render instead, the answer changed while the user was typing into
+      // the very field it controls: correcting page two's bank to match page
+      // one's made the drafts agree on the final keystroke, which unmounted the
+      // focused input under the keyboard — and the field that replaced it
+      // rewrites EVERY draft, so the two accounts silently became one group
+      // with no control left that could split them again.
+      setInstitutionIsShared(screenshotsAgreeOnInstitution(screenshots));
       reseedDrafts((prev) =>
-        applyRecognizedToDrafts(prev, fillableAccounts, defaultCurrency),
+        applyRecognizedToDrafts(prev, screenshots, defaultCurrency),
       );
     };
 
@@ -302,7 +323,7 @@ export default function NewAccountScreen() {
 
   const returnToAssetOverview = useReturnToOverview();
   const { finishSave, cleanupProps } = useSourceImageCleanup(
-    selectedSourceImage,
+    selectedSourceImages,
     returnToAssetOverview,
   );
 
@@ -319,6 +340,21 @@ export default function NewAccountScreen() {
     [],
   );
 
+  // What the shared field shows. Only read when `institutionIsShared` is true,
+  // where every draft carries the same name by construction — `sharedInstitutionName`
+  // is what decides that at recognition time, and `setBatchInstitutionName`
+  // keeps it true afterwards.
+  const batchInstitution = drafts[0]?.institutionName ?? "";
+
+  // Renames the institution on EVERY draft, for the field above the pager.
+  // Writing all of them is what keeps that one field honest: it claims to be
+  // the batch's answer, so editing it has to be.
+  const setBatchInstitutionName = useCallback((name: string) => {
+    setDrafts((prev) =>
+      prev.map((draft) => ({ ...draft, institutionName: name })),
+    );
+  }, []);
+
   // No clamps needed: WizardNav renders the next chevron only before the last
   // page and the back chevron only past the first.
   const handleNext = () => pagerRef.current?.goTo(currentIndex + 1);
@@ -327,26 +363,37 @@ export default function NewAccountScreen() {
   // Derived once and shared by the save button's disabled state and both save
   // paths so `draftToValidAccount` runs once per draft change, not again at
   // save. In single-account mode this is the one draft's validity.
-  const validAccounts = useMemo(
-    () => drafts.map(draftToValidAccount).filter((account) => account !== null),
+  // Paired with the institution each draft names, because the two are written
+  // together: a batch spanning three banks resolves three groups, and the
+  // account has to keep hold of which one is its own.
+  const validEntries = useMemo(
+    () =>
+      drafts.flatMap((draft) => {
+        const account = draftToValidAccount(draft);
+        return account === null
+          ? []
+          : [{ account, institutionName: draft.institutionName.trim() }];
+      }),
     [drafts],
   );
-  // Saving writes `validAccounts`, so a draft that isn't saveable would simply
+  // Saving writes `validEntries`, so a draft that isn't saveable would simply
   // not be written — silently, with the section header still claiming the model
   // recognized it. Block instead and say how many are incomplete: the user
   // either completes them or removes them, and nothing on screen disappears
   // without being asked for. In single-account mode this is exactly the old
   // "the one draft must be valid" gate.
-  const incompleteDraftCount = drafts.length - validAccounts.length;
+  const incompleteDraftCount = drafts.length - validEntries.length;
   // Two drafts sharing a business key (same name + same/empty last four)
   // would silently merge in applyAccountUpsert — for a shared currency the
   // second balance overwrites the first. Blocked via disabled-save + inline
   // hint, so the reason stays visible next to the drafts instead of behind a
   // dismissed alert. Vacuously false below two drafts, so it needs no
   // multi-account guard.
-  const hasDuplicateDrafts = hasDuplicateAccountKeys(validAccounts);
+  const hasDuplicateDrafts = hasDuplicateAccountKeys(
+    validEntries.map((entry) => entry.account),
+  );
   const canSave =
-    validAccounts.length > 0 &&
+    validEntries.length > 0 &&
     incompleteDraftCount === 0 &&
     !hasDuplicateDrafts &&
     !isSaving;
@@ -378,27 +425,34 @@ export default function NewAccountScreen() {
     // all. Same reason the branches below sit outside the try.
     let failed = false;
     try {
-      // Resolve the suggested group to a real id: reuse an existing same-named
-      // group (so re-uploading the same institution's screenshot doesn't spawn
-      // duplicates), else create one. Both reads go through the repository
-      // cache, and group creation is serialized through `mutate`, so this stays
-      // consistent with a concurrent upsert.
-      let groupId: string | undefined;
-      if (suggestedGroup) {
-        // The institution name is always user-editable: a known institution
-        // pre-fills its display name (which the user may correct), and
-        // "unknown" starts blank. An empty name skips grouping entirely.
-        const groupName = suggestedGroupName.trim();
-        if (groupName) {
-          groupId = (await findOrCreateGroupByName(groupName)).id;
-        }
-      } else if (selectedInstitutionId) {
-        // Hand-entered account: the picker's choice, an existing institution.
-        groupId = selectedInstitutionId;
+      // Resolve each distinct institution NAME to a real group id: reuse an
+      // existing same-named group (so re-uploading the same institution's
+      // screenshot doesn't spawn duplicates), else create one. Both reads go
+      // through the repository cache, and group creation is serialized through
+      // `mutate`, so this stays consistent with a concurrent upsert.
+      //
+      // Once per NAME, not once per account — a five-account screenshot would
+      // otherwise create the same group five times over, racing its own
+      // `findOrCreate`. An empty name skips grouping entirely.
+      const groupIds = new Map<string, string>();
+      for (const name of new Set(
+        validEntries
+          .map((entry) => entry.institutionName)
+          .filter((name) => name !== ""),
+      )) {
+        groupIds.set(name, (await findOrCreateGroupByName(name)).id);
       }
-      const accountsToSave = groupId
-        ? validAccounts.map((account) => ({ ...account, groupId }))
-        : validAccounts;
+      const accountsToSave = validEntries.map(
+        ({ account, institutionName }) => {
+          // A recognized account is filed under the name on its own draft; a
+          // hand-entered one under the institution the picker chose, which is
+          // an id already on file rather than a name to resolve.
+          const groupId = isFromRecognition
+            ? groupIds.get(institutionName)
+            : selectedInstitutionId || undefined;
+          return groupId ? { ...account, groupId } : account;
+        },
+      );
       await upsertAssetAccounts(accountsToSave);
       // Mark the home screen's account list stale as soon as the write lands,
       // rather than leaving it to be re-read on focus. The query is not active
@@ -422,7 +476,7 @@ export default function NewAccountScreen() {
       );
       return;
     }
-    finishSave();
+    finishSave(validEntries.length);
   };
 
   const saveLabel = t(
@@ -448,8 +502,9 @@ export default function NewAccountScreen() {
           />
 
           <AccountScreenshotUploader
-            sourceImage={selectedSourceImage}
-            onSourceImageChange={setSelectedSourceImage}
+            multiple
+            sourceImages={selectedSourceImages}
+            onSourceImagesChange={setSelectedSourceImages}
             onRecognized={handleRecognized}
             onRecognizingChange={setIsRecognizing}
           />
@@ -470,7 +525,9 @@ export default function NewAccountScreen() {
                 ]}
               >
                 {isRecognizing
-                  ? t("accountScreenshot.recognizingHint")
+                  ? t("accountScreenshot.recognizingHintBatch", {
+                      count: selectedSourceImages.length,
+                    })
                   : isMultiAccount
                     ? t("multiAccount.accountPosition", {
                         current: currentIndex + 1,
@@ -481,17 +538,20 @@ export default function NewAccountScreen() {
             }
           />
 
-          {/* The institution is one answer for the whole batch, so it is
-              asked once, above the pages, rather than repeated inside each
-              of them — where the same field on three pages read as three
-              fields, and editing it on page two changed page one. */}
-          {isMultiAccount && suggestedGroup ? (
+          {/* When every draft names the same institution — one screenshot, or
+              several from one bank — it is one answer, so it is asked once
+              above the pages rather than repeated inside each of them, where
+              the same field on three pages read as three fields and editing it
+              on page two changed page one. A batch that spans institutions has
+              no single answer, so the field moves INTO each page instead
+              (`AccountEditorFields` renders it there). */}
+          {isMultiAccount && isFromRecognition && institutionIsShared ? (
             <View style={styles.batchInstitutionCard}>
               <FormField
                 label={t("accountForm.group")}
-                onChangeText={setSuggestedGroupName}
+                onChangeText={setBatchInstitutionName}
                 placeholder={t("accountForm.newGroupPlaceholder")}
-                value={suggestedGroupName}
+                value={batchInstitution}
               />
               <Text style={styles.batchInstitutionHint}>
                 {t("accountForm.batchGroupHint")}
@@ -522,6 +582,10 @@ export default function NewAccountScreen() {
                     draft={drafts[pageIndex]}
                     index={pageIndex}
                     onChange={handleDraftChange}
+                    // Only when the batch spans institutions. With one shared
+                    // answer the field lives above the pager instead — the
+                    // same field on three pages reads as three fields.
+                    showInstitutionName={!institutionIsShared}
                   />
                   {/* Per-page escape hatch. Lives inside the page, next to the
                       account it removes, so which account it applies to is
@@ -550,14 +614,11 @@ export default function NewAccountScreen() {
               // A recognized screenshot names its institution in a text field
               // the user can correct; a hand-entered account picks from the
               // ones on file, as the edit screen does.
-              institutionName={suggestedGroup ? suggestedGroupName : undefined}
-              onInstitutionNameChange={
-                suggestedGroup ? setSuggestedGroupName : undefined
-              }
-              institutions={suggestedGroup ? undefined : institutions}
+              showInstitutionName={isFromRecognition}
+              institutions={isFromRecognition ? undefined : institutions}
               selectedInstitutionId={selectedInstitutionId}
               onInstitutionChange={
-                suggestedGroup ? undefined : setSelectedInstitutionId
+                isFromRecognition ? undefined : setSelectedInstitutionId
               }
               onCreateInstitution={handleCreateInstitution}
             />

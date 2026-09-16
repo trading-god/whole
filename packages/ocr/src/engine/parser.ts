@@ -219,6 +219,29 @@ function toRecognizedAccounts(
     .map((account) => ({ ...account, institutionId }));
 }
 
+/**
+ * Whether `groupToRecognized`'s kind for this group was a fallback rather than
+ * a read.
+ *
+ * The rule the model's kind answer is allowed to overrule, and it has to be
+ * asked here because `groupToRecognized` resolves the kind and then cannot say
+ * how: `RecognizedAccount.kind` is the same `"cash"` whether a keyword named it
+ * or nothing did. Both turns consult it — a keyword hit on the account's own
+ * name outranks the model, which disagreed with correct reads wherever that
+ * signal existed, and a declared `defaultKind` outranks it for the same reason.
+ * One definition, because two copies agreeing today is not the same as two
+ * copies that cannot disagree.
+ */
+export function kindWasGuessed(
+  group: OcrAccountGroup,
+  institutionConfig: InstitutionConfig,
+): boolean {
+  return (
+    detectAssetKind(group.name) === undefined &&
+    institutionConfig.defaultKind === undefined
+  );
+}
+
 // Exported for the model pipeline: it coerces each group this same way, but
 // keeps the group each account came FROM, because the model's annotations are
 // addressed by region number.

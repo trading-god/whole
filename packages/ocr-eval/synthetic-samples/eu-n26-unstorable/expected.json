@@ -1,0 +1,12 @@
+[
+  {
+    "accountName": "Main Account",
+    "kind": "cash",
+    "accountLastFourDigits": "2140"
+  },
+  {
+    "accountName": "Savings Space",
+    "kind": "cash",
+    "accountLastFourDigits": "7765"
+  }
+]

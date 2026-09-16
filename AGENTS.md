@@ -253,6 +253,18 @@ backfill lands.
   did).
 - `pnpm eval:ocr:ablate` is a MEASUREMENT, not a gate — no baseline, always
   exits 0. `packages/ocr-eval/README.md` reads the table.
+- `pnpm eval:ocr:synth` regenerates the SYNTHETIC corpus — twelve screens the
+  engine has never seen, declared as data in `packages/ocr-eval/src/synthetic/`
+  and rendered spec → HTML → headless Chrome → the same Apple Vision bridge the
+  real fixtures use, so the layout is synthetic and the OCR is not. Its gold is
+  derived from the spec rather than read off the screen. It lives in its own
+  directory with its own baseline (`OCR_CORPUS=synthetic`,
+  `baseline.synthetic.json`) because it is a different kind of evidence from a
+  device capture, and mixing the two would let a generated screen move a number
+  the README reports as a measurement over real screenshots. Replay it with
+  `pnpm eval:ocr:synth:eval` (rules) and `pnpm eval:ocr:synth:llama` (on-device).
+  Cover a layout FAMILY, not a brand: a fifteenth US bank laid out like the
+  first measures nothing.
 - `pnpm test:ocr:golden` hard-asserts the samples whose gold was verified
   against the screenshot BY EYE. Never add a sample there from unverified
   LLM-generated gold — that would pin the engine to a guess.
@@ -367,10 +379,26 @@ guards, and derive types with `z.infer`.
 
 ## OCR Recognition
 
-Recognition is a **hybrid**, and the split is the whole design: a
-deterministic rule pipeline reads the STRUCTURE (accounts, balances,
-currencies, debt signs, mechanical last fours), and one model call annotates
-the SEMANTICS rules cannot know. Both halves live in `@whole/ocr` (pure
+Recognition is a **hybrid**, and the split is the whole design — but which half
+does what depends on whether the engine can place the institution, and both
+sides of that line are measured rather than assumed:
+
+- **institution configured** → the ANNOTATION turn. The deterministic rule
+  pipeline reads the STRUCTURE (accounts, balances, currencies, debt signs,
+  mechanical last fours) and one model call annotates the SEMANTICS rules cannot
+  know. 17/17 of the real corpus; forcing the other turn onto it gives 2/17.
+- **institution unknown** → the STRUCTURE turn (`engine/structure-prompt.ts`).
+  There the rules do not merely miss accounts: they MERGE them and report the
+  merged region's sum as one balance, a figure the screenshot never printed and
+  which reaches net worth. The model is asked which LINE titles each account,
+  which carries its number, and which carry its balance; the engine reads every
+  value off the lines it names (`assembleAssignedAccounts`), so a wrong answer
+  can misplace a real figure but cannot state one. 0/12 → the table in
+  `packages/ocr-eval/README.md`.
+
+Re-decide that line with `pnpm eval:ocr:llama -- --turn structure`, never by
+argument. A runtime answering a `RecognitionAttempt` must NOT cache one grammar
+for the process: `attempt.grammar` and `attempt.schema` differ per turn. Both halves live in `@whole/ocr` (pure
 TypeScript, one dependency, the model call injected as a `RunModel`
 parameter so the package never touches a runtime); the app-side adapters sit
 around it (`recognition/ocr-engine.ts`, the runners, `model-recognition.ts`,
@@ -451,6 +479,18 @@ promise.
   the last-four pattern, fixture shapes) is owned by the package's
   `contract/` and re-exported by the app. Add a currency or kind in the
   package, not the app.
+- The add screen recognizes a **batch**: one pick may carry several
+  screenshots, they are recognized ONE AT A TIME
+  (`recognition/batch-recognition.ts` — two decodes at once on a phone doubles
+  the resident memory of the thing most likely to be killed for using too much
+  of it), each reported as it lands, and the loop stops early on a failure that
+  would repeat (`engineNotReady`, `ocrUnsupported`). A batch spans institutions,
+  so the institution lives on each `AccountDraft` rather than above the wizard —
+  one hoisted field when every draft agrees, one field per page when they do
+  not — and save resolves one group per distinct NAME. The screenshots are
+  deleted together afterwards (`deleteSourceImages`, one `Asset.delete` and so
+  one system confirmation). The edit screen stays single-select: it refreshes
+  ONE account, and a second screenshot there has no account to belong to.
 - **Recognize everything visible; the form filters, the recognizer does
   not.** A currency or institution the form cannot store yet is dropped at
   fill time, not at recognition — so a future form expansion needs no

@@ -13,6 +13,7 @@ import {
   Settings,
   TrendingDown,
   TrendingUp,
+  TriangleAlert,
 } from "lucide-react-native";
 
 import { COLORS } from "@/theme/colors";
@@ -32,6 +33,10 @@ const ICONS = {
   settings: Settings,
   "loader-circle": LoaderCircle,
   lock: Lock,
+  // The one screenshot in a batch that could not be read, badged on its own
+  // thumbnail. A warning rather than an error mark: the rest of the batch
+  // landed, so this is one thing to finish by hand, not a failed upload.
+  "triangle-alert": TriangleAlert,
 } as const;
 
 export type IconName = keyof typeof ICONS;

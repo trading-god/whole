@@ -1,0 +1,13 @@
+[
+  {
+    "accountName": "IBKR Margin Account",
+    "kind": "investment",
+    "accountLastFourDigits": "4417",
+    "balances": [
+      {
+        "currency": "USD",
+        "balance": 238914.62
+      }
+    ]
+  }
+]

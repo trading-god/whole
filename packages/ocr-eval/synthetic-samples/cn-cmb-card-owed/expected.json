@@ -1,0 +1,13 @@
+[
+  {
+    "accountName": "经典白金卡",
+    "kind": "cash",
+    "accountLastFourDigits": "8802",
+    "balances": [
+      {
+        "currency": "CNY",
+        "balance": -12874.55
+      }
+    ]
+  }
+]

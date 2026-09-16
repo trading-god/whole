@@ -27,7 +27,7 @@ import {
   fieldKey,
   type SampleComparison,
 } from "./compare";
-import { packageRoot } from "./paths";
+import { corpusName, packageRoot } from "./paths";
 
 // Why a known failure is expected to fail today.
 // - `unsupported-institution`: the sample's institution has no detection
@@ -59,7 +59,16 @@ const baselineSchema = z.object({
 });
 export type Baseline = z.infer<typeof baselineSchema>;
 
-const baselinePath = path.join(packageRoot, "baseline.json");
+// One baseline per corpus. The synthetic corpus records its own known gaps in
+// `baseline.synthetic.json`, so a generated screen can never enter — or clear —
+// a gap in the gate that guards the real captures.
+const baselineFile =
+  corpusName === "real" ? "baseline.json" : `baseline.${corpusName}.json`;
+
+const baselinePath = path.join(packageRoot, baselineFile);
+
+/** Which baseline this run writes, for the CLI's "updated" line. */
+export const baselineFileName = baselineFile;
 
 const BASELINE_NOTE =
   "Known OCR parser failures, per sample and field. A failure listed here is a " +

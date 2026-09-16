@@ -1,0 +1,35 @@
+[
+  {
+    "accountName": "Advantage Plus Banking",
+    "kind": "cash",
+    "accountLastFourDigits": "7714",
+    "balances": [
+      {
+        "currency": "USD",
+        "balance": 12043.88
+      }
+    ]
+  },
+  {
+    "accountName": "Advantage Savings",
+    "kind": "cash",
+    "accountLastFourDigits": "5590",
+    "balances": [
+      {
+        "currency": "USD",
+        "balance": 36130.4
+      }
+    ]
+  },
+  {
+    "accountName": "Customized Cash Rewards",
+    "kind": "cash",
+    "accountLastFourDigits": "3388",
+    "balances": [
+      {
+        "currency": "USD",
+        "balance": -1893.09
+      }
+    ]
+  }
+]

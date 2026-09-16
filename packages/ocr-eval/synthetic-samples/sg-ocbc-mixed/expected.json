@@ -1,0 +1,33 @@
+[
+  {
+    "accountName": "Everyday Global Account",
+    "kind": "cash",
+    "accountLastFourDigits": "5512",
+    "balances": [
+      {
+        "currency": "SGD",
+        "balance": 8840.12
+      }
+    ]
+  },
+  {
+    "accountName": "Unit Trusts",
+    "kind": "investment",
+    "balances": [
+      {
+        "currency": "SGD",
+        "balance": 42117.88
+      }
+    ]
+  },
+  {
+    "accountName": "Singapore Savings Bonds",
+    "kind": "investment",
+    "balances": [
+      {
+        "currency": "SGD",
+        "balance": 20000
+      }
+    ]
+  }
+]

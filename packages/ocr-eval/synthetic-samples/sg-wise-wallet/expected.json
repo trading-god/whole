@@ -1,0 +1,32 @@
+[
+  {
+    "accountName": "Singapore dollars",
+    "kind": "cash",
+    "balances": [
+      {
+        "currency": "SGD",
+        "balance": 14280.33
+      }
+    ]
+  },
+  {
+    "accountName": "US dollars",
+    "kind": "cash",
+    "balances": [
+      {
+        "currency": "USD",
+        "balance": 6120.5
+      }
+    ]
+  },
+  {
+    "accountName": "Hong Kong dollars",
+    "kind": "cash",
+    "balances": [
+      {
+        "currency": "HKD",
+        "balance": 9830
+      }
+    ]
+  }
+]

@@ -19,6 +19,11 @@ harness 则用真实录制的截图检验整条流水线。一条规则可以单
 ```
 packages/ocr-eval/
   src/
+    synthetic/           # 把屏幕声明成数据：一份 spec 同时产出屏幕和它的 gold
+      spec.ts            #   一张屏幕"是什么"，以及 `goldFor`
+      templates.ts       #   把 spec 渲染成用来截图的那份 HTML
+      corpus.ts          #   spec 本体，每种版式家族一份
+    run-synth.ts         # spec → HTML → Chrome → Vision → synthetic-samples/<slug>/
     run-eval.ts          # 编排器：跑全部样本，输出逐样本/逐字段结果
     run-llama-eval.ts    # 端侧门禁：同样本经 recognizeWithModel + 本地 GGUF 回放
     run-ablation.ts      # 测量：同样本，逐层剥掉机构配置后回放
@@ -38,6 +43,8 @@ packages/ocr-eval/
   vision/
     recognize-text.swift # macOS 上的 Apple Vision OCR，对齐 iOS 端的请求配置
   baseline.json          # 逐样本/逐字段的已知失败——回归门禁的参照物
+  baseline.synthetic.json # 同上，但属于合成语料——它单独设门禁
+  synthetic-samples/<slug>/ # 生成物：blocks.json 与 expected.json 入库，screen.* 不入库
   samples/<slug>/
     blocks.json          # 真实 OCR 输出（归一化 0..1 框）——入库，回归 fixture
     expected.json        # 人工标注的 gold RecognizedAccount[]
@@ -59,11 +66,16 @@ pnpm eval:ocr:vision                                   # macOS：screenshot.png 
 #   … [--check]                 与已入库 fixture 做解析器级别的漂移对比
 WHOLE_GGUF_PATH=<gguf> pnpm eval:ocr:llama             # 经端侧路径回放全部样本
 pnpm eval:ocr:ablate                                   # 去掉机构配置后，引擎还剩多少
+pnpm eval:ocr:synth                                    # 由 spec 重新生成合成语料
+pnpm eval:ocr:synth:eval                               # …用规则回放它
+WHOLE_GGUF_PATH=<gguf> pnpm eval:ocr:synth:llama       # …并用端侧路径回放它
 ```
 
-六条命令，各管一件事：临时识别（`ocr`）、录制 fixture（`eval:ocr:vision`）、
+一条命令管一件事：临时识别（`ocr`）、录制 fixture（`eval:ocr:vision`）、
 查回归（`eval:ocr`）、对已核对的 gold 做硬断言（`test:ocr:golden`）、评判端侧
-模型路径（`eval:ocr:llama`）、量一量机构配置到底值多少（`eval:ocr:ablate`）。凡是 coding agent 读一读 `--trace` 输出和规则源码
+模型路径（`eval:ocr:llama`）、量一量机构配置到底值多少（`eval:ocr:ablate`），
+以及构建/回放合成语料（`eval:ocr:synth*`）——引擎在"谁都不认识的机构"上的成绩
+就是在那里量的。凡是 coding agent 读一读 `--trace` 输出和规则源码
 就能做的事，这里一律不做成脚本。
 
 输出：`✓/~/✗ 样本名`、未通过项的字段级原因（`· name: expected …, got …`）、逐字段
@@ -216,6 +228,91 @@ Gemma 4 E2B 上实测，全部样本都是第一次尝试就答出：
 最后一条是诚实的代价。能补上缺失币种的模型，也能补上一个错的，而错的币种会报出用户
 并不拥有的钱。这正是 prompt 提供 `none` 的原因、声明过的 `defaultCurrency` 永远优先
 于推断的原因，也是券商的 config 应当显式声明币种的原因。
+
+## 合成语料（`pnpm eval:ocr:synth`）
+
+十七张真机截图，就是一个人全部的银行关系，而且全在新加坡、香港和中国大陆。
+[`docs/ocr-redesign.md`](../../docs/ocr-redesign.md) 的"已接受的风险"把这个缺口
+写成 _"'通用'这件事目前还没有证据"_ ——而它不可能靠对同样这十四家机构多截几张图
+来补上。
+
+`src/synthetic/` 从另一头补。一张屏幕被声明成**数据**（`src/synthetic/corpus.ts`），
+一份 spec 同时产出一个样本的两半：
+
+```text
+spec → HTML → 无头 Chrome（3×）→ screen.png → Apple Vision → blocks.json
+     → goldFor(spec) → expected.json
+```
+
+Vision 这一步用的正是录制真机 fixture 的同一座桥，所以 `blocks.json` 是一次**真实
+的 OCR 读取**——真实的词元切分、真实的框几何、真实的误读——只不过被读的那张屏幕是
+造出来的而不是拍来的。**版式是合成的，OCR 不是。** 手写一份"OCR 大概会输出什么"
+则两头都不占。
+
+gold 由同一份 spec 推导，而不是从屏幕上读出来，所以它跟真机样本的 gold 不一样：
+它不可能是"看错了屏幕"——真值在前，像素由它派生。它仍然可能错在"spec 没渲染出它
+想表达的东西"，所以 `--diff` 会把引擎当前读到的结果并排打出来，新增 spec 也要对着
+它的 `screen.png` 亲眼核一遍。
+
+**它有自己的目录和自己的基线。** `synthetic-samples/` 与 `baseline.synthetic.json`，
+由 `OCR_CORPUS=synthetic` 选择（见 `paths.ts`）。两者不是同一种证据——真机样本说的
+是"引擎对一张真有人拍过的截图会怎样"，合成样本说的是"它对一个版式**家族**会怎样"
+——混在一起，会让一张生成的屏幕稀释、或者悄悄抬高本文件当作"真机测量"报出来的数字。
+
+覆盖按**家族**算，不按品牌数算：再加第十五家版式跟第一家一样的美国银行，什么也量
+不出来。这十二张是：分区标题下每行一个账户（美英零售的主流形态）、带不可存币种列
+的多币种表格、券商的指标架、交易所的资产列表、账户详情页加下面的流水、新型银行
+钱包、一家一个币种符号都不打的大陆银行、以欠款形式陈述的信用卡，以及一张所有金额
+都用 app 无法存储的币种计价的屏幕。
+
+```bash
+pnpm eval:ocr:synth                        # 全部重新生成
+pnpm eval:ocr:synth -- --sample <slug>     # 只生成一张
+pnpm eval:ocr:synth -- --diff              # …并打印引擎当前读到什么
+```
+
+仅限 macOS：它通过 Swift 桥驱动 Apple Vision，并用系统里的 Chrome 截图
+（`CHROME_PATH` 可覆盖）。`screen.html` 与 `screen.png` 已被 gitignore——它们由 spec
+派生；`blocks.json` 与 `expected.json` 入库，而且跟真机语料不同，它们不含任何人的
+账户信息，没有什么需要挡在仓库外面。
+
+### 它量出了什么
+
+规则单跑，面对十二家它一家都不认识的机构：**0/12 样本通过，accountName 15%，
+balance:USD 7%。** 但真正的发现不是总分——失败只有一种形状，而且不是"少填了字段"：
+
+| 样本                    | 屏幕上写的     | 规则报出的     | 那个数字是什么           |
+| ----------------------- | -------------- | -------------- | ------------------------ |
+| `us-chase-overview`     | USD 3,204.57   | USD 42,267.64  | 储蓄 + 定存 + 信用卡之和 |
+| `sg-ocbc-mixed`         | SGD 8,840.12   | SGD 70,958.00  | 三个账户之和             |
+| `us-ibkr-portfolio`     | USD 238,914.62 | USD 727,482.38 | 净值 + 购买力 + 保证金   |
+| `sg-dbs-account-detail` | SGD 27,411.09  | SGD 25,878.29  | 余额减掉了它下面的流水   |
+
+这是引擎在把一个截图上根本不存在的数字，报进净资产里。**结构轮**就是为此而建，
+也是对着它被量的（设计见 `@whole/ocr` 的 README，论证见 `docs/ocr-redesign.md`）：
+
+| 字段        | 规则单跑 | 加上结构轮 |
+| ----------- | -------- | ---------- |
+| accountName | 19%      | **63%**    |
+| balance:USD | 13%      | **73%**    |
+| balance:CNY | 20%      | **80%**    |
+| balance:HKD | 33%      | **67%**    |
+| kind        | 48%      | **81%**    |
+| lastFour    | 33%      | **56%**    |
+
+"规则单跑"那一列要当作**下限**读，不要当作对规则的判决：这些屏幕上，app 已经不走
+那条路了。
+
+### `--turn`，以及那条线为什么画在这儿
+
+```bash
+WHOLE_GGUF_PATH=<gguf> pnpm eval:ocr:llama -- --turn structure
+```
+
+它强制每个样本都走结构轮，包括机构**已配置**的那些。在真机语料上结果是 **2/17**，
+而标注轮是 17/17——所以"结构一律交给模型"是被量过之后否掉的，不是想当然。它是
+`RecognitionOptions` 里唯一一个"为重新追问一个设计判断而存在"的开关（而不是用来
+回放某个变体的），将来端侧模型若换代，这条线也靠它重新判。
 
 ## 基线门禁（退出码由什么决定）
 

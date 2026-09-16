@@ -131,6 +131,121 @@ headers ("total assets", "account overview") may be absent entirely —
 `ocbc-partial-overview` is exactly this. The recognizer reports what is on
 screen and never reconstructs a total it cannot see.
 
+## The second measurement: what happens on an institution nothing knows
+
+The hybrid above was measured over the 17 real samples, and every one of them
+has an `InstitutionConfig` written against it. Accepted risk 2 below says what
+that leaves unanswered — "'Universal' has no evidence behind it yet" — and the
+answer, once it was measured, was worse than "some fields are missing".
+
+### The corpus that answered it
+
+`packages/ocr-eval/src/synthetic/` declares screens as data and renders them:
+spec → HTML → headless Chrome → the SAME macOS Apple Vision bridge the real
+fixtures are recorded through. The layout is synthetic; the OCR is not. The gold
+is derived from the same spec, so unlike a real sample's gold it cannot be a
+misreading of the screen — the truth comes first and the pixels are derived from
+it.
+
+Twelve screens, twelve layout families the real corpus cannot reach: one row per
+account under a section heading (the dominant US and UK retail shape), a
+currency table, a broker's metric shelf, an exchange's asset list, an account's
+own page with its transactions, a neobank's wallet, a mainland bank that prints
+no currency at all, a card stated as an amount owed.
+
+### What the rules alone do to them
+
+**0/12 samples, accountName 15%, balance:USD 7%.** But the totals are not the
+finding. The failure has one shape, and it is not a missing field:
+
+| sample                  | the screen says | the rules report | what that figure is             |
+| ----------------------- | --------------- | ---------------- | ------------------------------- |
+| `us-chase-overview`     | USD 3,204.57    | USD 42,267.64    | savings + CD + card, summed     |
+| `sg-ocbc-mixed`         | SGD 8,840.12    | SGD 70,958.00    | all three accounts, summed      |
+| `us-ibkr-portfolio`     | USD 238,914.62  | USD 727,482.38   | net liq + buying power + margin |
+| `sg-dbs-account-detail` | SGD 27,411.09   | SGD 25,878.29    | the balance minus its postings  |
+| `hk-hangseng-bare`      | HKD 168,240.77  | USD 180,641.27   | both accounts, in the wrong one |
+
+The grouping state machine has no case for the layout, so every figure lands in
+one region and `finish` sums it. The number reported appears nowhere on the
+screenshot, and it reaches net worth. That is strictly worse than recognizing
+nothing.
+
+### The structure turn
+
+So on an institution the engine cannot place, the model is asked the STRUCTURAL
+question instead — in the only form that cannot make things worse:
+
+> which LINE titles each account, which line carries its number, and which lines
+> carry its balance.
+
+Line numbers, never values (`engine/structure-prompt.ts`,
+`assembleAssignedAccounts`). Every name, digit and figure still comes off the
+tokens the engine parsed, so a wrong answer can file a real figure under the
+wrong real name — it cannot state a figure, misspell an account or invent a
+currency. Assignments are verified before they are honoured: a line outside the
+screen, a name line that yields no name, a balance line the engine read no figure
+on, and a line a previous account already claimed are all dropped.
+
+It is also the easier question. The 2B doing the WHOLE job scored 0–71%; this
+asks it to select from a numbered list of rows the engine has already parsed,
+with the rows carrying money marked `$` and the rows carrying identifying digits
+marked `#`.
+
+Measured over the synthetic corpus on the bundled Gemma 4 E2B:
+
+| field       | rules alone | + structure turn |
+| ----------- | ----------- | ---------------- |
+| accountName | 19%         | **63%**          |
+| balance:USD | 13%         | **73%**          |
+| balance:CNY | 20%         | **80%**          |
+| balance:HKD | 33%         | **67%**          |
+| kind        | 48%         | **81%**          |
+| lastFour    | 33%         | **56%**          |
+
+And no fabricated totals: an assignment that does not hold up drops out, rather
+than merging into the account beside it.
+
+### Why the gate is still "is the institution known"
+
+Because the corpus was asked the obvious follow-up and answered no. Forcing the
+structure turn onto the REAL corpus — `pnpm eval:ocr:llama -- --turn structure`,
+which exists for exactly this question — takes 17/17 down to **2/17**, with
+accountName at 55% and balance:USD at 10%. Where a config was written against
+the layout, the rules are far better than a 2B model's assignment, and letting
+the model help there can only lose money. The division stands; what changed is
+that it now has a measured answer on BOTH sides of the line.
+
+Three things fell out of the measurement and were fixed as rules, because they
+are generic rather than per-institution:
+
+- `...4821` and `(...4821)` were not recognized as a masked account number. US
+  and European apps abbreviate that way almost universally, and every one of
+  those accounts lost its last four — the field account dedupe is keyed on.
+- `recent transactions` did not end an account section (the English list is
+  lead-anchored, and it does not start with `transactions`), so an account
+  detail page's postings were summed into the account above them.
+- A broker's metric shelf — buying power, maintenance margin, excess liquidity —
+  carried no non-balance markers, so the account's leverage was reported as the
+  user's money.
+
+### What is still open on it
+
+- **A known institution in an unfamiliar layout still fabricates.** A config is
+  authored against ONE screen, so the same bank's account-detail page is as
+  unfamiliar as a bank nothing knows — `sg-ocbc-mixed` and `us-ibkr-portfolio`
+  are baselined as exactly that. "Configured institution" is a proxy for "layout
+  the rules were written against", and it is an imperfect one.
+- **A trailing `DR` is not read as a debit.** `1,893.09 DR` is standard on HK,
+  SG, UK and Indian statements, and the debt vocabulary is built around a label
+  BEFORE the figure (`debtMarkerEndIn` returns where the label ends and takes
+  the first figure after it). Supporting a suffix marker is a change to
+  `balanceAmountsOf`, not a word in a list.
+- **The synthetic corpus is layout evidence, not institution evidence.** Each
+  spec is one person's model of how an app lays a screen out. It says the engine
+  handles a FAMILY; it says nothing about what any named company actually
+  renders.
+
 ## Still open
 
 Recorded as ideas, not as plans — none of them is built.

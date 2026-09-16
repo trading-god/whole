@@ -1,0 +1,110 @@
+{
+  "note": "Known OCR parser failures, per sample and field. A failure listed here is a known gap; one that is not is a regression and fails `pnpm eval:ocr`. Regenerate with `pnpm eval:ocr -- --update-baseline`; hand-set a reason to `gold-uncertain` to park a sample whose gold is not human-checked yet.",
+  "knownFailures": {
+    "cn-cmb-card-owed": {
+      "0.balances": "parser-bug",
+      "0.name": "parser-bug"
+    },
+    "cn-icbc-overview": {
+      "0.balances": "parser-bug",
+      "0.name": "parser-bug",
+      "1.balances": "parser-bug",
+      "1.kind": "parser-bug",
+      "1.lastFour": "parser-bug",
+      "1.name": "parser-bug",
+      "2.balances": "parser-bug",
+      "2.kind": "parser-bug",
+      "2.name": "parser-bug",
+      "count": "parser-bug",
+      "count:1": "parser-bug"
+    },
+    "crypto-binance-assets": {
+      "0.balances": "parser-bug",
+      "0.kind": "parser-bug",
+      "0.name": "parser-bug",
+      "1.balances": "parser-bug",
+      "1.kind": "parser-bug",
+      "1.name": "parser-bug",
+      "2.balances": "parser-bug",
+      "2.kind": "parser-bug",
+      "2.name": "parser-bug",
+      "count": "parser-bug",
+      "count:1": "parser-bug"
+    },
+    "eu-n26-unstorable": {
+      "0.lastFour": "parser-bug",
+      "1.lastFour": "parser-bug",
+      "1.name": "parser-bug"
+    },
+    "hk-hangseng-bare": {
+      "0.balances": "parser-bug",
+      "0.name": "parser-bug",
+      "1.balances": "parser-bug",
+      "1.kind": "parser-bug",
+      "1.lastFour": "parser-bug",
+      "1.name": "parser-bug",
+      "count": "parser-bug",
+      "count:1": "parser-bug"
+    },
+    "hk-scb-multicurrency": {
+      "0.lastFour": "parser-bug",
+      "0.name": "parser-bug"
+    },
+    "sg-ocbc-mixed": {
+      "0.balances": "parser-bug",
+      "0.lastFour": "parser-bug",
+      "1.balances": "parser-bug",
+      "1.kind": "parser-bug",
+      "1.name": "parser-bug",
+      "2.balances": "parser-bug",
+      "2.kind": "parser-bug",
+      "2.name": "parser-bug",
+      "count": "parser-bug",
+      "count:1": "parser-bug"
+    },
+    "sg-wise-wallet": {
+      "0.name": "parser-bug",
+      "1.balances": "parser-bug",
+      "1.kind": "parser-bug",
+      "1.name": "parser-bug",
+      "2.balances": "parser-bug",
+      "2.kind": "parser-bug",
+      "2.name": "parser-bug",
+      "count": "parser-bug",
+      "count:1": "parser-bug"
+    },
+    "us-bofa-summary": {
+      "0.balances": "parser-bug",
+      "0.kind": "parser-bug",
+      "0.lastFour": "parser-bug",
+      "0.name": "parser-bug",
+      "1.balances": "parser-bug",
+      "1.lastFour": "parser-bug",
+      "2.balances": "parser-bug",
+      "2.kind": "parser-bug",
+      "2.lastFour": "parser-bug",
+      "2.name": "parser-bug",
+      "count": "parser-bug",
+      "count:1": "parser-bug"
+    },
+    "us-chase-overview": {
+      "0.balances": "parser-bug",
+      "0.kind": "parser-bug",
+      "0.lastFour": "parser-bug",
+      "0.name": "parser-bug",
+      "1.balances": "parser-bug",
+      "1.kind": "parser-bug",
+      "1.lastFour": "parser-bug",
+      "1.name": "parser-bug",
+      "2.balances": "parser-bug",
+      "2.name": "parser-bug",
+      "count": "parser-bug",
+      "count:2": "parser-bug"
+    },
+    "us-ibkr-portfolio": {
+      "0.balances": "parser-bug",
+      "0.lastFour": "parser-bug",
+      "0.name": "parser-bug"
+    }
+  }
+}

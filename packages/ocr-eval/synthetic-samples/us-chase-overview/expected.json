@@ -1,0 +1,46 @@
+[
+  {
+    "accountName": "Total Checking",
+    "kind": "cash",
+    "accountLastFourDigits": "4821",
+    "balances": [
+      {
+        "currency": "USD",
+        "balance": 3204.57
+      }
+    ]
+  },
+  {
+    "accountName": "Premier Savings",
+    "kind": "cash",
+    "accountLastFourDigits": "9033",
+    "balances": [
+      {
+        "currency": "USD",
+        "balance": 18750
+      }
+    ]
+  },
+  {
+    "accountName": "Certificate of Deposit",
+    "kind": "cash",
+    "accountLastFourDigits": "2207",
+    "balances": [
+      {
+        "currency": "USD",
+        "balance": 25000
+      }
+    ]
+  },
+  {
+    "accountName": "Sapphire Reserve",
+    "kind": "cash",
+    "accountLastFourDigits": "1129",
+    "balances": [
+      {
+        "currency": "USD",
+        "balance": -1482.36
+      }
+    ]
+  }
+]

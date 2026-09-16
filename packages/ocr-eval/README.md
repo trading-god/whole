@@ -24,6 +24,11 @@ entry" path.
 ```
 packages/ocr-eval/
   src/
+    synthetic/           # Screens declared as data: one spec → the screen AND its gold
+      spec.ts            #   what a screen IS, and `goldFor`
+      templates.ts       #   a spec rendered as the HTML one screenshot is taken of
+      corpus.ts          #   the specs themselves, one per layout family
+    run-synth.ts         # spec → HTML → Chrome → Vision → synthetic-samples/<slug>/
     run-eval.ts          # Orchestrator: runs all samples, per-sample/per-field output
     run-llama-eval.ts    # On-device gate: the same samples through recognizeWithModel + a local GGUF
     run-ablation.ts      # Measurement: the same samples with one tier of institution config removed
@@ -43,6 +48,8 @@ packages/ocr-eval/
   vision/
     recognize-text.swift # Apple Vision OCR on macOS, mirroring the iOS request config
   baseline.json          # Known failures per sample/field — the regression gate's reference
+  baseline.synthetic.json # …the same, for the synthetic corpus, which is gated apart
+  synthetic-samples/<slug>/ # Generated: blocks.json + expected.json committed, screen.* not
   samples/<slug>/
     blocks.json          # Real on-device OCR output (normalized 0..1 boxes) — committed regression fixture
     expected.json        # Manually annotated gold RecognizedAccount[]
@@ -65,14 +72,18 @@ pnpm eval:ocr:vision                                   # macOS: screenshot.png �
 #   … [--check]                 parser-level drift vs the committed fixtures
 WHOLE_GGUF_PATH=<gguf> pnpm eval:ocr:llama             # replay the samples through the on-device path
 pnpm eval:ocr:ablate                                   # what is the engine worth without its institution config?
+pnpm eval:ocr:synth                                    # regenerate the synthetic corpus from its specs
+pnpm eval:ocr:synth:eval                               # …replay it through the rules
+WHOLE_GGUF_PATH=<gguf> pnpm eval:ocr:synth:llama       # …and through the on-device path
 ```
 
-Six commands, one per job: recognize something ad hoc (`ocr`), record a fixture
+One command per job: recognize something ad hoc (`ocr`), record a fixture
 (`eval:ocr:vision`), check for regressions (`eval:ocr`), hard-assert the verified
-golds (`test:ocr:golden`), judge the on-device model path (`eval:ocr:llama`), and
-measure what the institution configs are worth (`eval:ocr:ablate`).
-Anything a coding agent can do by reading `--trace` output and the rule sources
-is deliberately not a script here.
+golds (`test:ocr:golden`), judge the on-device model path (`eval:ocr:llama`),
+measure what the institution configs are worth (`eval:ocr:ablate`), and build or
+replay the synthetic corpus (`eval:ocr:synth*`) — which is where the engine is
+measured against institutions nothing knows. Anything a coding agent can do by
+reading `--trace` output and the rule sources is deliberately not a script here.
 
 Output: `✓/~/✗ sample name`, per-field reasons for anything not clean (`· name:
 expected …, got …`), a per-field aggregate table, and the baseline verdict.
@@ -253,6 +264,104 @@ The last bullet is the honest cost. A model that can supply a missing currency
 can also supply a wrong one, and a wrong currency reports money the user does
 not have. It is why the prompt offers `none`, why a declared `defaultCurrency`
 always outranks the inference, and why a broker's config should declare one.
+
+## The synthetic corpus (`pnpm eval:ocr:synth`)
+
+Seventeen device captures is everything one person banks with, all of it in SG,
+HK and mainland China. That is the gap "Accepted risks" in
+[`docs/ocr-redesign.md`](../../docs/ocr-redesign.md) records as _"'Universal'
+has no evidence behind it yet"_ — and it cannot be closed by taking more
+screenshots of the same fourteen institutions.
+
+`src/synthetic/` closes it from the other direction. A screen is declared as
+DATA (`src/synthetic/corpus.ts`), and one spec produces both halves of a sample:
+
+```text
+spec → HTML → headless Chrome (3×) → screen.png → Apple Vision → blocks.json
+     → goldFor(spec) → expected.json
+```
+
+The Vision step is the same bridge the real fixtures are recorded through, so
+`blocks.json` is a genuine OCR reading — real token splits, real box geometry,
+real misreadings — of a screen that was built rather than captured. **The layout
+is synthetic; the OCR is not.** Hand-writing what OCR "would" produce would have
+been neither.
+
+The gold is derived from the same spec rather than read off the screen, so
+unlike a real sample's gold it cannot be a misreading: the truth comes first and
+the pixels are derived from it. What it can still be is a spec that did not
+render what it meant, which is why `--diff` prints what the engine currently
+reads beside it and a new spec is eyeballed against its `screen.png` once.
+
+**It lives in its own directory, with its own baseline.** `synthetic-samples/`
+and `baseline.synthetic.json`, selected by `OCR_CORPUS=synthetic` (see
+`paths.ts`). They are not the same kind of evidence — a real sample says what
+the engine does to a screenshot somebody actually took, a synthetic one says
+what it does to a layout FAMILY — and mixing them would let a generated screen
+dilute, or quietly raise, a number this file reports as a measurement over real
+captures.
+
+Coverage is by family, not by brand count: adding a fifteenth US bank that lays
+its screen out like the first measures nothing. The twelve are one row per
+account under a section heading (the dominant US/UK retail shape), a currency
+table with an unstorable column, a broker's metric shelf, an exchange's asset
+list, an account's own page with its transactions beneath it, a neobank wallet,
+a mainland bank that prints no currency at all, a card stated as an amount owed,
+and a screen whose every figure is in a currency the app cannot store.
+
+```bash
+pnpm eval:ocr:synth                        # regenerate all of them
+pnpm eval:ocr:synth -- --sample <slug>     # just one
+pnpm eval:ocr:synth -- --diff              # …and print what the engine reads
+```
+
+macOS only: it drives Apple Vision through the Swift bridge and takes the
+screenshot with the system's Chrome (`CHROME_PATH` overrides). `screen.html` and
+`screen.png` are gitignored — they are derived from the spec; `blocks.json` and
+`expected.json` are committed, and unlike the real corpus they carry nobody's
+account details, so there is nothing to keep out of the repo.
+
+### What it measured
+
+The rules alone, over twelve institutions none of them knows: **0/12 samples,
+accountName 15%, balance:USD 7%.** The totals are not the finding — the failure
+has one shape, and it is not a missing field:
+
+| sample                  | the screen says | the rules report | what that figure is             |
+| ----------------------- | --------------- | ---------------- | ------------------------------- |
+| `us-chase-overview`     | USD 3,204.57    | USD 42,267.64    | savings + CD + card, summed     |
+| `sg-ocbc-mixed`         | SGD 8,840.12    | SGD 70,958.00    | all three accounts, summed      |
+| `us-ibkr-portfolio`     | USD 238,914.62  | USD 727,482.38   | net liq + buying power + margin |
+| `sg-dbs-account-detail` | SGD 27,411.09   | SGD 25,878.29    | the balance minus its postings  |
+
+That is the engine reporting money the screenshot never printed, into net worth.
+It is what the STRUCTURE turn was built for, and what it is measured against
+(`@whole/ocr`'s README has the design; `docs/ocr-redesign.md` has the argument):
+
+| field       | rules alone | + structure turn |
+| ----------- | ----------- | ---------------- |
+| accountName | 19%         | **63%**          |
+| balance:USD | 13%         | **73%**          |
+| balance:CNY | 20%         | **80%**          |
+| balance:HKD | 33%         | **67%**          |
+| kind        | 48%         | **81%**          |
+| lastFour    | 33%         | **56%**          |
+
+Read the rules column as the floor rather than as a verdict on the rules: the
+app does not take that path for these screens any more.
+
+### `--turn`, and why the gate is where it is
+
+```bash
+WHOLE_GGUF_PATH=<gguf> pnpm eval:ocr:llama -- --turn structure
+```
+
+Forces the structure turn onto every sample, including the ones whose
+institution IS configured. Over the real corpus that is **2/17**, against 17/17
+for the annotation turn — so "always let the model do the structure" is measured
+and rejected, not assumed. It is the one knob in `RecognitionOptions` that exists
+to re-ask a design question rather than to replay a variation, and it is how the
+gate gets re-decided if the bundled model ever changes.
 
 ## The baseline gate (how the exit code is decided)
 

@@ -60,9 +60,17 @@ export const NUMBER_RE = new RegExp(NUMBER_SOURCE);
 export const WHOLE_AMOUNT_RE = new RegExp(`^${NUMBER_SOURCE}$`);
 
 // Card-mask characters as they print in masked card numbers ("•••• 4242",
-// "**** 1234", "4111 **** **** 1234"). Shared by the amount guard and the row
-// classifier so the mask morphology lives in one place.
-const MASK_CHARS = "·•*";
+// "**** 1234", "4111 **** **** 1234", "(...4821)"). Shared by the amount guard,
+// the row classifier and the last-four extractor so the mask morphology lives
+// in one place.
+//
+// The period earns its place from the corpus the rules were NOT written
+// against: US and European apps overwhelmingly abbreviate an account number as
+// "...4821" or "(...4821)" rather than with bullets, and without it every one of
+// those accounts lost its last four — which is the field account dedupe is keyed
+// on. It is safe beside the amount rules because it takes TWO of them in a row:
+// a decimal point is one, and "3,204.57" is not a mask.
+export const MASK_CHARS = "·•*.";
 // Either a mask run with the card's tail digits beside it ("**** 1234"), or a
 // run long enough to be a mask on its own and not followed by a letter
 // ("•••• •••• ••••").
@@ -71,8 +79,10 @@ const MASK_CHARS = "·•*";
 // disclaimer row beginning "**Terms and conditions apply" was a card-number
 // row, and in grouping that both discards any balance on the row and — on a
 // number-last institution — ends the account above it.
+// The single-character ellipsis is its own arm: "…4821" is one glyph, so the
+// `{2,}` run the other masks need can never match it.
 const MASKED_CARD_RE = new RegExp(
-  `[${MASK_CHARS}]{2,}\\s*\\d{2,4}|[${MASK_CHARS}]{4,}(?!\\p{L})`,
+  `[${MASK_CHARS}]{2,}\\s*\\d{2,4}|…\\s*\\d{2,4}|[${MASK_CHARS}]{4,}(?!\\p{L})`,
   "u",
 );
 

@@ -65,3 +65,9 @@ coverage/
 .claude/*
 !.claude/skills/
 !.claude/settings.json
+
+# OCR eval — the synthetic corpus's screens are DERIVED from their specs
+# (`packages/ocr-eval/src/synthetic/`), so only the recorded blocks and the
+# generated gold are committed. Regenerate with `pnpm eval:ocr:synth`.
+/packages/ocr-eval/synthetic-samples/*/screen.html
+/packages/ocr-eval/synthetic-samples/*/screen.png

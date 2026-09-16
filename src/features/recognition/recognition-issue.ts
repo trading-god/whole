@@ -80,13 +80,25 @@ export function issueForRecognition(
     // "No accounts on this screen" is the honest verdict even for a device
     // failure, because the model cannot CREATE an account — regions come from
     // the engine — so retrying with more memory free would find nothing more.
-    // Defensive rather than reachable today: the engine only reaches the model
-    // when it grouped something, and every group it emits coerces to an
-    // account. That is a rule in another package, not one this module can
-    // assume.
-    return result.accounts.length === 0
+    //
+    // Reachable now, and routinely: on an institution no config knows the
+    // engine's read is SUPPRESSED rather than absent (`engineOnly`), because
+    // the rules merge those screens and report a sum the screenshot never
+    // printed. So an empty list there says nothing about the screen.
+    //
+    // Which is why the two causes that name a SETUP problem outrank it. A 401
+    // and an out-of-memory load are true whatever the screen held, and their
+    // advice — check the key, free some memory — is the only advice that can
+    // help; "try a screenshot that shows the account name and balance" would
+    // send the user round a loop no screenshot ends. The remaining two
+    // (`invalid-output`, `unknown`) are about this screen, so emptiness still
+    // wins there.
+    const cause = ISSUE_BY_CAUSE[result.cause];
+    const namesTheSetup =
+      cause === "remoteFailed" || cause === "modelLoadFailed";
+    return result.accounts.length === 0 && !namesTheSetup
       ? "recognitionEmpty"
-      : ISSUE_BY_CAUSE[result.cause];
+      : cause;
   }
 
   // The pipeline ran and the screen held nothing. Worth its own message,
